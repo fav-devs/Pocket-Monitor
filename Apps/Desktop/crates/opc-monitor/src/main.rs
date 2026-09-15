@@ -1,3 +1,7 @@
+// A release operator build is a normal Windows app, not a terminal program. Startup,
+// connection and crash diagnostics still go to `opc-monitor.log` beside the executable.
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+
 //! The viewfinder.
 //!
 //! `opc-monitor view` opens a window on the camera: the picture fills it, a thin strip
@@ -65,6 +69,7 @@ Viewfinder keys
   R            stop recording             S      write a still
   Arrows       pan and tilt               C      recentre the gimbal
   + / -        zoom in and out            F      flip to selfie and back
+  V            cycle gimbal mode          G      open gallery
   0            back to wide               Esc    close
 
   Drag         track what you drew around X      stop tracking
@@ -75,6 +80,11 @@ Viewfinder keys
 
 Two arrows at once pan diagonally. The gimbal keeps moving while a key is held and
 rests the moment it comes up.";
+
+/// A saved-profile reconnect is the fast path, not a reason to make an operator stare
+/// at a blank desktop while Windows waits through its full WLAN timeout.
+#[cfg(opc_core_linked)]
+const SAVED_WIFI_FAST_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 fn main() -> ExitCode {
     // Write a startup log beside the exe so silent crashes leave evidence.
@@ -347,13 +357,11 @@ fn relaunch_viewfinder(args: &[String], model_id: Option<i32>) -> Result<(), Str
 /// own. The password exists only in a short-lived profile document and is never logged.
 #[cfg(all(opc_core_linked, target_os = "windows"))]
 fn join_camera_wifi(ssid: &str, password: &str) -> Result<(), String> {
-    use std::process::Command;
-
     let profile =
         std::env::temp_dir().join(format!("openpocketcine-wifi-{}.xml", std::process::id()));
     std::fs::write(&profile, opc_camera::wifi::profile_xml(ssid, password))
         .map_err(|error| format!("could not prepare the camera Wi-Fi profile: {error}"))?;
-    let add = Command::new("netsh")
+    let add = windows_background_command("netsh")
         .args(["wlan", "add", "profile"])
         .arg(format!("filename={}", profile.display()))
         .arg("user=current")
@@ -376,10 +384,9 @@ fn join_camera_wifi(ssid: &str, password: &str) -> Result<(), String> {
 /// needs the password and is deliberately the normal reconnect path.
 #[cfg(all(opc_core_linked, target_os = "windows"))]
 fn join_saved_camera_wifi(ssid: &str) -> Result<(), String> {
-    use std::process::Command;
     use std::time::{Duration, Instant};
 
-    let profiles = Command::new("netsh")
+    let profiles = windows_background_command("netsh")
         .args(["wlan", "show", "profiles"])
         .output()
         .map_err(|error| format!("could not inspect Windows Wi-Fi profiles: {error}"))?;
@@ -388,14 +395,14 @@ fn join_saved_camera_wifi(ssid: &str) -> Result<(), String> {
     }
 
     log_connection("requesting connection to the saved camera network");
-    let deadline = Duration::from_secs_f64(opc_camera::wifi::JoinTiming::from_core().deadline);
+    let deadline = SAVED_WIFI_FAST_PATH_TIMEOUT;
     let retry_pause =
         Duration::from_secs_f64(opc_camera::wifi::JoinTiming::from_core().retry_pause);
     let started = Instant::now();
     let mut next_attempt = Instant::now();
     while started.elapsed() < deadline {
         if Instant::now() >= next_attempt {
-            match Command::new("netsh")
+            match windows_background_command("netsh")
                 .args(["wlan", "connect"])
                 .arg(format!("name={ssid}"))
                 .arg(format!("ssid={ssid}"))
@@ -416,7 +423,7 @@ fn join_saved_camera_wifi(ssid: &str) -> Result<(), String> {
 
         // DHCP on the Osmo network assigns 192.168.2.2 through .254. `ipconfig` is
         // available on every supported Windows host and avoids another platform crate.
-        if let Ok(output) = Command::new("ipconfig").output() {
+        if let Ok(output) = windows_background_command("ipconfig").output() {
             let addresses = String::from_utf8_lossy(&output.stdout);
             if addresses.split_whitespace().any(|word| {
                 word.trim_matches(|c: char| !c.is_ascii_digit() && c != '.')
@@ -429,7 +436,21 @@ fn join_saved_camera_wifi(ssid: &str) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(500));
     }
     log_connection("timed out waiting for a camera DHCP address");
-    Err("Windows did not receive an address from the camera Wi-Fi within 90 seconds.".into())
+    Err("Windows did not receive an address from the saved camera Wi-Fi within 12 seconds."
+        .into())
+}
+
+/// A GUI process otherwise makes Windows flash a console for every `netsh` and
+/// `ipconfig` invocation. Wi-Fi joining retries those tools by design, so they must
+/// remain invisible to the operator.
+#[cfg(all(opc_core_linked, target_os = "windows"))]
+fn windows_background_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 #[cfg(all(opc_core_linked, not(target_os = "windows")))]

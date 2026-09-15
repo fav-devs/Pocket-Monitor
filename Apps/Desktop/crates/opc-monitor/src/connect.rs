@@ -413,7 +413,7 @@ fn camera_card(ui: &mut egui::Ui, name: &str, model: &str) -> egui::Response {
             rect,
             egui::Rounding::same(8.0),
             bg,
-            Stroke::new(1.0, BORDER),
+            Stroke::new(1.0_f32, BORDER),
         );
         let dot = egui::pos2(rect.left() + 20.0, rect.center().y);
         ui.painter().circle_filled(dot, 5.0, ACCENT);
@@ -440,7 +440,7 @@ fn cred_row(ui: &mut egui::Ui, label: &str, value: &str) {
     egui::Frame::none()
         .fill(SURFACE)
         .rounding(egui::Rounding::same(6.0))
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
         .show(ui, |ui| {
             ui.set_min_width(320.0);

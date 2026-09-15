@@ -1177,7 +1177,16 @@ component SheetPanel {
                     x: (parent.width - self.preferred-width) / 2;
                     y: (parent.height - self.preferred-height) / 2;
                 }
-                TouchArea { clicked => { root.tab-picked(i); } }
+                // The host forwards pointer input through its own control router.
+                // Commit the tab on press, not release: a release can be consumed by
+                // a resize/focus transition while the live HUD is presenting.
+                TouchArea {
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down {
+                            root.tab-picked(i);
+                        }
+                    }
+                }
             }
         }
     }

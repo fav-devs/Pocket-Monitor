@@ -1850,6 +1850,16 @@ impl Shell {
         if key == Key::Char('g') || key == Key::Char('G') {
             return self.open_library();
         }
+        if matches!(key, Key::Char('v' | 'V')) {
+            self.gimbal_mode = self.gimbal_mode.next();
+            self.chrome_stale = true;
+            return self
+                .gimbal_mode
+                .commands()
+                .into_iter()
+                .map(Intent::Send)
+                .collect();
+        }
         if self.stick.set(key, true) {
             // Manual control cancels the path, as on the phones.
             let mut intents = self.move_stop();
@@ -2149,6 +2159,19 @@ impl Shell {
     /// Whether a box is out with the body and being polled.
     pub fn is_tracking(&self) -> bool {
         self.tracking.is_some()
+    }
+
+    /// The Pocket reports a subject box and lock state, not facial identity. Keep that
+    /// distinction explicit in the operator copy rather than pretending it knows who
+    /// the person is.
+    pub fn tracking_label(&self) -> Option<&'static str> {
+        self.tracking.as_ref().map(|tracking| {
+            if tracking.saw_lock {
+                "TRACKING SUBJECT"
+            } else {
+                "ACQUIRING SUBJECT"
+            }
+        })
     }
 
     /// A wind or directional write: the body's own blob patched and sent back, then
@@ -2991,14 +3014,25 @@ impl Shell {
                 height: f64::from(self.window.1),
             });
             if let Some((x, y, bw, bh)) = self.hud.drag {
+                let box_x = (fit.x + x * fit.width) as i64;
+                let box_y = (fit.y + y * fit.height) as i64;
                 canvas.stroke(
-                    (fit.x + x * fit.width) as i64,
-                    (fit.y + y * fit.height) as i64,
+                    box_x,
+                    box_y,
                     (bw * fit.width) as u32,
                     (bh * fit.height) as u32,
                     2,
                     opc_ui::canvas::TRACKING,
                 );
+                if let Some(label) = self.tracking_label() {
+                    canvas.label(
+                        box_x + 3,
+                        (box_y - 13).max(fit.y as i64 + 3),
+                        label,
+                        1,
+                        opc_ui::canvas::TRACKING,
+                    );
+                }
             }
             // The tap-to-focus reticle: Mimo's bracketed square with the AE spot
             // marked at its corner.
@@ -3091,13 +3125,16 @@ fn model_name(model_id: i32) -> String {
 }
 
 /// An analog stick onto the gimbal axes with the phones' curve and sensitivity ticks.
-/// Without the core, a plain scaled throw stands in.
+/// The Pocket 3's desktop UDP control direction is opposite to the on-screen and
+/// controller coordinate system: right/up must therefore be negated at this desktop
+/// boundary before the portable mapping encodes tilt/pan. Without the core, a plain
+/// scaled throw stands in.
 #[cfg(opc_core_linked)]
 fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
     let mut out = [0_i32; 2];
     // Safety: `out` has the two slots the core writes.
     let status = unsafe {
-        opc_core_sys::opc_gimbal_stick_axes(x, y, i32::from(sensitivity), out.as_mut_ptr())
+        opc_core_sys::opc_gimbal_stick_axes(-x, -y, i32::from(sensitivity), out.as_mut_ptr())
     };
     if status != opc_core_sys::OPC_RELAY_OK {
         return opc_ui::stick_command(x, y);
@@ -3111,7 +3148,7 @@ fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
 #[cfg(not(opc_core_linked))]
 fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
     let gain = f64::from(sensitivity.clamp(1, 5)) / 4.0;
-    opc_ui::stick_command((x * gain).clamp(-1.0, 1.0), (y * gain).clamp(-1.0, 1.0))
+    opc_ui::stick_command((-x * gain).clamp(-1.0, 1.0), (-y * gain).clamp(-1.0, 1.0))
 }
 
 /// Hold-to-zoom on the triggers at the phones' rate; three stops a second without the core.

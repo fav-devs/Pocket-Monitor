@@ -96,6 +96,21 @@ fn holding_an_arrow_pans_and_letting_go_stops() {
 }
 
 #[test]
+fn v_cycles_the_gimbal_mode_without_opening_a_sheet() {
+    let mut shell = framed();
+    assert_eq!(
+        sent(&shell.press(Key::Char('v'), 0.0)),
+        [Command::GimbalFollow, Command::GimbalTiltLock(1)],
+        "V moves Follow to Tilt Locked"
+    );
+    assert_eq!(
+        sent(&shell.press(Key::Char('V'), 0.1)),
+        [Command::GimbalFpv],
+        "V then moves Tilt Locked to FPV"
+    );
+}
+
+#[test]
 fn a_held_stick_is_kept_alive_and_a_resting_one_is_not() {
     let mut shell = framed();
     shell.press(Key::Left, 0.0);
@@ -326,10 +341,10 @@ fn a_controller_drives_the_shell_on_the_phones_map() {
     );
     // The stick throws with the operator's sensitivity: 4 is the captured throw.
     let full = sent(&shell.controller_stick(1.0, 0.0, 0.7));
-    assert_eq!(full, [opc_ui::stick_command(1.0, 0.0)]);
+    assert_eq!(full, [opc_ui::stick_command(-1.0, 0.0)]);
     shell.pick_for_test(Pick::StickSensitivity(2));
     let half = sent(&shell.controller_stick(1.0, 0.0, 0.8));
-    assert_eq!(half, [opc_ui::stick_command(0.5, 0.0)]);
+    assert_eq!(half, [opc_ui::stick_command(-0.5, 0.0)]);
     // Letting go rests the gimbal once, and a resting stick sends nothing more.
     assert_eq!(
         sent(&shell.controller_stick(0.0, 0.0, 0.9)),
@@ -403,6 +418,7 @@ fn a_box_is_polled_until_the_body_locks_and_then_until_it_lets_go() {
     shell.pointer_moved(640.0, 360.0);
     shell.pointer_up(640.0, 360.0, 0.0);
     assert!(shell.is_tracking());
+    assert_eq!(shell.tracking_label(), Some("ACQUIRING SUBJECT"));
     assert!(shell.tick(0.1).is_empty(), "not yet");
     assert_eq!(sent(&shell.tick(0.5)), [Command::TrackPoll]);
     assert!(shell.tick(0.6).is_empty(), "one poll per half second");
@@ -419,6 +435,7 @@ fn a_box_is_polled_until_the_body_locks_and_then_until_it_lets_go() {
     shell.pointer_moved(640.0, 360.0);
     shell.pointer_up(640.0, 360.0, 10.0);
     shell.tracking_reply(TrackingPoll::Locked(Some((0.3, 0.3, 0.2, 0.2))), 10.5);
+    assert_eq!(shell.tracking_label(), Some("TRACKING SUBJECT"));
     shell.tick(12.5);
     assert!(shell.is_tracking());
     // The first idle after a lock is the subject gone.
@@ -947,7 +964,7 @@ fn gimbal_pad_throws_on_down_and_rests_on_release_and_cancel() {
     // positive on the pad exactly as the Up arrow is.
     let thrown = sent(&shell.control_down(280.0, 600.0, 0.0).expect("gimbal pad"));
     assert!(
-        matches!(thrown.as_slice(), [Command::GimbalStick { axis0, axis1 }] if *axis0 > 1024 && *axis1 > 1024)
+        matches!(thrown.as_slice(), [Command::GimbalStick { axis0, axis1 }] if *axis0 < 1024 && *axis1 < 1024)
     );
     assert_eq!(
         sent(&shell.control_up(280.0, 600.0, 0.0)),
@@ -1199,7 +1216,7 @@ fn with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest() {
     };
     let start = axis0(&first);
     assert!(
-        start > 1024 && start < 1424,
+        start < 1024 && start > 624,
         "the first step is a fraction: {start}"
     );
     let mut last = start;
@@ -1208,13 +1225,13 @@ fn with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest() {
         let step = sent(&shell.tick(t));
         if !step.is_empty() {
             let now = axis0(&step);
-            assert!(now >= last, "the throw only grows toward the target");
+            assert!(now <= last, "the throw only grows toward the target");
             last = now;
         }
         t += 0.05;
     }
     assert!(
-        last >= 1420,
+        last <= 628,
         "held long enough, the throw reaches full: {last}"
     );
 

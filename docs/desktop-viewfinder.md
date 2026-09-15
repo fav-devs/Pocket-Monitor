@@ -15,6 +15,11 @@ BLE transport lands; the state machine behind it is already in `opc-camera`.
 
 ## What it looks like
 
+On a saved camera, Windows gets a short 12-second opportunity to rejoin its protected
+Wi-Fi profile. If the camera is off or its network is unavailable, the app moves straight
+to the connection screen rather than leaving the desktop blank through Windows' long
+WLAN timeout.
+
 The picture fills the window, keeping its proportions — a 16:9 feed in a window the
 operator dragged square gets bars, not narrow faces. Framing is what a viewfinder is for.
 
@@ -42,6 +47,9 @@ over the picture:
   mode); `CTR`, `FOLLOW`, `STILL` and fullscreen on the right; and the mode strip
   (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · PANO · LIVESTREAM`) with the
   active mode in Mimo yellow and Pano / Livestream greyed out.
+
+`V` cycles the gimbal's Follow, Tilt Locked and FPV modes without opening Settings;
+the Settings → Camera tab remains the place to set gimbal speed and ramp.
 - **Middle** — only a phase message (`WAITING FOR LIVE VIEW`, `APPROVE ON THE CAMERA`,
   `RECOVERING FEED`), the take countdown, or a failure. Before the first decoded
   picture, the window presents this chrome over black rather than leaving the native
@@ -322,6 +330,9 @@ disabled while the link is recovering or failed.
 
 A finger drags a tracking box on the unobstructed fitted image, exactly as the mouse
 does. A press that starts in a control stays a control — it can never become tracking.
+The box is labelled **ACQUIRING SUBJECT** until the Pocket confirms its lock, then
+**TRACKING SUBJECT**. The camera supplies a subject box and lock state, not a person’s
+name or identity.
 Keyboard shortcuts remain available.
 
 A click (or a tap) that is not a drag is **tap-to-focus**: Mimo's four-write burst
