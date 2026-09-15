@@ -48,6 +48,11 @@ approximately 25 fps through normal and fast smoothed takes.
 UDP receive re-arms on the network queue, not after a main-actor hop. A busy HUD
 must not stop the socket.
 
+Desktop debug builds retain symbols and assertions but compile the Rust dev profile at
+`opt-level = 2`; a completely unoptimised 720p plane copy and software HUD is not a
+meaningful camera-performance build. The window/Vulkan presenter remains on its owner
+thread; network and camera-session pumping remain independent of it.
+
 Depacketize and scope accumulation stay off the UI thread. Compose/SwiftUI
 invalidates at the HUD budget, not per video packet.
 
