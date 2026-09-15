@@ -14,8 +14,11 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use crate::device::Gpu;
 use crate::error::{Context, RenderError};
 
-/// How many frames may be recorded before waiting on the oldest.
-const FRAMES_IN_FLIGHT: usize = 2;
+/// One staging allocation is shared by every frame. Keep one submission in flight so
+/// `begin`'s fence proves the previous upload has finished before the CPU overwrites it.
+/// This is still pipelined with presentation, but unlike a device-wide idle it does not
+/// stall unrelated Vulkan work (which was particularly costly on integrated AMD GPUs).
+const FRAMES_IN_FLIGHT: usize = 1;
 
 /// What happened to a present.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

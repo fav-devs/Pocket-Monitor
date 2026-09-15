@@ -24,7 +24,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::link::{FromCamera, Link};
+use crate::link::{diagnostic, FromCamera, Link};
 use opc_monitor::shell::{Intent, Shell, TouchPhase as Finger};
 
 /// A backlog longer than this means the window stalled. Predicted pictures cannot be
@@ -57,6 +57,13 @@ struct View {
     decoder: Option<Decoder>,
     pending: Vec<Unit>,
     latest: Option<OwnedPicture>,
+    /// What the window presents until the first decoded picture arrives. Without this,
+    /// winit leaves the newly created surface white and hides the connection state.
+    placeholder: OwnedPicture,
+    /// The idle placeholder need not be submitted again until its chrome or surface changes.
+    placeholder_presented: bool,
+    /// Avoid flooding stderr with the same renderer failure every redraw.
+    render_error: Option<String>,
     lut: Option<Lut>,
     /// The false-colour paint and weight lattices, while that assist is on.
     false_color: Option<(Lut, Lut)>,
@@ -290,7 +297,10 @@ impl View {
     fn pump_camera(&mut self) {
         for event in self.link.drain() {
             match event {
-                FromCamera::Opened => self.shell.set_phase(Phase::Waiting),
+                FromCamera::Opened => {
+                    self.shell.set_phase(Phase::Waiting);
+                    self.placeholder_presented = false;
+                }
                 FromCamera::Picture(bytes) => {
                     // The core marks keyframes; the depacketizer hands over whole access
                     // units, so the first NAL type is enough to know one.
@@ -311,6 +321,7 @@ impl View {
                 FromCamera::Status(status) => {
                     self.media.status(status.in_playback);
                     self.shell.set_status(*status);
+                    self.placeholder_presented = false;
                     if matches!(self.shell.phase(), Phase::Waiting) && self.latest.is_some() {
                         self.shell.set_phase(Phase::Live);
                     }
@@ -318,11 +329,15 @@ impl View {
                 FromCamera::Recovering(recovery) => {
                     self.shell.set_phase(Phase::Recovering);
                     self.shell.note_recovery(&format!("{recovery:?}"));
+                    self.placeholder_presented = false;
                     if matches!(recovery, Recovery::RebuildDecoder) {
                         self.rebuild_decoder();
                     }
                 }
-                FromCamera::Lost(reason) => self.shell.set_phase(Phase::Failed(reason)),
+                FromCamera::Lost(reason) => {
+                    self.shell.set_phase(Phase::Failed(reason));
+                    self.placeholder_presented = false;
+                }
             }
         }
     }
@@ -342,13 +357,26 @@ impl View {
                 // Everything queued was for the old decoder's state.
                 self.pending.clear();
                 self.latest = None;
+                self.placeholder_presented = false;
             }
             Err(error) => {
                 eprintln!("could not rebuild the decoder: {error}");
                 self.decoder = None;
                 self.link.note_decoder_failed(true);
+                self.shell
+                    .set_phase(Phase::Failed(format!("decoder unavailable: {error}")));
+                self.placeholder_presented = false;
             }
         }
+    }
+
+    fn note_decode_failure(&mut self, error: impl std::fmt::Display) {
+        eprintln!("decoder failed: {error}");
+        diagnostic(format_args!("decoder failed: {error}"));
+        self.link.note_decoder_failed(true);
+        self.shell
+            .set_phase(Phase::Failed(format!("decoder failed: {error}")));
+        self.placeholder_presented = false;
     }
 
     /// Decodes everything waiting, keeping the newest picture.
@@ -359,10 +387,12 @@ impl View {
             };
             let codec = codec_of(&unit.bytes).unwrap_or(Codec::Hevc);
             match Decoder::new(codec) {
-                Ok(decoder) => self.decoder = Some(decoder),
+                Ok(decoder) => {
+                    diagnostic(format_args!("created {codec:?} decoder"));
+                    self.decoder = Some(decoder);
+                }
                 Err(error) => {
-                    eprintln!("could not create {codec:?} decoder: {error}");
-                    self.link.note_decoder_failed(true);
+                    self.note_decode_failure(format!("could not create {codec:?}: {error}"));
                     return;
                 }
             }
@@ -376,13 +406,44 @@ impl View {
                 decoder.flush();
             }
         }
+        let mut failure = None;
+        let had_picture = self.latest.is_some();
         for unit in self.pending.drain(..) {
-            if decoder.send(&unit.bytes).is_err() {
-                continue;
+            if let Err(error) = decoder.send(&unit.bytes) {
+                // Pocket 3 sends AVC parameter sets before its first coded slice.
+                // FFmpeg records the SPS/PPS then returns EINVAL / "no frame" for
+                // that configuration-only packet. It is startup, not a dead decoder.
+                if decoder.codec() == Codec::H264 && is_h264_configuration(&unit.bytes) {
+                    diagnostic("accepted AVC configuration packet; awaiting keyframe");
+                    continue;
+                }
+                failure = Some(error);
+                break;
             }
-            while let Ok(Some(picture)) = decoder.receive() {
-                self.latest = Some(OwnedPicture::copy_from(&picture));
+            loop {
+                match decoder.receive() {
+                    Ok(Some(picture)) => {
+                        if !had_picture && self.latest.is_none() {
+                            diagnostic(format_args!(
+                                "decoded first picture {}x{} keyframe={}",
+                                picture.width, picture.height, picture.is_keyframe
+                            ));
+                        }
+                        self.latest = Some(OwnedPicture::copy_from(&picture));
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                }
             }
+            if failure.is_some() {
+                break;
+            }
+        }
+        if let Some(error) = failure {
+            self.note_decode_failure(error);
         }
         self.sample_scopes();
     }
@@ -540,16 +601,25 @@ impl View {
         let latest = if on_screen {
             Some(self.media.picture().clone())
         } else {
-            self.latest.clone()
+            Some(
+                self.latest
+                    .clone()
+                    .unwrap_or_else(|| self.placeholder.clone()),
+            )
         };
+        let showing_placeholder = !on_screen && self.latest.is_none();
+        if showing_placeholder && self.placeholder_presented {
+            return;
+        }
         let (Some(renderer), Some(latest)) = (self.renderer.as_mut(), latest.as_ref()) else {
-            // No picture yet. ControlFlow::Wait (set in about_to_wait) keeps the GPU
-            // idle; nothing to present until the first frame arrives.
             return;
         };
 
         self.shell.set_source(latest.width, latest.height);
-        if !on_screen && matches!(self.shell.phase(), Phase::Waiting | Phase::Recovering) {
+        if !showing_placeholder
+            && !on_screen
+            && matches!(self.shell.phase(), Phase::Waiting | Phase::Recovering)
+        {
             self.shell.set_phase(Phase::Live);
         }
 
@@ -576,15 +646,33 @@ impl View {
 
         match renderer.present(&picture, options) {
             Ok(Presented::Shown) => {
+                if self.render_error.take().is_some() {
+                    if let Some(window) = self.window.as_ref() {
+                        window.set_title("OpenPocketCine");
+                    }
+                }
+                self.placeholder_presented = showing_placeholder;
                 if on_screen {
                     self.media.note_presented(now);
-                } else {
+                } else if !showing_placeholder {
                     self.shell.note_presented(now);
                     self.link.note_presented();
                 }
             }
-            Ok(Presented::Rebuilt) => {}
-            Err(error) => eprintln!("present failed: {error}"),
+            Ok(Presented::Rebuilt) => self.placeholder_presented = false,
+            Err(error) => {
+                let message = error.to_string();
+                if self.render_error.as_deref() != Some(message.as_str()) {
+                    eprintln!("present failed: {message}");
+                    if let Some(window) = self.window.as_ref() {
+                        window.set_title("OpenPocketCine — renderer failed");
+                    }
+                    self.render_error = Some(message);
+                }
+                self.shell.set_phase(Phase::Failed(
+                    "renderer failed — see terminal output".to_string(),
+                ));
+            }
         }
         self.feed_vcam(&picture, now);
     }
@@ -634,6 +722,33 @@ fn is_keyframe(access_unit: &[u8]) -> bool {
         index += start;
     }
     false
+}
+
+/// AVC SPS/PPS packets configure FFmpeg but do not contain a picture. Pocket 3 emits
+/// them separately at first connect, and FFmpeg's H.264 decoder reports `no frame`.
+fn is_h264_configuration(access_unit: &[u8]) -> bool {
+    let mut index = 0;
+    let mut configuration = false;
+    while index + 4 < access_unit.len() {
+        let start = if access_unit[index..].starts_with(&[0, 0, 0, 1]) {
+            4
+        } else if access_unit[index..].starts_with(&[0, 0, 1]) {
+            3
+        } else {
+            index += 1;
+            continue;
+        };
+        let Some(header) = access_unit.get(index + start) else {
+            break;
+        };
+        match header & 0x1F {
+            1..=5 => return false,
+            7 | 8 => configuration = true,
+            _ => {}
+        }
+        index += start;
+    }
+    configuration
 }
 
 /// The camera declares its codec in the first Annex-B NAL. Most Pockets send HEVC,
@@ -730,6 +845,7 @@ impl ApplicationHandler for View {
                     renderer.resize(width, height);
                 }
                 self.shell.set_window(width, height);
+                self.placeholder_presented = false;
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let Some(key) = translate(&event.logical_key) else {
@@ -854,6 +970,9 @@ pub fn run(options: Options) -> Result<(), String> {
         decoder: None,
         pending: Vec::new(),
         latest: None,
+        placeholder: OwnedPicture::black(1280, 720),
+        placeholder_presented: false,
+        render_error: None,
         lut: options.lut,
         false_color: None,
         still: options.still,

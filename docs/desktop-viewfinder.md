@@ -43,7 +43,10 @@ over the picture:
   (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · PANO · LIVESTREAM`) with the
   active mode in Mimo yellow and Pano / Livestream greyed out.
 - **Middle** — only a phase message (`WAITING FOR LIVE VIEW`, `APPROVE ON THE CAMERA`,
-  `RECOVERING FEED`), the take countdown, or a failure.
+  `RECOVERING FEED`), the take countdown, or a failure. Before the first decoded
+  picture, the window presents this chrome over black rather than leaving the native
+  window's white surface exposed. A renderer failure is also named in the window title
+  and terminal output.
 
 Three sheets open over the picture and close on `Esc`, the `×`, or a tap outside:
 

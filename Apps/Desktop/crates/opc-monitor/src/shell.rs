@@ -314,6 +314,8 @@ pub struct Shell {
     move_countdown: Option<Countdown>,
     attitude_seq: u32,
     attitude_at: f64,
+    /// Status can arrive at video rate; keep its model current but bound HUD raster work.
+    next_status_chrome_at: f64,
     last_now: f64,
     move_ticked_at: f64,
 }
@@ -410,6 +412,7 @@ impl Shell {
             move_countdown: None,
             attitude_seq: 0,
             attitude_at: f64::NEG_INFINITY,
+            next_status_chrome_at: f64::NEG_INFINITY,
             last_now: 0.0,
             move_ticked_at: 0.0,
             drawn_second: None,
@@ -676,7 +679,13 @@ impl Shell {
             self.attitude_at = self.last_now;
         }
         self.hud.status = status;
-        self.chrome_stale = true;
+        // Pocket 3 pushes status at roughly the video rate. Re-rasterising a 720p HUD
+        // for every push starves integrated GPUs; keep the model current but refresh
+        // its bitmap at 4 Hz.
+        if self.last_now >= self.next_status_chrome_at {
+            self.chrome_stale = true;
+            self.next_status_chrome_at = self.last_now + 0.25;
+        }
         // A colour-mode or ISO change moves the false-colour zones.
         self.sync_false_color();
         self.sync_zoom();

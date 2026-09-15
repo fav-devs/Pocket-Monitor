@@ -514,6 +514,15 @@ impl FeedRenderer {
     ) -> Result<Rgba, RenderError> {
         let (display_width, display_height) = display;
         self.prepare(picture, display_width, display_height, options)?;
+        // `render` is an explicit still capture, not the live swapchain path. It can
+        // wait for prior display work before reusing the shared upload buffers.
+        unsafe {
+            self.gpu
+                .device
+                .device_wait_idle()
+                .context("vkDeviceWaitIdle before still staging")?;
+        }
+        self.stage(picture)?;
 
         let targets = self.targets.as_ref().expect("targets were just prepared");
         let device = &self.gpu.device;
@@ -594,13 +603,18 @@ impl FeedRenderer {
         }
         self.prepare(picture, width, height, options)?;
 
-        let presenter = self
+        let begun = self
             .presenter
             .as_mut()
-            .expect("a presenter was just checked");
-        let Some((index, command)) = presenter.begin(&self.gpu)? else {
+            .expect("a presenter was just checked")
+            .begin(&self.gpu)?;
+        let Some((index, command)) = begun else {
             return Ok(Presented::Rebuilt);
         };
+        // `begin` waited for the sole in-flight frame. Only now is it safe to
+        // overwrite the shared plane and overlay staging buffers for this frame.
+        self.stage(picture)?;
+        let presenter = self.presenter.as_ref().expect("still presenting");
         let framebuffer = presenter.framebuffer(index);
         let extent = presenter.extent;
         let pipeline = presenter.pipeline;
@@ -624,7 +638,8 @@ impl FeedRenderer {
         presenter.end(&self.gpu, index)
     }
 
-    /// Sizes resources, uploads the planes' staging copies, and refreshes descriptors.
+    /// Sizes resources and refreshes descriptors. Plane uploads happen after the
+    /// presentation fence has completed, immediately before recording the frame.
     fn prepare(
         &mut self,
         picture: &Picture<'_>,
@@ -662,17 +677,11 @@ impl FeedRenderer {
             self.write_descriptors();
             self.descriptors_dirty = false;
         }
-        // Plane and overlay staging are single shared host buffers. `prepare` runs
-        // before the presenter waits its next frame fence, so writing them here while
-        // an older submission is copying them is a host/GPU race. It showed up as a
-        // corrupted bottom row on Windows. Keep the producer lifetime explicit until
-        // staging is made per-frame; correctness beats sampling a half-written plane.
-        unsafe {
-            self.gpu
-                .device
-                .device_wait_idle()
-                .context("vkDeviceWaitIdle before staging")?;
-        }
+        Ok(())
+    }
+
+    /// Copies one picture and its chrome after the live present fence is signalled.
+    fn stage(&mut self, picture: &Picture<'_>) -> Result<(), RenderError> {
         self.stage_planes(picture)?;
         self.stage_overlay()
     }
