@@ -6,8 +6,8 @@
 //! which is transcribed from the iOS driver: the DUML frame sequence advances by one per
 //! command, the transport sequence by eight, and the command counter by one.
 
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::io::{self, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::command;
@@ -21,12 +21,22 @@ use crate::transport::{self, AckPump, PktType};
 use crate::watchdog::{Recovery, Watchdog};
 use crate::{softap, CameraError, Command};
 
-/// How long a read may block before the caller gets a turn to tick the clock. Short
-/// enough that a 40 Hz pump keeps its cadence.
-const READ_TIMEOUT: Duration = Duration::from_millis(5);
 const READ_BUFFER: usize = 4096;
+/// Bound a busy status/video burst so continuous inbound traffic cannot starve the
+/// 40 Hz pktType-0x04 window ACK.
+const MAX_DATAGRAMS_PER_POLL: usize = 8;
 /// The camera ignores `0x09/0xa8` when it follows subscriptions in the same burst.
 const SUBSCRIBE_SETTLE: f64 = 0.150;
+/// Match the portable first-picture policy: give a reported Pocket 3 format a moment
+/// to settle before restoring it, then ask for live view on the same UDP flow.
+const FIRST_PICTURE_FORMAT_SETTLE: f64 = 0.8;
+const FIRST_PICTURE_POKE_AFTER: f64 = 2.0;
+const FIRST_PICTURE_UNKNOWN_FORMAT_GRACE: f64 = 8.0;
+/// Telemetry can continue after an app session expires, but the camera stops its
+/// encoder. The mobile shells refresh app presence once a second.
+const APP_PRESENCE_INTERVAL: f64 = 1.0;
+const TCP_POKE_PORT: u16 = 7001;
+const TCP_POKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What happened while polling.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +45,12 @@ pub enum SessionEvent {
     Opened,
     /// A complete HEVC access unit.
     Picture(Vec<u8>),
+    /// The first raw video datagram reached this UDP session. This is deliberately
+    /// distinct from `Picture`: a depacketizer may correctly wait for additional
+    /// fragments before it can emit a decodable access unit.
+    VideoStarted,
+    /// Pocket 3 needed a temporary format change to start its first live encoder.
+    FirstPictureFormatPoke { original: (u8, u8), kick: (u8, u8) },
     /// A command reply or a piece of telemetry.
     Frame(DumlFrame),
     /// What became of a live-control SET.
@@ -46,6 +62,21 @@ pub enum SessionEvent {
     /// The feed stalled and the watchdog acted. `RebuildDecoder` and `FullRejoin` are
     /// the shell's to carry out; the other two are handled here.
     Recovering(Recovery),
+}
+
+/// One-second transport facts for an operator log. They deliberately contain cursors
+/// and rates, never camera credentials or payload bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionDiagnostics {
+    pub acks: u32,
+    pub max_ack_gap: f64,
+    pub video_packets: u32,
+    pub access_units: u32,
+    pub status_packets: u32,
+    pub video_cursor: u16,
+    pub acked_data_cursor: u16,
+    pub extra_cursor: u16,
+    pub last_video_age: f64,
 }
 
 #[derive(Debug)]
@@ -88,6 +119,10 @@ impl From<CameraError> for SessionError {
 #[derive(Debug)]
 pub struct CameraSession {
     socket: UdpSocket,
+    /// Pocket cameras arm UDP live view after this TCP `SetPairingPIN("osmo")` write.
+    /// It stays open across UDP rebuilds; closing it makes the camera RST the live flow.
+    _tcp_poke: Option<TcpStream>,
+    tcp_poke_status: String,
     remote: SocketAddr,
     session_id: u16,
     base_seq: u16,
@@ -104,6 +139,19 @@ pub struct CameraSession {
     /// A pending enable after the subscription writes have reached the camera.
     enable_not_before: Option<f64>,
     status: StatusDecoder,
+    model_id: Option<i32>,
+    /// A Pocket 3 format poke is one shot per connection, never while recording.
+    first_picture_format_poked: bool,
+    format_restore: Option<((u8, u8), f64)>,
+    format_enable_at: Option<f64>,
+    last_live_enable: Option<f64>,
+    last_app_presence: Option<f64>,
+    last_ack_at: Option<f64>,
+    diagnostic_acks: u32,
+    diagnostic_max_ack_gap: f64,
+    diagnostic_video_packets: u32,
+    diagnostic_access_units: u32,
+    diagnostic_status_packets: u32,
     started: Instant,
     buffer: Vec<u8>,
 }
@@ -127,11 +175,14 @@ impl CameraSession {
         session_id: u16,
         base_seq: u16,
     ) -> Result<Self, SessionError> {
+        let (tcp_poke, tcp_poke_status) = Self::open_tcp_poke(remote);
         let socket = Self::open_socket(remote)?;
 
         let started = Instant::now();
         Ok(Self {
             socket,
+            _tcp_poke: tcp_poke,
+            tcp_poke_status,
             remote,
             session_id,
             base_seq,
@@ -145,9 +196,47 @@ impl CameraSession {
             watchdog: Watchdog::new(),
             enable_not_before: None,
             status: StatusDecoder::new(None),
+            model_id: None,
+            first_picture_format_poked: false,
+            format_restore: None,
+            format_enable_at: None,
+            last_live_enable: None,
+            last_app_presence: None,
+            last_ack_at: None,
+            diagnostic_acks: 0,
+            diagnostic_max_ack_gap: 0.0,
+            diagnostic_video_packets: 0,
+            diagnostic_access_units: 0,
+            diagnostic_status_packets: 0,
             started,
             buffer: vec![0; READ_BUFFER],
         })
+    }
+
+    /// The Pocket's TCP 7001 control channel is a setup poke, not a video transport.
+    /// Keep a successful connection for the entire session, but retain UDP-only fallback
+    /// for models and test peers which do not expose that port.
+    fn open_tcp_poke(remote: SocketAddr) -> (Option<TcpStream>, String) {
+        let SocketAddr::V4(address) = remote else {
+            return (None, "skipped (non-IPv4 peer)".to_string());
+        };
+        if *address.ip() != Ipv4Addr::new(192, 168, 2, 1) || address.port() != 9004 {
+            return (None, "skipped (non-standard camera peer)".to_string());
+        }
+        let target = SocketAddr::new(IpAddr::V4(*address.ip()), TCP_POKE_PORT);
+        let mut stream = match TcpStream::connect_timeout(&target, TCP_POKE_TIMEOUT) {
+            Ok(stream) => stream,
+            Err(error) => return (None, format!("failed to connect: {error}")),
+        };
+        let frame = match transport::pair_set_pin("osmo", None) {
+            Ok(frame) => frame,
+            Err(error) => return (None, format!("could not encode SetPairingPIN: {error}")),
+        };
+        if let Err(error) = stream.write_all(&frame).and_then(|_| stream.flush()) {
+            return (None, format!("could not write SetPairingPIN: {error}"));
+        }
+        let _ = stream.set_nodelay(true);
+        (Some(stream), "ready (SetPairingPIN osmo sent)".to_string())
     }
 
     /// Opens the camera flow on a new ephemeral client port. The camera's :9004 is
@@ -159,7 +248,11 @@ impl CameraSession {
         if !softap::may_bind_local_port(0) {
             return Err(SessionError::ForbiddenLocalPort(local));
         }
-        socket.set_read_timeout(Some(READ_TIMEOUT))?;
+        // Do not use a short synchronous receive timeout here. Windows rounds those
+        // to its scheduler quantum, which made a nominal 40 Hz ACK pump reach the
+        // Pocket at only 31 Hz. `poll` drains what is ready and immediately gives the
+        // sequencer another clock tick; the desktop worker yields when idle.
+        socket.set_nonblocking(true)?;
         socket.connect(remote)?;
         Ok(socket)
     }
@@ -174,6 +267,7 @@ impl CameraSession {
         self.pump = AckPump::new(self.base_seq);
         self.depacketizer.reset();
         self.enable_not_before = None;
+        self.last_app_presence = None;
         self.health.note_datalink_rebuilt(now);
         Ok(())
     }
@@ -188,6 +282,10 @@ impl CameraSession {
 
     pub fn remote(&self) -> SocketAddr {
         self.remote
+    }
+
+    pub fn tcp_poke_status(&self) -> &str {
+        &self.tcp_poke_status
     }
 
     pub fn phase(&self) -> Phase {
@@ -207,12 +305,39 @@ impl CameraSession {
     /// Tells the status decoder which body this is, so it reads the model-specific
     /// encodings — colour modes differ between a Pocket 4, a Pocket 3 and a Nano.
     pub fn set_model(&mut self, model_id: i32) {
+        self.model_id = Some(model_id);
         self.status = StatusDecoder::new(Some(model_id));
     }
 
     /// Which rung of the recover ladder the watchdog is resting on.
     pub fn recovery_stage(&self) -> String {
         self.watchdog.stage()
+    }
+
+    /// Returns and resets the last reporting interval's transport facts.
+    pub fn take_diagnostics(&mut self) -> SessionDiagnostics {
+        let now = self.now();
+        let windows = self.pump.windows();
+        let snapshot = self
+            .health
+            .snapshot(now, matches!(self.phase(), Phase::Waiting | Phase::Live));
+        let diagnostics = SessionDiagnostics {
+            acks: self.diagnostic_acks,
+            max_ack_gap: self.diagnostic_max_ack_gap,
+            video_packets: self.diagnostic_video_packets,
+            access_units: self.diagnostic_access_units,
+            status_packets: self.diagnostic_status_packets,
+            video_cursor: windows.video,
+            acked_data_cursor: windows.acked_data,
+            extra_cursor: windows.extra,
+            last_video_age: snapshot.last_video_packet_age,
+        };
+        self.diagnostic_acks = 0;
+        self.diagnostic_max_ack_gap = 0.0;
+        self.diagnostic_video_packets = 0;
+        self.diagnostic_access_units = 0;
+        self.diagnostic_status_packets = 0;
+        diagnostics
     }
 
     /// Tells the session whether the machine is still on the camera's network. A socket
@@ -277,6 +402,7 @@ impl CameraSession {
             self.enable_not_before = None;
             self.dispatch(Outgoing::EnableLiveView)?;
         }
+        self.drive_app_presence_keepalive(now)?;
         if self.sequencer.phase() == Phase::Unreachable {
             events.push(SessionEvent::Unreachable);
         }
@@ -286,6 +412,9 @@ impl CameraSession {
 
     /// Asks the watchdog whether the feed has stalled, and acts on its answer.
     fn recover(&mut self, now: f64, events: &mut Vec<SessionEvent>) -> Result<(), SessionError> {
+        if self.drive_first_picture_format_poke(now, events)? {
+            return Ok(());
+        }
         let live = matches!(self.sequencer.phase(), Phase::Waiting | Phase::Live);
         let snapshot = self.health.snapshot(now, live);
         let Some(action) = self.watchdog.tick(&snapshot) else {
@@ -299,6 +428,7 @@ impl CameraSession {
                 let datagram = self.command_datagram(Command::LiveViewEnable)?;
                 self.socket.send(&datagram)?;
                 self.health.note_enable(now);
+                self.last_live_enable = Some(now);
             }
             Recovery::ReopenDatalink | Recovery::FullRejoin => {
                 // The desktop shell already owns a live SoftAP connection. Until its
@@ -313,8 +443,109 @@ impl CameraSession {
         Ok(())
     }
 
+    /// Match iOS and Android's `keepalive`: a window ACK holds the send window,
+    /// while app presence holds the camera's live-encoder lease.
+    fn drive_app_presence_keepalive(&mut self, now: f64) -> Result<(), SessionError> {
+        if !matches!(self.sequencer.phase(), Phase::Waiting | Phase::Live)
+            || self
+                .last_app_presence
+                .is_some_and(|sent| now - sent < APP_PRESENCE_INTERVAL)
+        {
+            return Ok(());
+        }
+        self.send_direct(Command::AppPresence)?;
+        self.send_ack()?;
+        self.last_app_presence = Some(now);
+        Ok(())
+    }
+
+    /// Pocket 3 can expose a healthy HUD and still leave its first live encoder idle.
+    /// The mobile shells restart it once by changing to another legal resolution and
+    /// back. Keep this bounded and never alter a recording.
+    fn drive_first_picture_format_poke(
+        &mut self,
+        now: f64,
+        events: &mut Vec<SessionEvent>,
+    ) -> Result<bool, SessionError> {
+        if self.model_id != Some(0x20)
+            || self.health.saw_picture()
+            || self.status.status().is_recording
+        {
+            return Ok(false);
+        }
+        if let Some((original, at)) = self.format_restore {
+            if now < at {
+                return Ok(true);
+            }
+            self.send_direct(Command::SetVideoFormat {
+                resolution: original.0,
+                frame_rate: original.1,
+            })?;
+            self.format_restore = None;
+            self.format_enable_at = Some(now + FIRST_PICTURE_FORMAT_SETTLE);
+            return Ok(true);
+        }
+        if let Some(at) = self.format_enable_at {
+            if now < at {
+                return Ok(true);
+            }
+            self.format_enable_at = None;
+            self.send_direct(Command::LiveViewEnable)?;
+            self.health.note_enable(now);
+            self.last_live_enable = Some(now);
+            return Ok(false);
+        }
+        if self.first_picture_format_poked {
+            return Ok(false);
+        }
+        let Some(enabled_at) = self.last_live_enable else {
+            return Ok(false);
+        };
+        let since_enable = now - enabled_at;
+        let status = self.status.status();
+        let known = status.video_resolution.is_some()
+            || status.video_frame_rate.is_some()
+            || !status.available_formats.is_empty();
+        if since_enable < FIRST_PICTURE_POKE_AFTER
+            || (!known && since_enable < FIRST_PICTURE_UNKNOWN_FORMAT_GRACE)
+        {
+            return Ok(false);
+        }
+        let original = (
+            status.video_resolution.unwrap_or(0x10),
+            status.video_frame_rate.unwrap_or(0x03),
+        );
+        let kick = status
+            .available_formats
+            .iter()
+            .copied()
+            .find(|format| format.1 == original.1 && format.0 != original.0)
+            .or_else(|| {
+                status
+                    .available_formats
+                    .iter()
+                    .copied()
+                    .find(|format| format.0 != original.0)
+            })
+            .unwrap_or((if original.0 == 0x10 { 0x0A } else { 0x10 }, original.1));
+        self.send_direct(Command::SetVideoFormat {
+            resolution: kick.0,
+            frame_rate: kick.1,
+        })?;
+        self.first_picture_format_poked = true;
+        self.format_restore = Some((original, now + FIRST_PICTURE_FORMAT_SETTLE));
+        events.push(SessionEvent::FirstPictureFormatPoke { original, kick });
+        Ok(true)
+    }
+
+    fn send_direct(&mut self, command: Command) -> Result<(), SessionError> {
+        let datagram = self.command_datagram(command)?;
+        self.socket.send(&datagram)?;
+        Ok(())
+    }
+
     fn drain(&mut self, events: &mut Vec<SessionEvent>) -> Result<(), SessionError> {
-        loop {
+        for _ in 0..MAX_DATAGRAMS_PER_POLL {
             let mut scratch = std::mem::take(&mut self.buffer);
             let read = self.socket.recv(&mut scratch);
             let outcome = match read {
@@ -354,6 +585,7 @@ impl CameraSession {
             };
             self.receive(&datagram, events)?;
         }
+        Ok(())
     }
 
     fn receive(
@@ -384,17 +616,24 @@ impl CameraSession {
 
         match PktType::of(datagram) {
             Some(PktType::Video) => {
+                self.diagnostic_video_packets = self.diagnostic_video_packets.saturating_add(1);
                 self.sequencer.note_picture();
+                let first_video_packet = !self.health.saw_picture();
                 self.health.note_video_packet(now);
+                if first_video_packet {
+                    events.push(SessionEvent::VideoStarted);
+                }
                 // The whole datagram, header included: the core reads the packet type at
                 // byte 6 and the fragment index at bytes 16 to 18, and the encoded body
                 // only starts at byte 20.
                 if let Some(unit) = self.depacketizer.feed(datagram) {
+                    self.diagnostic_access_units = self.diagnostic_access_units.saturating_add(1);
                     self.health.note_access_unit(now);
                     events.push(SessionEvent::Picture(unit));
                 }
             }
             Some(PktType::Telemetry | PktType::AckedData | PktType::Command) => {
+                self.diagnostic_status_packets = self.diagnostic_status_packets.saturating_add(1);
                 self.health.note_status(now);
                 let mut changed = false;
                 for frame in transport::scan_frames(datagram)? {
@@ -424,11 +663,19 @@ impl CameraSession {
 
     /// Subscribes to the status streams the HUD reads.
     fn send_registration(&mut self) -> Result<(), SessionError> {
-        for command in [Command::AppPresence, Command::GimbalInit] {
+        // Mobile's observed spine is device info, app presence, gimbal init, each
+        // immediately window-ACKed. Pocket 3 otherwise gives HUD telemetry but can
+        // withhold pktType-0x02 forever.
+        for command in [
+            Command::AppDeviceInfo,
+            Command::AppPresence,
+            Command::GimbalInit,
+        ] {
             let datagram = self.command_datagram(command)?;
             self.socket.send(&datagram)?;
             self.send_ack()?;
         }
+        self.last_app_presence = Some(self.now());
         Ok(())
     }
 
@@ -458,9 +705,18 @@ impl CameraSession {
     /// Registration is a short burst; each write gets an immediate window ACK, matching
     /// the phone driver, before the regular 40 Hz pump takes over.
     fn send_ack(&mut self) -> Result<(), SessionError> {
+        self.note_ack_sent(self.now());
         let datagram = self.pump.datagram(self.session_id)?;
         self.socket.send(&datagram)?;
         Ok(())
+    }
+
+    fn note_ack_sent(&mut self, now: f64) {
+        if let Some(previous) = self.last_ack_at {
+            self.diagnostic_max_ack_gap = self.diagnostic_max_ack_gap.max(now - previous);
+        }
+        self.last_ack_at = Some(now);
+        self.diagnostic_acks = self.diagnostic_acks.saturating_add(1);
     }
 
     fn dispatch(&mut self, due: Outgoing) -> Result<(), SessionError> {
@@ -468,10 +724,14 @@ impl CameraSession {
             Outgoing::Handshake => {
                 transport::handshake(self.session_id, self.udp_seq, self.base_seq)?
             }
-            Outgoing::Ack => self.pump.datagram(self.session_id)?,
+            Outgoing::Ack => {
+                self.note_ack_sent(self.now());
+                self.pump.datagram(self.session_id)?
+            }
             Outgoing::EnableLiveView => {
                 let now = self.now();
                 self.health.note_enable(now);
+                self.last_live_enable = Some(now);
                 self.command_datagram(Command::LiveViewEnable)?
             }
             Outgoing::Command(command) => {

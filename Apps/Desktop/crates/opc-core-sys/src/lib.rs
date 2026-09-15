@@ -207,6 +207,7 @@ pub const OPC_CAM_GIMBAL_INIT: i32 = 2;
 pub const OPC_CAM_APP_PRESENCE: i32 = 3;
 pub const OPC_CAM_LIVE_VIEW_ENABLE: i32 = 4;
 pub const OPC_CAM_NANO_LIVE_GATE: i32 = 5;
+pub const OPC_CAM_APP_DEVICE_INFO: i32 = 6;
 pub const OPC_CAM_RECORD_START: i32 = 10;
 pub const OPC_CAM_RECORD_STOP: i32 = 11;
 pub const OPC_CAM_SHOOT_PHOTO: i32 = 12;

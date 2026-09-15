@@ -81,6 +81,8 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
         return Commands.liveViewEnable(seq: seq)
     case OPC_CAM_NANO_LIVE_GATE:
         return Commands.nanoLiveViewGate(start: arguments.int(0) != 0, seq: seq)
+    case OPC_CAM_APP_DEVICE_INFO:
+        return Commands.appDeviceInfo(seq: seq)
 
     case OPC_CAM_RECORD_START:
         return Commands.recordStart(seq: seq)

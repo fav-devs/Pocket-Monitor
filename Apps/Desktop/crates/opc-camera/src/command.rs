@@ -17,6 +17,9 @@ pub enum Command {
     SessionKeepalive,
     GimbalInit,
     AppPresence,
+    /// `0x00/0x81` registration record. Pocket 3 can expose status without video
+    /// until this precedes app presence and gimbal initialisation.
+    AppDeviceInfo,
     /// `0x09/0xa8`. Enable-once: the watchdog owns every repeat.
     LiveViewEnable,
     NanoLiveGate {
@@ -172,6 +175,7 @@ impl Command {
             Self::SessionKeepalive => (sys::OPC_CAM_SESSION_KEEPALIVE, vec![], vec![]),
             Self::GimbalInit => (sys::OPC_CAM_GIMBAL_INIT, vec![], vec![]),
             Self::AppPresence => (sys::OPC_CAM_APP_PRESENCE, vec![], vec![]),
+            Self::AppDeviceInfo => (sys::OPC_CAM_APP_DEVICE_INFO, vec![], vec![]),
             Self::LiveViewEnable => (sys::OPC_CAM_LIVE_VIEW_ENABLE, vec![], vec![]),
             Self::NanoLiveGate { start } => (
                 sys::OPC_CAM_NANO_LIVE_GATE,
