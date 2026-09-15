@@ -5,7 +5,7 @@
 //! back. Nothing here decides anything an operator would notice.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use opc_camera::Recovery;
 use opc_chrome::Screen;
@@ -417,6 +417,20 @@ impl View {
                     diagnostic("accepted AVC configuration packet; awaiting keyframe");
                     continue;
                 }
+                // Joining a Pocket 3 AVC stream is not frame-aligned. FFmpeg can
+                // reject the tail of the access unit already in flight before the
+                // first SPS/PPS + IDR reaches us. Do not turn that expected startup
+                // race into a permanent red decoder error; clear it and wait for the
+                // next keyframe, while the watchdog remains responsible for a real
+                // no-picture timeout.
+                if !had_picture {
+                    diagnostic(format_args!(
+                        "ignored initial {:?} access unit: {error}; awaiting keyframe",
+                        decoder.codec()
+                    ));
+                    decoder.flush();
+                    continue;
+                }
                 failure = Some(error);
                 break;
             }
@@ -598,20 +612,20 @@ impl View {
         // A screen other than the viewfinder presents its own picture: black under the
         // library, the still in the viewer, the clip's frame in the player.
         let on_screen = self.shell.screen() != Screen::Viewfinder;
+        // The live picture is already owned by `self.latest`. Copying its YUV planes
+        // for every redraw turns a 25 fps Pocket stream into gigabytes of needless
+        // memory traffic per second on an integrated GPU. Borrow it until the render
+        // pass completes; only the optional virtual-camera output needs its own copy.
         let latest = if on_screen {
-            Some(self.media.picture().clone())
+            self.media.picture()
         } else {
-            Some(
-                self.latest
-                    .clone()
-                    .unwrap_or_else(|| self.placeholder.clone()),
-            )
+            self.latest.as_ref().unwrap_or(&self.placeholder)
         };
         let showing_placeholder = !on_screen && self.latest.is_none();
         if showing_placeholder && self.placeholder_presented {
             return;
         }
-        let (Some(renderer), Some(latest)) = (self.renderer.as_mut(), latest.as_ref()) else {
+        let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
 
@@ -644,7 +658,11 @@ impl View {
             }
         }
 
-        match renderer.present(&picture, options) {
+        let present = renderer.present(&picture, options);
+        // `feed_vcam` owns mutable renderer state, so make a copy only while that
+        // optional output is actually running. Normal live view stays zero-copy here.
+        let vcam_picture = self.vcam.as_ref().map(|_| latest.clone());
+        match present {
             Ok(Presented::Shown) => {
                 if self.render_error.take().is_some() {
                     if let Some(window) = self.window.as_ref() {
@@ -674,7 +692,9 @@ impl View {
                 ));
             }
         }
-        self.feed_vcam(&picture, now);
+        if let Some(vcam_picture) = vcam_picture.as_ref() {
+            self.feed_vcam(&vcam_picture.picture(), now);
+        }
     }
 }
 
@@ -925,8 +945,12 @@ impl ApplicationHandler for View {
             || self.media.is_active()
             || self.shell.screen() != Screen::Viewfinder
         {
-            // Live feed: poll continuously so latency stays at one frame.
-            event_loop.set_control_flow(ControlFlow::Poll);
+            // Present at display rate, not as fast as a core can spin. The camera and
+            // ACK pump run on their own thread; 60 Hz keeps 25/30/50 fps streams fresh
+            // while leaving CPU/GPU room for decode and Vulkan.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
         } else {
             // No picture yet: sleep until the next event to avoid spinning the GPU.
             event_loop.set_control_flow(ControlFlow::Wait);

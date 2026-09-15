@@ -425,8 +425,12 @@ impl CameraSession {
             Recovery::ResendEnable => {
                 // Deliberately not through the sequencer: that one enables once per
                 // session by design, and repeats belong here.
-                let datagram = self.command_datagram(Command::LiveViewEnable)?;
-                self.socket.send(&datagram)?;
+                // Pocket 3 can keep status pushes alive after its DM368 live lease
+                // has expired. Reassert the registration that owns that lease before
+                // the watchdog's sole repeat enable. This is recovery-only; the
+                // ordinary live path still registers and enables exactly once.
+                self.refresh_live_registration(now)?;
+                self.send_direct(Command::LiveViewEnable)?;
                 self.health.note_enable(now);
                 self.last_live_enable = Some(now);
             }
@@ -453,6 +457,19 @@ impl CameraSession {
         {
             return Ok(());
         }
+        self.send_direct(Command::AppPresence)?;
+        self.send_ack()?;
+        self.last_app_presence = Some(now);
+        Ok(())
+    }
+
+    /// The smallest safe live-session refresh: device identity plus app presence,
+    /// each followed by its own window ACK just as in the phone registration spine.
+    /// Gimbal initialisation is intentionally not repeated while an operator may be
+    /// moving it.
+    fn refresh_live_registration(&mut self, now: f64) -> Result<(), SessionError> {
+        self.send_direct(Command::AppDeviceInfo)?;
+        self.send_ack()?;
         self.send_direct(Command::AppPresence)?;
         self.send_ack()?;
         self.last_app_presence = Some(now);
