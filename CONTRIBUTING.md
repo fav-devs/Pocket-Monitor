@@ -1,106 +1,18 @@
-# Contributing to OpenPocketCine
+# Contributing
 
-Thanks for your interest! This project aims to be a clean, welcoming example of open-source mobile
-engineering. By participating you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
+OpenPocketCine is a desktop application. Install Swift, FFmpeg development libraries,
+Vulkan, a GLSL compiler, Rust, and `just`, then run:
 
-## Getting set up
-
-1. Install [`just`](https://github.com/casey/just), Xcode, and the Swift toolchain. Android
-  contributors will also need Android Studio/Gradle.
-2. Install the meta-check tools: `just setup` (macOS / Homebrew).
-3. Run `just check` to confirm a green baseline.
-
-No vendor SDK is included or required — the camera protocol is reverse-engineered from public
-behavior. Public docs (protocol, apps, setup):
-[openpocketcine.app/docs](https://openpocketcine.app/docs/) (`just handbook` locally).
-Keep those pages current in the same PR — see
-[Keeping docs current](https://openpocketcine.app/docs/contribute/documentation/).
-
-**Hygiene** (secrets, captures, unofficial LUTs): [`docs/commit-hygiene.md`](docs/commit-hygiene.md)
-and [`AGENTS.md`](AGENTS.md). Official Rec.709 cubes in
-`ios/OpenPocketCine/Resources/` are part of the app.
-
-### Running the app
-
-Generate and open the iOS app (needs [`xcodegen`](https://github.com/yonaskolov/XcodeGen):
-`brew install xcodegen`):
-
-```bash
-cd ios && xcodegen generate && open OpenPocketCine.xcodeproj
+```sh
+just desktop-check
 ```
 
-The Simulator has no Bluetooth or camera Wi-Fi, so pairing and live view need a physical iPhone
-and an Osmo Pocket 4 / 4 Pro. Protocol and depacketizer changes in
-`Sources/OpenPocketViewCore/` are covered by package tests (`just test`) that run without hardware.
+Open a focused pull request into `main` with Conventional Commits. Keep protocol changes
+portable in `Sources/OpenPocketViewCore/`; desktop UI, sockets, decoding, and rendering belong
+in `Apps/Desktop/`. Never commit camera Wi-Fi passwords, captures, keys, or unofficial LUTs.
 
-### Optional integrations (bring-your-own keys)
+Live-camera work requires a physical Windows check. Report bugs with the desktop version,
+camera model, and redacted `opc-monitor.log` where relevant.
 
-Frame.io upload is **disabled unless you configure it**. Copy
-`ios/OpenPocketCine/Frameio.local.xcconfig.example` to the gitignored
-`Frameio.local.xcconfig` and add your Adobe Native App client ID. Full steps:
-[`docs/frameio-setup.md`](docs/frameio-setup.md). No keys are committed to this repo.
-
-## Workflow
-
-Branching, Conventional Commits, and `just check` follow [`AGENTS.md`](AGENTS.md).
-Git and version trains: [`docs/RELEASE.md`](docs/RELEASE.md) (`main` + short PRs + `v*` tags; no `develop`).
-Agent task graphs (split, verify, loops) live in [`docs/WORKFLOW.md`](docs/WORKFLOW.md).
-
-GitHub-specific:
-
-- Open a pull request into `main`. Actions runs on the PR, not a second time
-  on the branch push. The required check is **CI gate** (Meta checks, Native
-  Swift/iOS, Android, and the protocol handbook feed that gate and skip when
-  their paths did not change). The PR template must be filled in. Maintainer
-  GitHub settings: [`docs/repository-settings.md`](docs/repository-settings.md).
-- Changes that can trigger a TestFlight build must **replace**
-  [`ios/TestFlight/WhatToTest.en-US.txt`](ios/TestFlight/WhatToTest.en-US.txt)
-  with the this-build window (`just tester-notes-window`). See
-  [`docs/tester-notes.md`](docs/tester-notes.md).
-- Changes that can trigger a Play closed-testing upload must **replace**
-  [`Apps/Android/Play/WhatToTest.en-US.txt`](Apps/Android/Play/WhatToTest.en-US.txt)
-  and the 500-character [`whatsnew-en-US`](Apps/Android/Play/whatsnew/whatsnew-en-US)
-  the same way. See [`docs/tester-notes.md`](docs/tester-notes.md).
-
-## Code standards
-
-- Agent instructions live in [`AGENTS.md`](AGENTS.md). Do not copy them here.
-  Seams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). **Parity:** [`docs/PARITY.md`](docs/PARITY.md).
-- Composition over inheritance; prefer small pure functions and immutable data.
-- Keep functions short (~20 statements) and nesting shallow (≤3 levels) — extract helpers, use early returns.
-- Throw descriptive exceptions for errors; don't return `null` to signal failure.
-- Explicit types on all public signatures; avoid dynamic or loosely typed boundaries.
-- Use platform-native doc comments on public API members.
-
-## Reporting bugs & requesting features
-
-- **Bugs only** — Open [GitHub's bug-report form](https://github.com/erik-sutton95/OpenPocketCine/issues/new?template=bug_report.yml).
-  The form requires the app version from Operator Setup → System (the `0.1.0 (36)` string,
-  including the build in parentheses). New bugs are automatically labeled `needs-triage`;
-  issues are strictly for bugs. Never put sensitive information (camera Wi-Fi passwords,
-  captures, credentials) in an issue.
-- **Protocol questions** — Read the
-  [protocol handbook](https://openpocketcine.app/docs/) first, then ask in
-  [Q&A](https://github.com/erik-sutton95/OpenPocketCine/discussions/new?category=q-a).
-- **Feature ideas, enhancements & discussions** — Use **GitHub Discussions**. Start a new
-  discussion in the
-  [Ideas](https://github.com/erik-sutton95/OpenPocketCine/discussions/new?category=ideas)
-  category. Questions go in
-  [Q&A](https://github.com/erik-sutton95/OpenPocketCine/discussions/new?category=q-a).
-  A GitHub account is required, which keeps conversations attributable and Issues focused on
-  actionable bugs.
-- **Security vulnerabilities** — Follow [`SECURITY.md`](SECURITY.md). Do **not** open a public issue.
-
-## Labels & triage
-
-We use labels to organize work. Key categories include:
-
-- **Type**: `bug`, `enhancement`, `documentation`, `question`, `chore`
-- **Priority**: `P0` (critical), `P1`, `P2`
-- **Community**: `good first issue`, `help wanted`
-- **Triage**: `needs-triage`, `needs-info`
-- **Area**: `area:core`, `area:protocol`, `area:ios`, `area:live-view`, `area:monitoring`, `area:control`, `area:media`, `area:ui`, `area:android`, `area:docs`, etc.
-
-A full list with descriptions lives in [`.github/labels.yml`](.github/labels.yml).
-
-Maintainers triage new issues (usually applying area + priority labels). Feel free to suggest labels when you open an issue.
+See [AGENTS.md](AGENTS.md) for the repository workflow and [SECURITY.md](SECURITY.md) for
+vulnerability reporting.
