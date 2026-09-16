@@ -1,9 +1,0 @@
-#include "../Config/Version.xcconfig"
-
-// Frame.io OAuth. Copy Frameio.local.xcconfig.example → Frameio.local.xcconfig
-// and paste the Adobe Native App client ID + redirect URI.
-FRAMEIO_CLIENT_ID =
-FRAMEIO_REDIRECT_URI =
-FRAMEIO_URL_SCHEME =
-
-#include? "Frameio.local.xcconfig"

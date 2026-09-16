@@ -5,16 +5,17 @@
 //! back. Nothing here decides anything an operator would notice.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use opc_camera::Recovery;
 use opc_chrome::Screen;
 use opc_decode::{Codec, Decoder, OwnedPicture};
 use opc_render::{write_png, FeedRenderer, Lut, Presented};
+use opc_vcam::{ComponentReport, VirtualCamera};
 
 use crate::media::MediaDriver;
 use opc_monitor::luts;
-use opc_monitor::{LutChoice, LutRequest};
+use opc_monitor::{LutChoice, LutRequest, PadButton};
 use opc_ui::{Key as UiKey, Phase};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::application::ApplicationHandler;
@@ -23,7 +24,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::link::{FromCamera, Link};
+use crate::link::{diagnostic, FromCamera, Link};
 use opc_monitor::shell::{Intent, Shell, TouchPhase as Finger};
 
 /// A backlog longer than this means the window stalled. Predicted pictures cannot be
@@ -56,15 +57,40 @@ struct View {
     decoder: Option<Decoder>,
     pending: Vec<Unit>,
     latest: Option<OwnedPicture>,
+    /// What the window presents until the first decoded picture arrives. Without this,
+    /// winit leaves the newly created surface white and hides the connection state.
+    placeholder: OwnedPicture,
+    /// The idle placeholder need not be submitted again until its chrome or surface changes.
+    placeholder_presented: bool,
+    /// Avoid flooding stderr with the same renderer failure every redraw.
+    render_error: Option<String>,
     lut: Option<Lut>,
+    /// The false-colour paint and weight lattices, while that assist is on.
+    false_color: Option<(Lut, Lut)>,
     still: PathBuf,
     take_still: bool,
     pointer: (f64, f64),
     pointer_control: bool,
     started: Instant,
+    /// When the plates last read the picture.
+    last_scope_at: f64,
+    /// A game controller, when the platform offers one.
+    pad: Option<gilrs::Gilrs>,
+    last_pad_at: f64,
+    /// Where the camera is, for a reconnect.
+    remote: Option<std::net::SocketAddr>,
+    model_id: Option<i32>,
     media: MediaDriver,
     /// A name for the cache folder: the body's model id, or "camera".
     camera_id: String,
+    /// The viewfinder as a camera for other apps, while the operator has it on.
+    vcam: Option<VirtualCamera>,
+    /// When the camera last took a frame, and when its readout was last refreshed.
+    last_vcam_at: f64,
+    last_vcam_status_at: f64,
+    /// A probe, install or remove of the platform camera component, running on its
+    /// own thread; the answer lands in the Output tab.
+    component_job: Option<std::sync::mpsc::Receiver<ComponentReport>>,
 }
 
 impl View {
@@ -91,9 +117,14 @@ impl View {
                         self.link.send(command);
                     }
                 }
+                Intent::Reconnect => self.reconnect(),
+                Intent::Diagnostics => self.write_diagnostics(),
+                Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
+                Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
+                Intent::OpenUrl(url) => self.open_url(&url),
             }
         }
-        if let Some(request) = self.shell.take_lut_change() {
+        while let Some(request) = self.shell.take_lut_change() {
             self.apply_lut_request(request);
         }
     }
@@ -102,6 +133,29 @@ impl View {
     /// the renderer. Loading happens here because the built-in looks come from the core.
     fn apply_lut_request(&mut self, request: LutRequest) {
         let on = match request {
+            LutRequest::FalseColor(key) => {
+                self.false_color = key.and_then(|key| {
+                    let paint = Lut::false_color(key.scale, key.color_mode, key.iso, true);
+                    let weight = Lut::false_color(key.scale, key.color_mode, key.iso, false);
+                    match (paint, weight) {
+                        (Ok(paint), Ok(weight)) => Some((paint, weight)),
+                        (Err(error), _) | (_, Err(error)) => {
+                            eprintln!("could not load false colour: {error}");
+                            None
+                        }
+                    }
+                });
+                let cubes = self
+                    .false_color
+                    .as_ref()
+                    .map(|(paint, weight)| (paint, weight));
+                if let Some(renderer) = self.renderer.as_mut() {
+                    if let Err(error) = renderer.set_false_color(cubes) {
+                        eprintln!("could not set false colour: {error}");
+                    }
+                }
+                return;
+            }
             LutRequest::Toggle(on) => on,
             LutRequest::Load(choice) => {
                 let loaded: Result<Option<Lut>, String> = match &choice {
@@ -139,6 +193,42 @@ impl View {
         }
     }
 
+    /// Tears the datalink down and opens a fresh one, as the Link tab asks.
+    fn reconnect(&mut self) {
+        let (session_id, base_seq) = fresh_session();
+        self.link = Link::open(self.remote, session_id, base_seq, self.model_id);
+        self.latest = None;
+        self.shell.set_phase(Phase::Waiting);
+        self.shell.say("RECONNECTING");
+    }
+
+    /// Writes everything a bug report needs next to the LUT folder.
+    fn write_diagnostics(&mut self) {
+        let now = self.now();
+        let mut text = self.shell.diagnostics_text(now);
+        text.push_str(&format!(
+            "decoder {:?}\n",
+            self.decoder.as_ref().map(|d| d.codec())
+        ));
+        let folder = opc_monitor::prefs::path()
+            .parent()
+            .map_or_else(|| PathBuf::from("."), |p| p.to_path_buf());
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let path = folder.join(format!("diagnostics-{stamp}.txt"));
+        match std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(&path, text)) {
+            Ok(()) => {
+                println!("Wrote {}", path.display());
+                self.shell.say("DIAGNOSTICS WRITTEN TO THE CACHE FOLDER");
+            }
+            Err(error) => {
+                eprintln!("could not write diagnostics: {error}");
+                self.shell.say("COULD NOT WRITE DIAGNOSTICS");
+            }
+        }
+    }
+
     /// Intents raised between frames rather than by a key or a tap: sends and media
     /// fetches. Nothing here can close the window.
     fn carry_out_quietly(&mut self, intents: Vec<Intent>, now: f64) {
@@ -151,8 +241,55 @@ impl View {
                         self.link.send(command);
                     }
                 }
+                Intent::Reconnect => self.reconnect(),
+                Intent::Diagnostics => self.write_diagnostics(),
+                Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
+                Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
+                Intent::OpenUrl(url) => self.open_url(&url),
                 Intent::Still | Intent::Quit | Intent::ToggleFullscreen => {}
             }
+        }
+    }
+
+    /// Runs a component action off the window thread; one at a time.
+    fn start_component_job(&mut self, job: fn() -> ComponentReport) {
+        if self.component_job.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("opc-component".to_string())
+            .spawn(move || {
+                let _ = sender.send(job());
+            })
+            .ok();
+        self.component_job = Some(receiver);
+    }
+
+    /// Takes a finished component job's answer to the Output tab, and restarts the
+    /// camera so it sees what changed.
+    fn poll_component_job(&mut self) {
+        let Some(receiver) = self.component_job.as_ref() else {
+            return;
+        };
+        let Ok(report) = receiver.try_recv() else {
+            return;
+        };
+        self.component_job = None;
+        let installed = report.state == opc_vcam::ComponentState::Installed;
+        self.shell.set_component(report);
+        if let Some(camera) = self.vcam.take() {
+            camera.stop();
+        }
+        if installed && self.shell.vcam_backend() == Some(opc_vcam::Backend::Device) {
+            self.shell.say("CAMERA COMPONENT INSTALLED · CAMERA ON");
+        }
+    }
+
+    fn open_url(&mut self, url: &str) {
+        if let Err(error) = opc_vcam::install::open_url(url) {
+            eprintln!("{error}");
+            self.shell.say("COULD NOT OPEN THE BROWSER");
         }
     }
 
@@ -160,7 +297,10 @@ impl View {
     fn pump_camera(&mut self) {
         for event in self.link.drain() {
             match event {
-                FromCamera::Opened => self.shell.set_phase(Phase::Waiting),
+                FromCamera::Opened => {
+                    self.shell.set_phase(Phase::Waiting);
+                    self.placeholder_presented = false;
+                }
                 FromCamera::Picture(bytes) => {
                     // The core marks keyframes; the depacketizer hands over whole access
                     // units, so the first NAL type is enough to know one.
@@ -169,22 +309,35 @@ impl View {
                 }
                 FromCamera::Frame(frame) => {
                     let now = self.now();
-                    self.media.frame(frame, now);
+                    if (frame.cmd_set, frame.cmd_id) == (0x02, 0xA5) {
+                        if let Some(poll) = opc_camera::tracking_poll(&frame.payload) {
+                            self.shell.tracking_reply(poll, now);
+                        }
+                    } else {
+                        self.media.frame(frame, now);
+                    }
                 }
+                FromCamera::Set(outcome) => self.shell.note_set(outcome),
                 FromCamera::Status(status) => {
                     self.media.status(status.in_playback);
                     self.shell.set_status(*status);
+                    self.placeholder_presented = false;
                     if matches!(self.shell.phase(), Phase::Waiting) && self.latest.is_some() {
                         self.shell.set_phase(Phase::Live);
                     }
                 }
                 FromCamera::Recovering(recovery) => {
                     self.shell.set_phase(Phase::Recovering);
+                    self.shell.note_recovery(&format!("{recovery:?}"));
+                    self.placeholder_presented = false;
                     if matches!(recovery, Recovery::RebuildDecoder) {
                         self.rebuild_decoder();
                     }
                 }
-                FromCamera::Lost(reason) => self.shell.set_phase(Phase::Failed(reason)),
+                FromCamera::Lost(reason) => {
+                    self.shell.set_phase(Phase::Failed(reason));
+                    self.placeholder_presented = false;
+                }
             }
         }
     }
@@ -204,13 +357,26 @@ impl View {
                 // Everything queued was for the old decoder's state.
                 self.pending.clear();
                 self.latest = None;
+                self.placeholder_presented = false;
             }
             Err(error) => {
                 eprintln!("could not rebuild the decoder: {error}");
                 self.decoder = None;
                 self.link.note_decoder_failed(true);
+                self.shell
+                    .set_phase(Phase::Failed(format!("decoder unavailable: {error}")));
+                self.placeholder_presented = false;
             }
         }
+    }
+
+    fn note_decode_failure(&mut self, error: impl std::fmt::Display) {
+        eprintln!("decoder failed: {error}");
+        diagnostic(format_args!("decoder failed: {error}"));
+        self.link.note_decoder_failed(true);
+        self.shell
+            .set_phase(Phase::Failed(format!("decoder failed: {error}")));
+        self.placeholder_presented = false;
     }
 
     /// Decodes everything waiting, keeping the newest picture.
@@ -221,10 +387,12 @@ impl View {
             };
             let codec = codec_of(&unit.bytes).unwrap_or(Codec::Hevc);
             match Decoder::new(codec) {
-                Ok(decoder) => self.decoder = Some(decoder),
+                Ok(decoder) => {
+                    diagnostic(format_args!("created {codec:?} decoder"));
+                    self.decoder = Some(decoder);
+                }
                 Err(error) => {
-                    eprintln!("could not create {codec:?} decoder: {error}");
-                    self.link.note_decoder_failed(true);
+                    self.note_decode_failure(format!("could not create {codec:?}: {error}"));
                     return;
                 }
             }
@@ -238,13 +406,193 @@ impl View {
                 decoder.flush();
             }
         }
+        let mut failure = None;
+        let had_picture = self.latest.is_some();
         for unit in self.pending.drain(..) {
-            if decoder.send(&unit.bytes).is_err() {
-                continue;
+            if let Err(error) = decoder.send(&unit.bytes) {
+                // Pocket 3 sends AVC parameter sets before its first coded slice.
+                // FFmpeg records the SPS/PPS then returns EINVAL / "no frame" for
+                // that configuration-only packet. It is startup, not a dead decoder.
+                if decoder.codec() == Codec::H264 && is_h264_configuration(&unit.bytes) {
+                    diagnostic("accepted AVC configuration packet; awaiting keyframe");
+                    continue;
+                }
+                // Joining a Pocket 3 AVC stream is not frame-aligned. FFmpeg can
+                // reject the tail of the access unit already in flight before the
+                // first SPS/PPS + IDR reaches us. Do not turn that expected startup
+                // race into a permanent red decoder error; clear it and wait for the
+                // next keyframe, while the watchdog remains responsible for a real
+                // no-picture timeout.
+                if !had_picture {
+                    diagnostic(format_args!(
+                        "ignored initial {:?} access unit: {error}; awaiting keyframe",
+                        decoder.codec()
+                    ));
+                    decoder.flush();
+                    continue;
+                }
+                failure = Some(error);
+                break;
             }
-            while let Ok(Some(picture)) = decoder.receive() {
-                self.latest = Some(OwnedPicture::copy_from(&picture));
+            loop {
+                match decoder.receive() {
+                    Ok(Some(picture)) => {
+                        if !had_picture && self.latest.is_none() {
+                            diagnostic(format_args!(
+                                "decoded first picture {}x{} keyframe={}",
+                                picture.width, picture.height, picture.is_keyframe
+                            ));
+                        }
+                        self.latest = Some(OwnedPicture::copy_from(&picture));
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                }
             }
+            if failure.is_some() {
+                break;
+            }
+        }
+        if let Some(error) = failure {
+            self.note_decode_failure(error);
+        }
+        self.sample_scopes();
+    }
+
+    /// A connected game controller, on the phones' map. Polled once per frame.
+    fn poll_pad(&mut self, now: f64) {
+        let Some(pad) = self.pad.as_mut() else {
+            return;
+        };
+        let mut intents = Vec::new();
+        while let Some(gilrs::Event { id, event, .. }) = pad.next_event() {
+            match event {
+                gilrs::EventType::Connected => {
+                    let name = pad.gamepad(id).name().to_string();
+                    self.shell.set_gamepad(Some(name));
+                }
+                gilrs::EventType::Disconnected => self.shell.set_gamepad(None),
+                gilrs::EventType::ButtonPressed(button, _) => {
+                    let mapped = match button {
+                        gilrs::Button::South => Some(PadButton::A),
+                        gilrs::Button::East => Some(PadButton::B),
+                        gilrs::Button::West => Some(PadButton::X),
+                        gilrs::Button::North => Some(PadButton::Y),
+                        gilrs::Button::LeftTrigger => Some(PadButton::LeftShoulder),
+                        gilrs::Button::RightTrigger => Some(PadButton::RightShoulder),
+                        gilrs::Button::DPadUp => Some(PadButton::DpadUp),
+                        gilrs::Button::DPadDown => Some(PadButton::DpadDown),
+                        gilrs::Button::DPadLeft => Some(PadButton::DpadLeft),
+                        gilrs::Button::DPadRight => Some(PadButton::DpadRight),
+                        _ => None,
+                    };
+                    if let Some(button) = mapped {
+                        intents.extend(self.shell.controller_button(button, now));
+                    }
+                }
+                _ => {}
+            }
+        }
+        // The stick and the triggers are read as levels, not events, so a held throw
+        // keeps streaming at the frame rate.
+        if let Some((_, gamepad)) = pad.gamepads().next() {
+            let axis = |axis: gilrs::Axis| f64::from(gamepad.value(axis));
+            let (x, y) = (axis(gilrs::Axis::LeftStickX), axis(gilrs::Axis::LeftStickY));
+            intents.extend(self.shell.controller_stick(x, y, now));
+            let left = f64::from(
+                gamepad
+                    .button_data(gilrs::Button::LeftTrigger2)
+                    .map_or(0.0, |data| data.value()),
+            );
+            let right = f64::from(
+                gamepad
+                    .button_data(gilrs::Button::RightTrigger2)
+                    .map_or(0.0, |data| data.value()),
+            );
+            let dt = if self.last_pad_at.is_finite() {
+                (now - self.last_pad_at).clamp(0.0, 0.1)
+            } else {
+                0.0
+            };
+            intents.extend(self.shell.controller_zoom(left, right, dt, now));
+        }
+        self.last_pad_at = now;
+        for intent in intents {
+            if let Intent::Send(command) = intent {
+                self.link.send(command);
+            }
+        }
+    }
+
+    /// Reads the picture for the plates at about 15 Hz while any scope is on.
+    fn sample_scopes(&mut self) {
+        if !self.shell.scopes_wanted() {
+            return;
+        }
+        let now = self.now();
+        if now - self.last_scope_at < 1.0 / 15.0 {
+            return;
+        }
+        if let Some(latest) = self.latest.as_ref() {
+            self.shell
+                .set_scope_samples(opc_monitor::scopes::ScopeSamples::read(latest));
+            self.last_scope_at = now;
+        }
+    }
+
+    /// Starts, stops or swaps the virtual camera to match the setting, and keeps the
+    /// System tab's readout current about once a second.
+    fn reconcile_vcam(&mut self, now: f64) {
+        let wanted = self.shell.vcam_backend();
+        let running = self.vcam.as_ref().map(VirtualCamera::backend);
+        if running != wanted.as_ref() {
+            if let Some(camera) = self.vcam.take() {
+                camera.stop();
+            }
+            self.vcam = wanted.map(VirtualCamera::start);
+            self.last_vcam_status_at = f64::NEG_INFINITY;
+        }
+        if now - self.last_vcam_status_at < 1.0 {
+            return;
+        }
+        self.last_vcam_status_at = now;
+        let line = self
+            .vcam
+            .as_ref()
+            .map_or_else(|| "Off".to_string(), |camera| camera.status().line());
+        self.shell.set_vcam_status(&line);
+    }
+
+    /// Hands the picture to the virtual camera at up to 30 frames a second: the feed
+    /// on the viewfinder, the clip or the still in the player, nothing under the
+    /// library. The chrome is never in it.
+    fn feed_vcam(&mut self, picture: &opc_decode::Picture<'_>, now: f64) {
+        let Some(camera) = self.vcam.as_ref() else {
+            return;
+        };
+        if now - self.last_vcam_at < 1.0 / 30.0 {
+            return;
+        }
+        if self.shell.screen() == Screen::Library {
+            return;
+        }
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let options = self.shell.vcam_grade_options();
+        match renderer.render_picture(picture, (opc_vcam::WIDTH, opc_vcam::HEIGHT), options) {
+            Ok(image) => {
+                camera.offer(opc_vcam::Frame {
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.pixels,
+                });
+                self.last_vcam_at = now;
+            }
+            Err(error) => eprintln!("virtual camera frame failed: {error}"),
         }
     }
 
@@ -252,6 +600,9 @@ impl View {
         self.pump_camera();
         self.decode();
         let now = self.now();
+        self.poll_pad(now);
+        self.poll_component_job();
+        self.reconcile_vcam(now);
         let intents = self.shell.tick(now);
         self.carry_out_quietly(intents, now);
         for command in self.media.tick(&mut self.shell, now) {
@@ -261,19 +612,28 @@ impl View {
         // A screen other than the viewfinder presents its own picture: black under the
         // library, the still in the viewer, the clip's frame in the player.
         let on_screen = self.shell.screen() != Screen::Viewfinder;
+        // The live picture is already owned by `self.latest`. Copying its YUV planes
+        // for every redraw turns a 25 fps Pocket stream into gigabytes of needless
+        // memory traffic per second on an integrated GPU. Borrow it until the render
+        // pass completes; only the optional virtual-camera output needs its own copy.
         let latest = if on_screen {
-            Some(self.media.picture().clone())
+            self.media.picture()
         } else {
-            self.latest.clone()
+            self.latest.as_ref().unwrap_or(&self.placeholder)
         };
-        let (Some(renderer), Some(latest)) = (self.renderer.as_mut(), latest.as_ref()) else {
-            // No picture yet. ControlFlow::Wait (set in about_to_wait) keeps the GPU
-            // idle; nothing to present until the first frame arrives.
+        let showing_placeholder = !on_screen && self.latest.is_none();
+        if showing_placeholder && self.placeholder_presented {
+            return;
+        }
+        let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
 
         self.shell.set_source(latest.width, latest.height);
-        if !on_screen && matches!(self.shell.phase(), Phase::Waiting | Phase::Recovering) {
+        if !showing_placeholder
+            && !on_screen
+            && matches!(self.shell.phase(), Phase::Waiting | Phase::Recovering)
+        {
             self.shell.set_phase(Phase::Live);
         }
 
@@ -298,17 +658,42 @@ impl View {
             }
         }
 
-        match renderer.present(&picture, options) {
+        let present = renderer.present(&picture, options);
+        // `feed_vcam` owns mutable renderer state, so make a copy only while that
+        // optional output is actually running. Normal live view stays zero-copy here.
+        let vcam_picture = self.vcam.as_ref().map(|_| latest.clone());
+        match present {
             Ok(Presented::Shown) => {
+                if self.render_error.take().is_some() {
+                    if let Some(window) = self.window.as_ref() {
+                        window.set_title("OpenPocketCine");
+                    }
+                }
+                self.placeholder_presented = showing_placeholder;
                 if on_screen {
                     self.media.note_presented(now);
-                } else {
+                } else if !showing_placeholder {
                     self.shell.note_presented(now);
                     self.link.note_presented();
                 }
             }
-            Ok(Presented::Rebuilt) => {}
-            Err(error) => eprintln!("present failed: {error}"),
+            Ok(Presented::Rebuilt) => self.placeholder_presented = false,
+            Err(error) => {
+                let message = error.to_string();
+                if self.render_error.as_deref() != Some(message.as_str()) {
+                    eprintln!("present failed: {message}");
+                    if let Some(window) = self.window.as_ref() {
+                        window.set_title("OpenPocketCine — renderer failed");
+                    }
+                    self.render_error = Some(message);
+                }
+                self.shell.set_phase(Phase::Failed(
+                    "renderer failed — see terminal output".to_string(),
+                ));
+            }
+        }
+        if let Some(vcam_picture) = vcam_picture.as_ref() {
+            self.feed_vcam(&vcam_picture.picture(), now);
         }
     }
 }
@@ -357,6 +742,33 @@ fn is_keyframe(access_unit: &[u8]) -> bool {
         index += start;
     }
     false
+}
+
+/// AVC SPS/PPS packets configure FFmpeg but do not contain a picture. Pocket 3 emits
+/// them separately at first connect, and FFmpeg's H.264 decoder reports `no frame`.
+fn is_h264_configuration(access_unit: &[u8]) -> bool {
+    let mut index = 0;
+    let mut configuration = false;
+    while index + 4 < access_unit.len() {
+        let start = if access_unit[index..].starts_with(&[0, 0, 0, 1]) {
+            4
+        } else if access_unit[index..].starts_with(&[0, 0, 1]) {
+            3
+        } else {
+            index += 1;
+            continue;
+        };
+        let Some(header) = access_unit.get(index + start) else {
+            break;
+        };
+        match header & 0x1F {
+            1..=5 => return false,
+            7 | 8 => configuration = true,
+            _ => {}
+        }
+        index += start;
+    }
+    configuration
 }
 
 /// The camera declares its codec in the first Annex-B NAL. Most Pockets send HEVC,
@@ -425,6 +837,7 @@ impl ApplicationHandler for View {
                     let _ = renderer.set_lut(self.lut.as_ref());
                 }
                 println!("drawing on {}", renderer.device_name());
+                self.shell.set_renderer_name(renderer.device_name());
                 self.renderer = Some(renderer);
             }
             Err(error) => {
@@ -452,6 +865,7 @@ impl ApplicationHandler for View {
                     renderer.resize(width, height);
                 }
                 self.shell.set_window(width, height);
+                self.placeholder_presented = false;
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let Some(key) = translate(&event.logical_key) else {
@@ -531,8 +945,12 @@ impl ApplicationHandler for View {
             || self.media.is_active()
             || self.shell.screen() != Screen::Viewfinder
         {
-            // Live feed: poll continuously so latency stays at one frame.
-            event_loop.set_control_flow(ControlFlow::Poll);
+            // Present at display rate, not as fast as a core can spin. The camera and
+            // ACK pump run on their own thread; 60 Hz keeps 25/30/50 fps streams fresh
+            // while leaving CPU/GPU room for decode and Vulkan.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(16),
+            ));
         } else {
             // No picture yet: sleep until the next event to avoid spinning the GPU.
             event_loop.set_control_flow(ControlFlow::Wait);
@@ -552,12 +970,22 @@ pub fn run(options: Options) -> Result<(), String> {
     let mut view = View {
         renderer: None,
         window: None,
-        shell: Shell::new().with_grade(graded).with_model(options.model_id),
+        shell: Shell::new()
+            .with_grade(graded)
+            .with_model(options.model_id)
+            .with_saved_prefs(),
         media: {
             let mut media = MediaDriver::default();
             media.set_body(options.model_id);
             media
         },
+        last_scope_at: f64::NEG_INFINITY,
+        pad: gilrs::Gilrs::new()
+            .map_err(|error| eprintln!("no game controller support: {error}"))
+            .ok(),
+        last_pad_at: f64::NEG_INFINITY,
+        remote: options.remote,
+        model_id: options.model_id,
         camera_id: options
             .model_id
             .map(|id| format!("model-{id:04x}"))
@@ -566,13 +994,33 @@ pub fn run(options: Options) -> Result<(), String> {
         decoder: None,
         pending: Vec::new(),
         latest: None,
+        placeholder: OwnedPicture::black(1280, 720),
+        placeholder_presented: false,
+        render_error: None,
         lut: options.lut,
+        false_color: None,
         still: options.still,
         take_still: false,
         pointer: (0.0, 0.0),
         pointer_control: false,
         started: Instant::now(),
+        vcam: None,
+        last_vcam_at: f64::NEG_INFINITY,
+        last_vcam_status_at: f64::NEG_INFINITY,
+        component_job: None,
     };
+    view.start_component_job(opc_vcam::install::probe);
+    view.shell.set_link_info(&format!(
+        "Wi-Fi datalink · {}",
+        options
+            .remote
+            .map_or_else(|| "camera default".to_string(), |addr| addr.to_string())
+    ));
+    if let Some(pad) = view.pad.as_ref() {
+        if let Some((_, gamepad)) = pad.gamepads().next() {
+            view.shell.set_gamepad(Some(gamepad.name().to_string()));
+        }
+    }
     {
         let folder = luts::custom_folder();
         let _ = std::fs::create_dir_all(&folder);

@@ -243,7 +243,7 @@ What the operator asked for, and where each piece stands.
 | Frame rate and resolution | `setVideoFormat` | **Done** | Not wired |
 | ISO, shutter, EV, white balance | `setIsoIndex`, `setShutter`, `setEv`, `setWhiteBalance` | **Done** | Not wired |
 | Bluetooth pairing | `getWifiSsid`, `getWifiPassword`, `BleAdvert`, the notification assembler | **Done** | Flow **done**; the radio behind it is not |
-| Wi-Fi join | `CameraSoftAPSwitch` | **Done** | Policy and commands **done**; the runner is not |
+| Wi-Fi join | `CameraSoftAPSwitch` | **Done** | **Windows done**: first pair installs a manual WLAN profile; later launches reconnect to that saved profile before opening the viewfinder. |
 | The UDP session itself | `DumlTransport`, `AckWindows`, `HevcDepacketizer` | **Done** | **Done** |
 | Surviving a frozen feed | `FeedWatchdog` | **Done** | **Done** |
 | HUD telemetry | `CameraStatusDecoder` | **Done** | **Done** |
@@ -255,14 +255,15 @@ Pocket can continue telemetry there while video remains stranded. This UDP rebui
 not add a second connect-path live enable; the watchdog remains the sole owner of repeat
 enables.
 
-The session runs and carries commands. What is missing before an operator sees anything
-is Bluetooth pairing and the Wi-Fi join in front of it, and the UI behind it.
+The session runs and carries commands. On Windows, first pair now installs the camera's
+manual WLAN profile and saves only its SSID/model under local app data. Windows keeps the
+profile password; ordinary reconnect goes straight to that profile without Bluetooth.
+If the profile is absent or cannot join, the app returns to the Bluetooth pair flow.
 
 ## What is not covered yet
 
-- **The platform implementations.** `Pairing` and `JoinPolicy` decide what to do;
-  `BleTransport` and `WifiJoiner` are the interfaces that would carry it out, and neither
-  has an implementation yet. Until they do, the operator joins the Wi-Fi by hand.
+- **Non-Windows network implementations.** Windows has the first-pair and saved-profile
+  runner. Linux and macOS still need their `WifiJoiner` runners and physical proof.
 - **The SET mailbox.** `CameraSetMailbox` owns retransmit and settle timing — a missed
   acknowledgement must not revert what the operator sees. Until it is exposed, desktop
   SETs are fire-and-forget and a dropped one is a control that silently did not take.

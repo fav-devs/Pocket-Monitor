@@ -18,11 +18,11 @@ fn has_library(dir: &Path) -> bool {
         || dir.join(format!("{LIB_NAME}.lib")).exists()
 }
 
-fn find_core() -> bool {
+fn find_core() -> Option<PathBuf> {
     // Prefer explicit override.
     if let Ok(dir) = std::env::var("OPC_CORE_LIB_DIR") {
         if has_library(Path::new(&dir)) {
-            return true;
+            return Some(PathBuf::from(dir));
         }
     }
     // Fall back to Swift's default output directories relative to the repo root.
@@ -40,11 +40,11 @@ fn find_core() -> bool {
             root.join(".build/debug"),
         ] {
             if has_library(&candidate) {
-                return true;
+                return Some(candidate);
             }
         }
     }
-    false
+    None
 }
 
 fn main() {
@@ -53,7 +53,15 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DEP_OPENPOCKETCINEDESKTOP_LIB_DIR");
     // DEP_OPENPOCKETCINEDESKTOP_LIB_DIR reaches us only when opc-core-sys is a direct
     // dependency. Check the library path directly so the flag works transitively too.
-    if std::env::var("DEP_OPENPOCKETCINEDESKTOP_LIB_DIR").is_ok() || find_core() {
+    if let Some(dir) = find_core() {
+        // `opc-core-sys` publishes this native dependency, but Cargo may omit a
+        // transitive native link flag from a final Windows binary. The viewfinder
+        // is the executable boundary, so make its Swift facade dependency explicit
+        // for both debug and release builds.
+        println!("cargo:rustc-link-search=native={}", dir.display());
+        println!("cargo:rustc-link-lib=dylib={LIB_NAME}");
+        println!("cargo:rustc-cfg=opc_core_linked");
+    } else if std::env::var("DEP_OPENPOCKETCINEDESKTOP_LIB_DIR").is_ok() {
         println!("cargo:rustc-cfg=opc_core_linked");
     }
 }

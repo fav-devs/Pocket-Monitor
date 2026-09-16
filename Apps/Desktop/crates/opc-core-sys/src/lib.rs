@@ -207,6 +207,7 @@ pub const OPC_CAM_GIMBAL_INIT: i32 = 2;
 pub const OPC_CAM_APP_PRESENCE: i32 = 3;
 pub const OPC_CAM_LIVE_VIEW_ENABLE: i32 = 4;
 pub const OPC_CAM_NANO_LIVE_GATE: i32 = 5;
+pub const OPC_CAM_APP_DEVICE_INFO: i32 = 6;
 pub const OPC_CAM_RECORD_START: i32 = 10;
 pub const OPC_CAM_RECORD_STOP: i32 = 11;
 pub const OPC_CAM_SHOOT_PHOTO: i32 = 12;
@@ -253,6 +254,39 @@ pub const OPC_CAM_MEDIA_DELETE: i32 = 70;
 pub const OPC_CAM_MEDIA_FAVORITE: i32 = 71;
 pub const OPC_CAM_PLAYBACK_SPECIAL: i32 = 72;
 pub const OPC_CAM_GIMBAL_TIMED_TARGET: i32 = 73;
+/// Mimo's tap-to-focus burst, one frame each.
+pub const OPC_CAM_TAP_FOCUS_PREPARE: i32 = 74;
+pub const OPC_CAM_TAP_FOCUS_POINT: i32 = 75;
+pub const OPC_CAM_TAP_FOCUS_HINT: i32 = 76;
+pub const OPC_CAM_TAP_FOCUS_COMMIT: i32 = 77;
+/// Audio DSP: GET the blob; wind and directional patch `@2` of it and SET it back.
+pub const OPC_CAM_AUDIO_DSP_GET: i32 = 78;
+pub const OPC_CAM_AUDIO_WIND: i32 = 79;
+pub const OPC_CAM_AUDIO_DIRECTIONAL: i32 = 80;
+/// A `0x02/0xA5` tracking poll reply, as `opc_tracking_poll` reads it.
+pub const OPC_TRACKING_UNKNOWN: i32 = -1;
+pub const OPC_TRACKING_IDLE: i32 = 0;
+pub const OPC_TRACKING_LOCKED: i32 = 1;
+pub const OPC_TRACKING_LOCKED_BOX: i32 = 2;
+
+/// `CameraSetMailbox` decisions, as `opc_mailbox_*` return them.
+pub const OPC_MAILBOX_LAUNCH: i32 = 0;
+pub const OPC_MAILBOX_COALESCE: i32 = 1;
+pub const OPC_MAILBOX_ACK_ACCEPT: i32 = 0;
+pub const OPC_MAILBOX_ACK_ACCEPT_LATE: i32 = 1;
+pub const OPC_MAILBOX_ACK_DROP_SUPERSEDED: i32 = 2;
+pub const OPC_MAILBOX_ACK_DROP_UNKNOWN: i32 = 3;
+pub const OPC_MAILBOX_TIMEOUT_SUBSCRIBE_MATCHES: i32 = 0;
+pub const OPC_MAILBOX_TIMEOUT_WAIT_LATE: i32 = 1;
+pub const OPC_MAILBOX_TIMEOUT_LAUNCH_PENDING: i32 = 2;
+pub const OPC_MAILBOX_TIMEOUT_IDLE: i32 = 3;
+pub const OPC_MAILBOX_PENDING_IMMEDIATE: i32 = 0;
+pub const OPC_MAILBOX_PENDING_AFTER_HOLD: i32 = 1;
+pub const OPC_MAILBOX_PENDING_NONE: i32 = 2;
+/// What a zoom write needs first, as `opc_zoom_hop` returns it.
+pub const OPC_ZOOM_HOP_NONE: i32 = 0;
+pub const OPC_ZOOM_HOP_COLOR: i32 = 1;
+pub const OPC_ZOOM_HOP_BLOCKED: i32 = 2;
 
 pub const OPC_PKT_HANDSHAKE: u8 = 0x00;
 pub const OPC_PKT_TELEMETRY: u8 = 0x01;
@@ -309,6 +343,15 @@ pub struct OpcCameraStatus {
     pub available_format_resolution: [i32; OPC_STATUS_LIST_CAP],
     pub available_format_frame_rate: [i32; OPC_STATUS_LIST_CAP],
     pub available_color: [i32; OPC_STATUS_LIST_CAP],
+    pub wind_nr: i32,
+    pub directional_audio: i32,
+    pub audio_dsp_blob_count: i32,
+    pub audio_dsp_blob: [i32; OPC_STATUS_LIST_CAP],
+    pub audio_meters_count: i32,
+    pub audio_left_tenth_db: i32,
+    pub audio_right_tenth_db: i32,
+    pub audio_left_peak_tenth_db: i32,
+    pub audio_right_peak_tenth_db: i32,
 }
 
 impl Default for OpcCameraStatus {
@@ -508,6 +551,124 @@ extern "C" {
     pub fn opc_lut_resampled(handle: *mut c_void, target: i32) -> *mut c_void;
     pub fn opc_lut_map(handle: *mut c_void, red: f32, green: f32, blue: f32, out: *mut f32) -> i32;
     pub fn opc_lut_builtin_names(out: *mut u8, capacity: usize) -> i64;
+
+    /// A false-colour lattice as a cube handle: `paint` non-zero for the zone colours,
+    /// zero for the weight. Null for a scale the core does not know.
+    pub fn opc_false_color_cube(scale: i32, color_mode: i32, iso: i32, paint: i32) -> *mut c_void;
+    /// Writes four floats: zebra highlight, midtone centre and half-width on the feed's
+    /// axis, and the peaking gate scale.
+    pub fn opc_assist_scalars(
+        color_mode: i32,
+        iso: i32,
+        highlight_ire: f32,
+        midtone_ire: f32,
+        out: *mut f32,
+    ) -> i32;
+    /// The opcode key of the frame `opc_camera_command` would build, or -1.
+    pub fn opc_camera_command_key(
+        kind: i32,
+        ints: *const i32,
+        int_count: usize,
+        reals: *const f64,
+        real_count: usize,
+    ) -> i32;
+    pub fn opc_duml_opcode_key(set: i32, cmd: i32) -> i32;
+    pub fn opc_duml_is_live_control(key: i32) -> i32;
+
+    /// The core's `CameraSetMailbox`, one per datalink.
+    pub fn opc_mailbox_new() -> *mut c_void;
+    pub fn opc_mailbox_destroy(handle: *mut c_void);
+    pub fn opc_mailbox_reset(handle: *mut c_void);
+    pub fn opc_mailbox_offer(handle: *mut c_void, key: i32, urgent: i32, now: f64) -> i32;
+    pub fn opc_mailbox_begin_launch(handle: *mut c_void, key: i32, now: f64);
+    pub fn opc_mailbox_note_transmit(handle: *mut c_void, key: i32, seq: i32);
+    pub fn opc_mailbox_decide_ack(handle: *mut c_void, key: i32, seq: i32) -> i32;
+    pub fn opc_mailbox_timeout(handle: *mut c_void, key: i32, subscribe_matches: i32) -> i32;
+    pub fn opc_mailbox_pending_launch(handle: *mut c_void, key: i32, now: f64) -> i32;
+    pub fn opc_mailbox_hold_remaining(handle: *mut c_void, key: i32, now: f64) -> f64;
+    pub fn opc_mailbox_pipelines(key: i32) -> i32;
+
+    /// Zoom rules per body: the chip stops, and what a write needs first.
+    pub fn opc_zoom_stops(
+        model_id: i32,
+        resolution: i32,
+        shooting_mode: i32,
+        out: *mut f64,
+        capacity: usize,
+    ) -> i32;
+    pub fn opc_zoom_hop(factor: f64, color_mode: i32, is_recording: i32, out_mode: *mut i32)
+        -> i32;
+    pub fn opc_zoom_restore_dlog2(factor: f64) -> i32;
+
+    /// Reads a tracking poll reply; `out_box` gets four floats when a box is carried.
+    pub fn opc_tracking_poll(payload: *const u8, count: usize, out_box: *mut f32) -> i32;
+    pub fn opc_model_supports_tap_focus(model_id: i32) -> i32;
+
+    /// The scopes' display scale and readings, from the core's colour science.
+    pub fn opc_scope_level_table(color_mode: i32, iso: i32, out: *mut f32, capacity: usize) -> i32;
+    pub fn opc_scope_grey_ire(color_mode: i32, iso: i32) -> f64;
+    pub fn opc_scope_traffic_lights(
+        red: *const i32,
+        green: *const i32,
+        blue: *const i32,
+        luma: *const i32,
+        color_mode: i32,
+        iso: i32,
+        threshold: f64,
+        previous: *const f32,
+        out: *mut f32,
+    ) -> i32;
+    pub fn opc_scope_nd(
+        color_mode: i32,
+        iso: i32,
+        luma: *const i32,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
+    pub fn opc_audio_meter_floor_db() -> f64;
+
+    /// A controller stick onto the gimbal axes with the phones' curve and sensitivity.
+    pub fn opc_gimbal_stick_axes(x: f64, y: f64, sensitivity: i32, out: *mut i32) -> i32;
+    /// Hold-to-zoom on the triggers, at the phones' rate.
+    pub fn opc_zoom_trigger_step(current: f64, left: f64, right: f64, dt: f64, max: f64) -> f64;
+    /// The body's name for a model id.
+    pub fn opc_model_name(model_id: i32, out: *mut u8, capacity: usize) -> i64;
+
+    /// Playback: the shot colour in an original's tail, the official cube for it,
+    /// and the conform preview's targets, speed and label.
+    pub fn opc_clip_color_mode(bytes: *const u8, count: usize) -> i32;
+    pub fn opc_lut_auto_file(color_mode: i32, model_id: i32, out: *mut u8, capacity: usize) -> i64;
+    pub fn opc_conform_targets(
+        capture_rate: f64,
+        listed_fps: f64,
+        out: *mut f64,
+        capacity: usize,
+    ) -> i32;
+    pub fn opc_conform_speed(capture_rate: f64, target_rate: f64) -> f64;
+    pub fn opc_conform_label(
+        capture_rate: f64,
+        target_rate: f64,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
+
+    /// The macOS virtual camera: the camera extension's sink stream through CoreMediaIO.
+    /// `open` is 0, -1 without the extension, -2 when its stream will not start; `push`
+    /// takes one NV12 frame and is 0, or 1 when dropped. Elsewhere they report -5.
+    pub fn opc_vcam_mac_open(width: i32, height: i32) -> i32;
+    pub fn opc_vcam_mac_push(bytes: *const u8, count: usize) -> i32;
+    pub fn opc_vcam_mac_close();
+    /// 1 when the camera extension is present on this Mac.
+    pub fn opc_vcam_mac_present() -> i32;
+
+    /// The scale's legend, one `label<TAB>r<TAB>g<TAB>b` line per zone.
+    pub fn opc_false_color_legend(
+        scale: i32,
+        color_mode: i32,
+        iso: i32,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
 
     pub fn opc_camera_command(
         kind: i32,
@@ -740,7 +901,9 @@ mod layout {
     #[test]
     fn the_status_record_matches_the_header_file() {
         assert_eq!(OPC_STATUS_LIST_CAP, 32);
-        assert_eq!(size_of::<OpcCameraStatus>(), 784);
+        assert_eq!(size_of::<OpcCameraStatus>(), 944);
+        assert_eq!(offset_of!(OpcCameraStatus, audio_meters_count), 924);
+        assert_eq!(offset_of!(OpcCameraStatus, wind_nr), 784);
         assert_eq!(offset_of!(OpcCameraStatus, gimbal_yaw_tenth), 128);
         assert_eq!(offset_of!(OpcCameraStatus, available_shutter), 144);
         assert_eq!(

@@ -15,6 +15,11 @@ BLE transport lands; the state machine behind it is already in `opc-camera`.
 
 ## What it looks like
 
+On a saved camera, Windows gets a short 12-second opportunity to rejoin its protected
+Wi-Fi profile. If the camera is off or its network is unavailable, the app moves straight
+to the connection screen rather than leaving the desktop blank through Windows' long
+WLAN timeout.
+
 The picture fills the window, keeping its proportions — a 16:9 feed in a window the
 operator dragged square gets bars, not narrow faces. Framing is what a viewfinder is for.
 
@@ -26,7 +31,13 @@ over the picture:
   exposure mode chip (`AUTO`/`M`), the link state in the middle with a red `REC` badge
   and running time while the body is rolling, and exit at the far right.
 - **Zoom ruler** — a dotted ruler under the top bar that slides beneath a fixed ring;
-  drag it to zoom, the label under it is the truth.
+  drag it to zoom, the label under it is the truth. The body's own chip stops are marked
+  on it (Pocket 4 Pro 1× / 3× / 6× / 12×; Pocket 4 and Pocket 3 1× / 2× / 4×, 2× at most
+  for a Pocket 3 in 4K; 1× only in slow motion, timelapse and low light; Nano 1×), and
+  `+` / `-` step between them. A body with only 1× greys the ruler. D-Log2 rejects every
+  zoom, so a zoom off 1× first hops the colour to D-Log, waits for the body to report
+  it, then zooms; parking back at 1× puts D-Log2 back. Rolling in D-Log2 locks the zoom,
+  and the top bar says so.
 - **Exposure plate** (left) — shutter, `ISO`, `EV` and `WB` readouts. A field the camera
   has not reported is absent rather than guessed.
 - **Status plate** (right) — Wi-Fi, battery (red at 20 %), card time left, and the rate
@@ -36,8 +47,14 @@ over the picture:
   mode); `CTR`, `FOLLOW`, `STILL` and fullscreen on the right; and the mode strip
   (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · PANO · LIVESTREAM`) with the
   active mode in Mimo yellow and Pano / Livestream greyed out.
+
+`V` cycles the gimbal's Follow, Tilt Locked and FPV modes without opening Settings;
+the Settings → Camera tab remains the place to set gimbal speed and ramp.
 - **Middle** — only a phase message (`WAITING FOR LIVE VIEW`, `APPROVE ON THE CAMERA`,
-  `RECOVERING FEED`), the take countdown, or a failure.
+  `RECOVERING FEED`), the take countdown, or a failure. Before the first decoded
+  picture, the window presents this chrome over black rather than leaving the native
+  window's white surface exposed. A renderer failure is also named in the window title
+  and terminal output.
 
 Three sheets open over the picture and close on `Esc`, the `×`, or a tap outside:
 
@@ -46,15 +63,58 @@ Three sheets open over the picture and close on `Esc`, the `×`, or a tap outsid
 - **Exposure** (`AUTO`/`M` chip, or `E`) — `Auto`/`Manual`, then ISO and shutter for
   manual, ISO max and EV for auto. The rows the mode does not use are drawn greyed, the
   way Mimo shows them.
-- **Settings** (`⋮`, or `Tab`) — three tabs. **Camera:** focus mode, white balance
+- **Settings** (`⋮`, or `Tab`) — eight tabs. **Camera:** focus mode, focus-track mode (Default / Product Showcase / Subject Lock / Registered Priority), white balance
   presets, colour profile (from the body's own list), field of view, gimbal mode,
   speed and **ramp** (Off / Soft / Medium, the phones' first-order ease on the stick,
-  applied to the arrow keys and the on-screen pad alike). **Audio:** channel and vocal
-  boost; wind and directional audio are shown greyed because they live in a DSP blob
-  the desktop cannot read yet. **Assist:** thirds grid, overexposure alert (zebra),
+  applied to the arrow keys and the on-screen pad alike). **Audio:** channel, vocal
+  boost, wind noise reduction and directional audio (All / Front / Front+back). The
+  last two live in one DSP blob (`@2` of the `0x02/0xA0` GET reply): the tab reads
+  the blob when it opens, the rows stay greyed until it has answered, and a pick
+  sends the body's own 26 bytes back with `@2` patched (`0x02/0x9F`) followed by a
+  fresh read, so the chips show what took rather than what was asked. **Assist:** thirds grid, overexposure alert (zebra),
   focus peaking, the **LUT** row (Off, the core's official Rec.709 cubes, then every
   `.cube` the operator dropped into the LUT folder the row names), mirror, the timecode
   in the top bar, and the `T` countdown length (3, 5 or 10 s).
+
+  **Link:** the transport and address, the link phase, the body and its firmware, what
+  the watchdog last did, and a **Reconnect** that tears the datalink down and opens a
+  fresh session. **Controls:** joystick sensitivity (the phones' 1–5 ticks through the
+  core's stick curve, for the on-screen pad and a controller; the arrow keys keep their
+  fixed throw), the gimbal ramp, and the **game controller** switch with the phones'
+  map: left stick pans and tilts, the triggers hold-to-zoom at the phones' rate, A
+  records, B recentres, X flips, Y clears tracking, the shoulders step the zoom stops,
+  the D-pad walks ISO and shutter along the body's own lists. **Display:** DISP 1 / 2
+  (live or clean, the same as `H`) and which parts of the chrome are drawn — exposure
+  plate, status plate, zoom ruler, gimbal pad, mode strip; the phones' screen flip has
+  no laptop meaning and says so. **Storage:** the media cache's size on disk and a
+  **Clear**, and where the LUT folder is. **System:** the app version, what speaks the
+  protocol, the renderer, a **diagnostics report** written next to the LUT folder, and
+  where the source and licences are. Everything the operator sets here is kept in
+  `desktop-prefs.txt` beside the LUT folder and read back on the next start.
+- **Assist toolbar** (`ASSIST` in the top bar, or `A`) — the phones' fifteen-tool
+  strip under the top bar: `LUT PEAK FALSE | ZEBRA WAVE PARADE | HISTO VECTOR LIGHTS
+  ND | GUIDES GRID CROSS | MIRROR | AUDIO`. A tap flips the tool; a long press or a
+  right click opens its options as a sheet. **False colour** paints the core's
+  CineStop, EL Zone, IRE or Limits lattices for the body's colour mode and ISO (the
+  same two cubes the phones sample), with a reference key along the bottom of the
+  picture. **Peaking** has the phones' sensitivity (Low / Med / High) and stroke
+  colour. **Zebra** has highlight and midtone bands, each with its level (in IRE, or
+  read as 0–255 codes on the feed, which the core converts) and stripe colour; the
+  thresholds land on the feed's own axis per colour mode. **Grid** draws thirds, the
+  phi grid and dotted diagonals in any mix; **Guides** draws the Film or Social
+  aspect frames (several at once) with an optional mask outside them; **Cross** is
+  the centre crosshair. The **scopes** are movable plates over the picture, sized as
+  on the phones, read from the decoded picture on the CPU at about 15 Hz: **WAVE**
+  (luma or RGB overlay, with the clip / crush / middle-grey guides), **PARADE** (RGB
+  or YRGB lanes), **HISTO** (RGB fills and the luma line on the waveform's axis,
+  the clip zone at 95), **VECTOR** (chroma trace on the 75% graticule with the 123°
+  skin line; trace zoom 1× / 2× / 4×), **LIGHTS** (three lamps, clip and crush per
+  channel, with the crush / clip compensation), **ND** (the suggested screw-on
+  filter in stops, factor or density) and **AUDIO** (the body's own meters with
+  peak hold). The axis each plate plots on — where 0, 100 and 18% grey fall for the
+  body's colour mode and ISO — is the core's `ScopeDisplayScale`, and the lights and
+  the ND reading are the core's from the histograms; the desktop only samples and
+  draws. Drag a plate anywhere to park it somewhere else.
 
 A chip lights up when the camera confirms the value, not when it is tapped; a setting
 the body never reports (audio channel, field of view, gimbal speed) is kept as last
@@ -98,6 +158,16 @@ resolution, and the actions:
   base + step fit vouched for ever goes out; a shared or unfitted handle greys the
   button. A delete is irreversible.
 
+**Select** in the header turns the grid into the phones' multi-select: every tile gets
+a check circle, the footer counts the checks, and **Delete selected** arms on the first
+tap and sends one delete per checked file on the second, again only for handles the fit
+vouched for. **Done** leaves select mode and forgets the checks.
+
+A burst (`…_0034_D_001.JPG`, `_002`, … — the core's `burstRegex`) is one tile carrying
+its first frame and a `×N` badge, as the phones fold it; the selection bar offers
+**Expand ×N**, which lays every member out as its own tile, and **Fold burst** to put
+it back. In select mode a folded burst checks as its lead only.
+
 Listing follows the phones' sequence and the Osmosis notes for the bodies that need
 them: enter playback (`0x02/0x0c`, three tries), fall through to the Pocket 3's
 `0x01/0x01` entry at 20 Hz when the body refuses, wait 1.7 s for the store to mount,
@@ -118,12 +188,26 @@ work on it exactly as on live view. The page is Mimo's: back, an info button tha
 shows the clip's name and figures, the rendition as the title (`Low-Res` for the
 proxy), a download button for the original; below, the time pill, a filmstrip scrubber
 of eight frames decoded from the clip with the playhead over it, the tools
-(Screenshot writes the graded frame with `S`; LUT, Zebra and Peaking toggle), and
-heart · pause · trash. `Space` pauses, `Esc` goes back to the library; trash arms on
+(Screenshot writes the graded frame with `S`; LUT, Zebra and Peaking toggle; the
+conform chip), and heart · pause · trash. `Space` pauses, `Esc` goes back to the library; trash arms on
 the first tap and deletes on the second. A still is converted to the same 4:2:0
 path, so it is graded too. Playback is from the file on disk, never streamed from
 `/v2`: the camera parks `moov` at the end and serves no extension, which no player
 copes with.
+
+**Conform preview.** A high-frame-rate take offers the core's `ConformPreview` targets
+(the rates below its capture rate, from `opc_conform_targets`); the chip cycles
+`Conform → 120 → 24 → 120 → 60 → Conform`, and the player's clock runs at the core's
+`opc_conform_speed` ratio so the slow-motion delivery can be judged before the edit.
+The chip is greyed on a clip with nothing to conform to. Opening a clip resets it.
+
+**Auto LUT.** When the original is on disk, the player reads the take's `moov` tail
+(the last 2 MiB) through the core's `ClipColorProfile` — the `com.dji.camera.ColorGammaSxS`
+key — and asks the core for the official cube's file name for that colour and body
+(`OfficialDJILUT.auto`). If the operator has dropped that cube into the LUT folder it
+is applied and the notice reads `AUTO LUT · OFFICIAL CUBE FOR THE CLIP`; otherwise the
+notice names the file to drop in. A proxy with no original falls back to the body's
+live colour mode. The desktop never ships the cubes.
 
 Every button carries its key hint in small type, so a keyboard operator learns the
 bindings from the screen. When the window is wider than the picture, the two plates park
@@ -140,6 +224,77 @@ cargo run -p opc-chrome --example snapshot -- <dir>
 
 writes PNGs of the finding, live, recording, failed and wide-window states.
 
+## The viewfinder as a camera
+
+The **Output** tab in Settings hands the graded picture to other apps, so a call, a
+stream or a recorder can take the Pocket as its webcam. It is 1280 × 720, letterboxed
+as the window is, without the chrome, at up to 30 frames a second; the **Camera
+picture** row sends it **Clean** (the LUT stays, zebra / peaking / false colour come
+off) or **As shown**. The feed goes out on the viewfinder and in the player; the
+library sends nothing. The **Camera output** readout says where the frames are going,
+or why they are not.
+
+The tab opens with the platform's **camera component**: what it is here, whether it is
+installed, and an **Install** / **Remove** row that does the platform's own thing and
+asks the platform's own way — a password prompt through `pkexec` on Linux, the
+administrator prompt for `regsvr32` on Windows, the OpenPocketCine Camera app on macOS.
+The check runs when the viewfinder starts and again after every action, off the window
+thread; the **Detail** readout says where the component is, what installing would do,
+or why it could not. Picking **Camera device** before the component is in puts a notice
+on the top bar pointing here. Once an install lands, the camera restarts on its own.
+With the **Stream** on, **Open in the browser** shows the page any browser renders it
+on.
+
+- **Camera device** is the platform's own camera, so every app that opens a webcam sees
+  "OpenPocketCine" without OBS in between:
+  - **Linux** writes to a `v4l2loopback` device, found by asking every `/dev/video*`
+    for its driver. **Install** loads the module with `exclusive_caps=1` and the
+    OpenPocketCine label and keeps it across reboots (`/etc/modules-load.d` and
+    `/etc/modprobe.d`); without `pkexec` the tab shows the one line to run instead:
+
+    ```sh
+    sudo modprobe v4l2loopback exclusive_caps=1 card_label=OpenPocketCine
+    ```
+
+    The device takes packed YUYV (BT.601), set with the kernel's own `VIDIOC_S_FMT`;
+    the struct layouts and ioctl numbers are pinned by tests against
+    `<linux/videodev2.h>`.
+  - **Windows 11 (22H2 or later)** registers a Media Foundation virtual camera for the
+    session with `MFCreateVirtualCamera`. Its media source is `opc_vcam_win.dll`
+    (`crates/opc-vcam-win`), a COM object the Windows Camera Frame Server loads into its
+    own service; the viewfinder feeds it NV12 frames over the named pipe
+    `\\.\pipe\OpenPocketCineVCam` (`opc_vcam::wire`), and the source paces them out at
+    30 frames a second, black while nothing is coming. **Install** registers the DLL
+    that sits beside the viewfinder through an elevated `regsvr32` (the administrator
+    prompt is the consent); the tab reads the registration back from the machine hive
+    and says when the DLL is missing beside the executable. Nothing is signed and
+    nothing runs in the kernel. On Windows 10 the tab reports the component as not
+    available; use the stream there.
+  - **macOS 13 or later** writes into the sink stream of the OpenPocketCine camera
+    extension, a CoreMediaIO extension installed once from the OpenPocketCine Camera app
+    (`Apps/Desktop/macos`, an XcodeGen project). The facade finds the device and its
+    sink stream by name through CoreMediaIO and enqueues NV12 sample buffers
+    (`opc_vcam_mac_*`); the extension hands the newest frame to every reader at 30
+    frames a second. **Install** opens the OpenPocketCine Camera app from
+    `/Applications`, where one button activates the extension; the tab says when the
+    app is not there. The extension needs the system-extension entitlement, so the app
+    must be Developer ID signed by a team in the Apple Developer Program.
+- **Stream** serves MJPEG over HTTP on `127.0.0.1` (port 8890 in the settings file,
+  `vcam_port`): `/stream` is a `multipart/x-mixed-replace` body that never ends,
+  `/frame.jpg` the latest frame, `/` a page that shows it. Nothing leaves the machine.
+  In OBS add a **Media Source**, untick Local File, set the input to the URL the
+  System tab shows and the input format to `mjpeg`, then **Start Virtual Camera** —
+  OBS's camera is what Zoom, Teams, Meet and the rest pick up on every platform. VLC,
+  ffmpeg and a browser read the stream directly.
+
+Frames are handed to a worker thread through a latest-wins slot, so a slow consumer
+never holds the window back. The setting persists with the rest.
+
+None of the three camera devices has been run against its platform here: the Linux
+path is pinned to the kernel header, the Windows source is type-checked against the
+real bindings on the Windows target, and the macOS extension and facade are written to
+Apple's camera-extension pattern but not compiled. Each needs one run on its machine.
+
 ## Keys
 
 | | | | |
@@ -147,13 +302,13 @@ writes PNGs of the finding, live, recording, failed and wide-window states.
 | `Space` | start recording | `T` | 3-second countdown, or cancel it |
 | `R` | stop recording | `S` | write a still |
 | Arrows | pan and tilt | `C` | recentre the gimbal |
-| `+` / `-` | zoom in and out | `F` | flip to selfie and back |
+| `+` / `-` | the next / previous zoom stop | `F` | flip to selfie and back |
 | `0` | back to wide | `Esc` | close |
 | Drag | track what you drew around | `X` | stop tracking |
 | `[` / `]` | step resolution / frame rate | `H` | hide the chrome |
 | `Tab` | settings | `E` | exposure sheet |
 | `G` | the library | `R` | refresh the list (library) |
-| `K` | programmed moves | | |
+| `K` | programmed moves | `A` | the assist toolbar |
 | `F11` | fullscreen (button) | `Esc` | close a sheet first |
 | `Z` | zebra | `P` | peaking |
 | `L` | colour cube | `M` | mirror |
@@ -175,7 +330,21 @@ disabled while the link is recovering or failed.
 
 A finger drags a tracking box on the unobstructed fitted image, exactly as the mouse
 does. A press that starts in a control stays a control — it can never become tracking.
+The box is labelled **ACQUIRING SUBJECT** until the Pocket confirms its lock, then
+**TRACKING SUBJECT**. The camera supplies a subject box and lock state, not a person’s
+name or identity.
 Keyboard shortcuts remain available.
+
+A click (or a tap) that is not a drag is **tap-to-focus**: Mimo's four-write burst
+(`0x22` spot, `0x30` region, `0x68` hint, `0x32` commit) at that point on the sensor,
+mirroring undone, with a bracketed reticle and the AE spot marked at its corner for
+1.5 s. A body already following something is told to stop first. The Nano takes no
+tap focus, so a click on one sends nothing. A drag's box is then **polled** on the
+phones' cadence (`0x02/0xA5` every 0.5 s): the box stays as long as the body says it
+has the subject, moves to the subject's rectangle when the body sends one, and comes
+off at the first idle after a lock or after six idle answers with no lock. The AF-C
+face bracket is not here: the phones detect faces on-device, and the desktop has no
+detector yet.
 
 Touch is handled explicitly rather than left to the system: once winit registers a window
 for touch, Windows stops synthesising mouse clicks from taps, so without this a finger on
@@ -232,7 +401,17 @@ other. Two channels, and nothing shared but the messages.
   where the subject moved to, so a box left on screen would stop being where the subject
   is, and the operator would believe it.
 - **The zoom follows the body.** Somebody may have turned the ring; the next `+` steps
-  from where the lens actually is.
+  to the stop above where the lens actually is. Which stops the body has is the core's
+  answer (`CameraModel.activeZoomStops`), asked again whenever the model, format or
+  shooting mode moves.
+- **Every live-control SET goes through the phones' mailbox.** The core's
+  `CameraSetMailbox` decides, per opcode, what may go on the wire: one generation at a
+  time, latest wins (a wheel or a slider replaces its pending step rather than queuing),
+  the zoom slider pipelined at 20 Hz. The datalink keeps its clock the way the phones
+  do — retransmit once after 300 ms of silence, settle at 2 s, accept a late ACK for
+  the open generation, drop a superseded one. A FORMAT just sent is pinned on its chip
+  until the body confirms it or the settle window passes; a SET nobody answered puts
+  "no answer from the camera" in the top bar.
 - **Presented frames drive the watchdog**, not arrived ones. A decoder quietly producing
   nothing looks exactly like a healthy feed otherwise — the black-picture-with-live-HUD
   failure this whole port has been written around.
@@ -242,13 +421,4 @@ other. Two channels, and nothing shared but the messages.
 
 ## What has not been run
 
-No camera, and no window. `link.rs` and `view.rs` reach the Swift core, so they compile
-only where there is one to link — `just desktop-check-gated` type-checks them anywhere by
-forcing the flag under `cargo check`, but type-checking is not running. The first things
-to try on a real machine, in order:
-
-1. `opc-monitor view` on the camera's Wi-Fi — does a picture arrive at all.
-2. `Space`, then `R` — does the body roll and stop.
-3. The arrows — does the gimbal move and, more importantly, does it **stop**.
-4. A drag — does the camera follow the thing that was drawn around, not near it.
-5. The same drag with a finger, on a touchscreen — does the event arrive at all.
+No camera, and no window. `link.rs` and `view.rs` reach the Swift core, so

@@ -27,6 +27,13 @@ private struct Arguments {
     func byte(_ index: Int) -> UInt8 { UInt8(clamping: int(index)) }
     func real(_ index: Int) -> Double { index < reals.count ? reals[index] : 0 }
     func float(_ index: Int) -> Float { Float(real(index)) }
+
+    /// The 26-byte audio DSP blob from `start`, or nil when it is not all there.
+    func dspBlob(from start: Int) -> [UInt8]? {
+        let end = start + AudioDspBlob.size
+        guard ints.count >= end else { return nil }
+        return ints[start..<end].map { UInt8(clamping: $0) }
+    }
 }
 
 /// Builds one command as an encoded DUML frame.
@@ -46,6 +53,19 @@ func opc_camera_command(
     return DesktopFacade.emit(Data(Duml.encode(frame)), into: out, capacity: capacity)
 }
 
+/// The opcode key (`set << 8 | cmd`) of the frame `opc_camera_command` would build,
+/// so the shell can match a reply to its SET without reading DUML. -1 when the core
+/// cannot build that kind.
+@_cdecl("opc_camera_command_key")
+func opc_camera_command_key(
+    _ kind: Int32, _ ints: UnsafePointer<Int32>?, _ intCount: Int,
+    _ reals: UnsafePointer<Double>?, _ realCount: Int
+) -> Int32 {
+    let arguments = Arguments(ints, intCount, reals, realCount)
+    guard let frame = cameraFrame(kind: kind, seq: 0, arguments: arguments) else { return -1 }
+    return Int32(Duml.opcodeKey(set: frame.cmdSet, cmd: frame.cmdId))
+}
+
 // swift-format-ignore: NeverForceUnwrap
 private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml.Frame? {
     switch kind {
@@ -61,6 +81,8 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
         return Commands.liveViewEnable(seq: seq)
     case OPC_CAM_NANO_LIVE_GATE:
         return Commands.nanoLiveViewGate(start: arguments.int(0) != 0, seq: seq)
+    case OPC_CAM_APP_DEVICE_INFO:
+        return Commands.appDeviceInfo(seq: seq)
 
     case OPC_CAM_RECORD_START:
         return Commands.recordStart(seq: seq)
@@ -194,6 +216,27 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
         return Commands.gimbalTimedTarget(
             yawDeg: Double(arguments.int(0)) / 10, nativePitchDeg: Double(arguments.int(1)) / 10,
             duration: Double(arguments.int(2)) / 10, seq: seq)
+
+    case OPC_CAM_TAP_FOCUS_PREPARE:
+        return Commands.tapFocusPrepare(seq: seq)
+    case OPC_CAM_TAP_FOCUS_POINT:
+        return Commands.tapFocusPoint(arguments.float(0), arguments.float(1), seq: seq)
+    case OPC_CAM_TAP_FOCUS_HINT:
+        return Commands.tapFocusLiveHint(seq: seq)
+    case OPC_CAM_TAP_FOCUS_COMMIT:
+        return Commands.tapFocusCommit(arguments.float(0), arguments.float(1), seq: seq)
+    case OPC_CAM_AUDIO_DSP_GET:
+        return Commands.audioDspGet(seq: seq)
+    case OPC_CAM_AUDIO_WIND:
+        // ints: [on, blob…]. The blob is the body's own GET reply; only `@2` changes.
+        guard let blob = arguments.dspBlob(from: 1) else { return nil }
+        let wind: WindNoiseReduction = arguments.int(0) != 0 ? .on : .off
+        return Commands.audioDspSet(AudioDspBlob.patchWind(blob, wind), seq: seq)
+    case OPC_CAM_AUDIO_DIRECTIONAL:
+        guard let blob = arguments.dspBlob(from: 1),
+            let mode = DirectionalAudio(rawValue: arguments.byte(0))
+        else { return nil }
+        return Commands.audioDspSet(AudioDspBlob.patchDirectional(blob, mode), seq: seq)
 
     default:
         return nil

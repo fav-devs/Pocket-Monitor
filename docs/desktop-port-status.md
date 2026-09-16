@@ -16,14 +16,18 @@ bottom says what the body is set to, and the keyboard drives it.
 | | Key | Where it lives |
 | --- | --- | --- |
 | Gimbal | Arrows, `C` recentre, `F` flip | `opc-ui/controls.rs`, `Stick` |
-| Zoom | `+` `-` `0` | `opc-ui/controls.rs` |
+| Zoom | `+` `-` `0` step the body's own stops; D-Log2 hop | `opc-monitor/zoom.rs` |
 | Record | `Space`, `R` | `opc-ui/controls.rs` |
 | Timer | `T` — 3 seconds, cancellable | `opc-monitor/shell.rs`, `Countdown` |
-| Tracking | Mouse or one-finger drag, `X` to clear | `opc-ui/tracking.rs`, `Shell::touch` |
+| Tracking | Mouse or one-finger drag, polled at 0.5 s until lock or idle, `X` to clear; a click is tap-to-focus (Mimo's four-write burst) | `opc-ui/tracking.rs`, `Shell::touch`, `opc-camera/tracking.rs` |
 | Frame rate, resolution | `[` `]` | `opc-ui/format.rs` |
-| Assists | `Z` `P` `L` `M`, `H` hides the chrome | `opc-monitor/shell.rs`, `Toggles` |
+| Assists | `A` opens the phones' toolbar (long press for options); `Z` `P` `L` `M`, `H` hides the chrome | `opc-monitor/assists.rs`, `shell.rs`, `Toggles` |
+| Scopes | WAVE / PARADE / HISTO / VECTOR / LIGHTS / ND / AUDIO as movable plates, sampled on the CPU at 15 Hz | `opc-monitor/scopes.rs`, the core's `ScopeDisplayScale` through `opc_scope_*` |
+| Setup | Link / Controls / Display / Storage / System tabs; a game controller on the phones' map; prefs saved beside the LUT folder | `opc-monitor/sheets.rs`, `pad.rs`, `prefs.rs`, `gilrs` in `view.rs` |
 | Sheets | `Tab` settings, `E` exposure, the format chip | `opc-monitor/sheets.rs` |
-| Library | `G`, then the grid; `Space` and `Esc` in the player | `opc-monitor/library.rs`, `media.rs`, `opc-media` |
+| SET mailbox | Latest-wins per opcode, 300 ms retransmit, 2 s settle, FORMAT pin | `opc-camera/mailbox.rs`, the core's `CameraSetMailbox` |
+| Library | `G`, then the grid; Select mode with a batch delete; bursts folded under their first frame with Expand / Fold; `Space` and `Esc` in the player; the conform chip cycles the core's `ConformPreview` targets; Auto LUT from the original's `moov` tail | `opc-monitor/library.rs`, `media.rs`, `luts.rs`, `opc-media` |
+| Virtual camera | Output tab: the platform camera component's status with Install / Remove from inside the app; Off / Camera device (`v4l2loopback` on Linux, a Media Foundation virtual camera on Windows 11, the camera extension on macOS) / Stream (loopback MJPEG for OBS's Virtual Camera anywhere); Clean or As shown | `opc-vcam`, `opc-vcam-win`, `Apps/Desktop/macos`, `DesktopVirtualCameraABI.swift`, `view.rs` |
 
 The chrome is a Slint Mimo replica with every button live (`opc-chrome`); the media
 library and player are `opc-media` (paging, HTTP, cache) driven by `opc-monitor/media.rs`.
@@ -174,17 +178,16 @@ thing that was drawn around rather than near it.
    behind it, so `Pairing` — written and tested — cannot reach a camera. Until this
    lands, the camera's Wi-Fi has to be joined by hand, which is the one part of the
    original ask that is not met. btleplug is the reason Rust is in this port at all.
-2. **The SET mailbox.** `CameraSetMailbox` in the core handles retransmit and settle and
-   is not exposed through the facade. Without it a dropped SET silently does not take:
-   the operator presses a key and nothing happens, with no error. This is the most
-   likely source of "it sort of works" reports from a first field test.
-3. **On-screen controls**, if wanted. The architecture takes it — `Hud` already computes
+2. **On-screen controls**, if wanted. The architecture takes it — `Hud` already computes
    its layout and would need to hand back the rectangles it drew so `Shell` can hit-test
    a tap before falling through to a tracking drag. Deliberately left until someone has
    held the laptop, because where the controls should sit is not guessable.
-4. **False colour and the scopes** (milestone 2d). `feed.frag` already samples the limits
-   paint and weight cubes; what is missing is generating them, which
-   `LiveColorScience.falseColorBands` in the core already knows how to do.
+3. **Scopes over playback.** The plates sample the live picture only; the player's
+   frames go through the same renderer, so it is a sampling-hook change, not a port.
+4. **Running the native cameras.** The Windows source and the macOS extension are
+   written and type-checked where that was possible, but neither has been loaded by
+   its OS yet: `regsvr32` and a Windows 11 machine for one, a Developer ID signed
+   build of `Apps/Desktop/macos` for the other. Windows 10 stays on the stream.
 
 ## Building it
 
@@ -197,4 +200,4 @@ just desktop-check-gated   # type-check everything behind opc_core_linked, anywh
 ```
 
 Without a Swift toolchain the workspace still builds and 218 tests still run; the
-viewfinder binary builds too and says what is missing when asked to open a camera.
+viewfinder binary builds too and

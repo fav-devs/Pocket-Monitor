@@ -9,12 +9,14 @@ mod ble;
 mod command;
 mod depacketizer;
 mod health;
+mod mailbox;
 mod packed;
 mod pairing;
 mod sequence;
 mod session;
 pub mod softap;
 mod status;
+mod tracking;
 mod transport;
 mod watchdog;
 pub mod wifi;
@@ -22,14 +24,18 @@ pub mod wifi;
 use std::fmt;
 
 pub use ble::{Advert, BleTransport, Discovered, GattMap, NotificationAssembler};
-pub use command::Command;
+pub use command::{is_live_control, opcode_key, Command};
 pub use depacketizer::Depacketizer;
 pub use health::FeedHealth;
+pub use mailbox::{SetDriver, SetOutcome, SetPolicy, RETRANSMIT_AFTER, SETTLE_AFTER};
 pub use packed::DumlFrame;
 pub use pairing::{PairState, PairStep, Pairing, Reply, PAIR_DEADLINE, STEP_RETRY};
 pub use sequence::{Outgoing, Phase, Sequencer, ACK_INTERVAL, HANDSHAKE_DEADLINE, HANDSHAKE_RETRY};
 pub use session::{CameraSession, SessionError, SessionEvent};
-pub use status::{frame_rate_fps, resolution_name, Status, StatusDecoder};
+pub use status::{
+    frame_rate_fps, resolution_name, AudioMeters, Status, StatusDecoder, AUDIO_DSP_BLOB,
+};
+pub use tracking::{supports_tap_focus, tracking_poll, TrackingPoll};
 pub use transport::{
     encode_frame, handshake, is_handshake, pair_approval_ack, pair_set_pin, pair_wake_access_point,
     routing_header, scan_frames, status_string, subscribe, tap_focus, transport_header,

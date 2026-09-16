@@ -96,6 +96,21 @@ fn holding_an_arrow_pans_and_letting_go_stops() {
 }
 
 #[test]
+fn v_cycles_the_gimbal_mode_without_opening_a_sheet() {
+    let mut shell = framed();
+    assert_eq!(
+        sent(&shell.press(Key::Char('v'), 0.0)),
+        [Command::GimbalFollow, Command::GimbalTiltLock(1)],
+        "V moves Follow to Tilt Locked"
+    );
+    assert_eq!(
+        sent(&shell.press(Key::Char('V'), 0.1)),
+        [Command::GimbalFpv],
+        "V then moves Tilt Locked to FPV"
+    );
+}
+
+#[test]
 fn a_held_stick_is_kept_alive_and_a_resting_one_is_not() {
     let mut shell = framed();
     shell.press(Key::Left, 0.0);
@@ -160,13 +175,281 @@ fn a_drag_on_a_mirrored_picture_points_at_the_same_thing() {
 }
 
 #[test]
-fn a_click_does_not_clear_what_the_camera_is_already_following() {
+fn a_click_focuses_where_it_landed_and_leaves_tracking_alone() {
     let mut shell = framed();
     shell.pointer_down(640.0, 360.0);
+    let sent = sent(&shell.pointer_up(641.0, 361.0, 0.0));
+    // The picture is 1280 × 720 fitted edge to edge, so the click is the centre.
+    assert_eq!(sent.len(), 4, "Mimo's four-write burst");
+    assert_eq!(sent[0], Command::TapFocusPrepare);
     assert!(
-        shell.pointer_up(641.0, 361.0, 0.0).is_empty(),
-        "a click is not a box, and must not send anything"
+        matches!(sent[1], Command::TapFocusPoint { x, y } if (x - 0.5).abs() < 0.01 && (y - 0.5).abs() < 0.01)
     );
+    assert_eq!(sent[2], Command::TapFocusHint);
+    assert!(matches!(sent[3], Command::TapFocusCommit { .. }));
+    assert!(
+        !sent.contains(&Command::TrackClear),
+        "a click is not a box, and must not clear what the camera is following"
+    );
+}
+
+#[test]
+fn wind_noise_reduction_carries_the_bodys_own_blob_back_patched() {
+    use opc_monitor::sheets::Pick;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    // Before the GET has answered, a pick can only ask for the blob.
+    assert_eq!(
+        sent(&shell.pick_for_test(Pick::Wind(true))),
+        [Command::AudioDspGet]
+    );
+    assert_eq!(shell.notice(0.1), "READING THE AUDIO DSP FIRST");
+    let blob = [3u8; 26];
+    shell.set_status(Status {
+        audio_dsp_blob: Some(blob),
+        wind_nr: Some(0x18),
+        ..Status::default()
+    });
+    assert_eq!(
+        sent(&shell.pick_for_test(Pick::Wind(true))),
+        [Command::AudioWind { on: true, blob }, Command::AudioDspGet],
+        "the write, then a read so the chips show what took"
+    );
+    assert_eq!(
+        sent(&shell.pick_for_test(Pick::Directional(0xBA))),
+        [
+            Command::AudioDirectional { mode: 0xBA, blob },
+            Command::AudioDspGet
+        ]
+    );
+}
+
+#[test]
+fn opening_the_audio_tab_reads_the_dsp_blob_once() {
+    use opc_monitor::sheets::SheetKind;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    shell.toggle_sheet(SheetKind::Settings);
+    assert!(
+        shell.tick(0.0).is_empty(),
+        "the camera tab asks for nothing"
+    );
+    shell.chrome(0.0);
+    shell.select_settings_tab(opc_monitor::sheets::TAB_AUDIO);
+    assert_eq!(sent(&shell.tick(0.1)), [Command::AudioDspGet]);
+    shell.set_status(Status {
+        audio_dsp_blob: Some([0; 26]),
+        ..Status::default()
+    });
+    shell.toggle_sheet(SheetKind::Settings);
+    shell.toggle_sheet(SheetKind::Settings);
+    assert!(shell.tick(0.2).is_empty(), "already read");
+}
+
+#[test]
+fn a_scope_chip_puts_a_movable_plate_on_the_picture() {
+    use opc_monitor::scopes::ScopeSamples;
+    use opc_monitor::AssistTool;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    assert!(!shell.scopes_wanted());
+    shell.press(Key::Char('a'), 0.0);
+    shell.chrome(0.0);
+    // WAVE is the fifth chip, in the second group.
+    let (x, y) = chip_centre(4, 1);
+    shell.control_down(x, y, 0.0);
+    shell.control_up(x, y, 0.0);
+    assert!(shell.tool_on(AssistTool::Wave));
+    assert!(shell.scopes_wanted(), "the window should start sampling");
+    shell.set_scope_samples(ScopeSamples::default());
+    shell.chrome(0.1);
+    let (px, py, pw, ph) = shell.plate_rect(AssistTool::Wave).expect("a plate");
+    assert_eq!((pw, ph), (250.0, 153.0), "the phones' waveform plate");
+    // Its default place is the bottom-left of the picture, above the bottom bar.
+    assert!(px >= 0.0 && py + ph <= 720.0 - 152.0);
+    // A press on the plate is a drag of the plate, not a tracking box.
+    assert!(shell.is_control(f64::from(px + pw / 2.0), f64::from(py + ph / 2.0)));
+    shell.control_down(f64::from(px + pw / 2.0), f64::from(py + ph / 2.0), 0.2);
+    shell.control_moved(
+        f64::from(px + pw / 2.0 + 90.0),
+        f64::from(py + ph / 2.0 - 60.0),
+    );
+    shell.control_up(
+        f64::from(px + pw / 2.0 + 90.0),
+        f64::from(py + ph / 2.0 - 60.0),
+        0.3,
+    );
+    let (nx, ny, _, _) = shell.plate_rect(AssistTool::Wave).expect("still there");
+    assert!(
+        (nx - (px + 90.0)).abs() < 2.0 && (ny - (py - 60.0)).abs() < 2.0,
+        "moved to ({nx}, {ny})"
+    );
+    // Off again: no plate, no sampling.
+    shell.control_down(x, y, 0.4);
+    shell.control_up(x, y, 0.4);
+    assert!(!shell.scopes_wanted());
+    assert_eq!(shell.plate_rect(AssistTool::Wave), None);
+}
+
+// ── Operator setup ───────────────────────────────────────────────────────────
+
+#[test]
+fn a_controller_drives_the_shell_on_the_phones_map() {
+    use opc_monitor::sheets::Pick;
+    use opc_monitor::PadButton;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::A, 0.0)),
+        [Command::RecordStart]
+    );
+    shell.set_status(Status {
+        is_recording: true,
+        ..Status::default()
+    });
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::A, 0.1)),
+        [Command::RecordStop],
+        "A is a record toggle"
+    );
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::B, 0.2)),
+        [Command::GimbalRecenter]
+    );
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::RightShoulder, 0.3)),
+        [Command::ZoomJump(3.0)]
+    );
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::DpadUp, 0.4)),
+        [Command::SetIsoIndex(0x03)],
+        "no ISO known yet: one up from auto on the wire's table"
+    );
+    shell.set_status(Status {
+        iso_index: Some(0x05),
+        shutter_denominator: Some(60),
+        ..Status::default()
+    });
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::DpadUp, 0.5)),
+        [Command::SetIsoIndex(0x06)]
+    );
+    assert_eq!(
+        sent(&shell.controller_button(PadButton::DpadLeft, 0.6)),
+        [Command::SetShutter(50)],
+        "open is a longer exposure"
+    );
+    // The stick throws with the operator's sensitivity: 4 is the captured throw.
+    let full = sent(&shell.controller_stick(1.0, 0.0, 0.7));
+    assert_eq!(full, [opc_ui::stick_command(-1.0, 0.0)]);
+    shell.pick_for_test(Pick::StickSensitivity(2));
+    let half = sent(&shell.controller_stick(1.0, 0.0, 0.8));
+    assert_eq!(half, [opc_ui::stick_command(-0.5, 0.0)]);
+    // Letting go rests the gimbal once, and a resting stick sends nothing more.
+    assert_eq!(
+        sent(&shell.controller_stick(0.0, 0.0, 0.9)),
+        [Command::GimbalStick {
+            axis0: 1024,
+            axis1: 1024
+        }]
+    );
+    assert!(shell.controller_stick(0.0, 0.0, 1.0).is_empty());
+    // The controller can be switched off in the Controls tab.
+    shell.pick_for_test(Pick::Gamepad(false));
+    assert!(shell.controller_button(PadButton::A, 1.1).is_empty());
+    assert!(!shell.prefs().gamepad);
+}
+
+#[test]
+fn the_display_tab_hides_the_chrome_and_its_parts() {
+    use opc_monitor::sheets::Pick;
+    use opc_monitor::Part;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    shell.chrome(0.0);
+    assert!(shell.is_control(640.0, 56.0 + 30.0), "the zoom ruler");
+    shell.pick_for_test(Pick::ShowPart(Part::Zoom, false));
+    shell.chrome(0.1);
+    assert!(
+        !shell.is_control(640.0, 56.0 + 30.0),
+        "a hidden ruler is not a control"
+    );
+    assert!(!shell.prefs().show_zoom);
+    shell.pick_for_test(Pick::Disp(true));
+    assert!(shell.chrome(0.2).is_none(), "DISP 2 is the clean view");
+    shell.pick_for_test(Pick::Disp(false));
+    assert!(shell.chrome(0.3).is_some());
+}
+
+#[test]
+fn the_setup_tabs_read_what_the_window_told_the_shell() {
+    let mut shell = framed();
+    shell.set_link_info("Wi-Fi datalink · 192.168.2.1:9004");
+    shell.set_renderer_name("llvmpipe");
+    shell.set_gamepad(Some("Pad".into()));
+    shell.set_cache_size(42_000_000);
+    shell.note_recovery("RebuildDecoder");
+    shell.set_phase(opc_ui::Phase::Live);
+    let setup = shell.setup();
+    assert_eq!(setup.cache, "42 MB");
+    assert_eq!(setup.phase, "LINK");
+    assert_eq!(setup.gamepad.as_deref(), Some("Pad"));
+    let report = shell.diagnostics_text(12.0);
+    assert!(report.contains("192.168.2.1:9004"));
+    assert!(report.contains("llvmpipe"));
+    assert!(report.contains("RebuildDecoder"));
+    assert!(report.contains("phase LINK"));
+}
+
+#[test]
+fn a_click_on_a_mirrored_picture_focuses_on_the_same_thing() {
+    let mut shell = framed();
+    shell.press(Key::Char('m'), 0.0);
+    shell.pointer_down(320.0, 360.0);
+    let sent = sent(&shell.pointer_up(320.0, 360.0, 0.0));
+    assert!(matches!(sent[1], Command::TapFocusPoint { x, .. } if (x - 0.75).abs() < 0.01));
+}
+
+#[test]
+fn a_box_is_polled_until_the_body_locks_and_then_until_it_lets_go() {
+    use opc_camera::TrackingPoll;
+    let mut shell = framed();
+    shell.pointer_down(320.0, 180.0);
+    shell.pointer_moved(640.0, 360.0);
+    shell.pointer_up(640.0, 360.0, 0.0);
+    assert!(shell.is_tracking());
+    assert_eq!(shell.tracking_label(), Some("ACQUIRING SUBJECT"));
+    assert!(shell.tick(0.1).is_empty(), "not yet");
+    assert_eq!(sent(&shell.tick(0.5)), [Command::TrackPoll]);
+    assert!(shell.tick(0.6).is_empty(), "one poll per half second");
+    // Six idle answers before any lock: the body never found anything.
+    for i in 0..5 {
+        shell.tracking_reply(TrackingPoll::Idle, 0.5 + f64::from(i));
+        assert!(shell.is_tracking());
+    }
+    shell.tracking_reply(TrackingPoll::Idle, 6.0);
+    assert!(!shell.is_tracking(), "given up");
+
+    // A lock keeps the box past the 1.5 s it would otherwise fade at.
+    shell.pointer_down(320.0, 180.0);
+    shell.pointer_moved(640.0, 360.0);
+    shell.pointer_up(640.0, 360.0, 10.0);
+    shell.tracking_reply(TrackingPoll::Locked(Some((0.3, 0.3, 0.2, 0.2))), 10.5);
+    assert_eq!(shell.tracking_label(), Some("TRACKING SUBJECT"));
+    shell.tick(12.5);
+    assert!(shell.is_tracking());
+    // The first idle after a lock is the subject gone.
+    shell.tracking_reply(TrackingPoll::Idle, 13.0);
+    assert!(!shell.is_tracking());
+    // A click while tracking clears the body first.
+    shell.pointer_down(320.0, 180.0);
+    shell.pointer_moved(640.0, 360.0);
+    shell.pointer_up(640.0, 360.0, 20.0);
+    shell.pointer_down(200.0, 200.0);
+    let sent = sent(&shell.pointer_up(200.0, 200.0, 20.5));
+    assert_eq!(sent[0], Command::TrackClear);
+    assert_eq!(sent.len(), 5);
+    assert!(!shell.is_tracking());
 }
 
 #[test]
@@ -295,11 +578,116 @@ fn zoom_follows_the_body_rather_than_fighting_it() {
         zoom_hundredths: Some(400),
         ..Status::default()
     });
+    // Without the core the stand-in stops are 1 / 3 / 6 / 12: from 4× the next is 6×.
     assert_eq!(
         sent(&shell.press(Key::Char('='), 0.0)),
-        [Command::ZoomFactor(4.5)],
-        "the next step should continue from where the lens actually is"
+        [Command::ZoomJump(6.0)],
+        "the next stop should be the one above where the lens actually is"
     );
+    assert_eq!(
+        sent(&shell.press(Key::Char('-'), 0.0)),
+        [Command::ZoomJump(3.0)]
+    );
+    assert_eq!(
+        sent(&shell.press(Key::Char('0'), 0.0)),
+        [Command::ZoomJump(1.0)]
+    );
+    assert_eq!(shell.zoom_stops(), [1.0, 3.0, 6.0, 12.0]);
+}
+
+#[test]
+fn a_zoom_out_of_dlog2_hops_the_colour_first_and_puts_it_back_at_wide() {
+    let mut shell = framed();
+    shell.set_model(Some(0x20));
+    shell.set_status(Status {
+        color_mode: Some(0x41),
+        ..Status::default()
+    });
+    // The hop goes out; the zoom waits for the body to report D-Log.
+    assert_eq!(
+        sent(&shell.press(Key::Char('='), 0.0)),
+        [Command::SetColorMode {
+            mode: 0x17,
+            model_id: 0x20
+        }]
+    );
+    assert!(!shell.notice(0.5).is_empty(), "the operator is told why");
+    assert!(shell.tick(0.5).is_empty(), "nothing until the hop lands");
+    shell.set_status(Status {
+        color_mode: Some(0x17),
+        ..Status::default()
+    });
+    assert_eq!(sent(&shell.tick(0.6)), [Command::ZoomJump(3.0)]);
+    // Parking at 1× restores D-Log2.
+    assert_eq!(
+        sent(&shell.press(Key::Char('0'), 1.0)),
+        [
+            Command::ZoomJump(1.0),
+            Command::SetColorMode {
+                mode: 0x41,
+                model_id: 0x20
+            }
+        ]
+    );
+}
+
+#[test]
+fn rolling_in_dlog2_refuses_the_zoom_and_says_so() {
+    let mut shell = framed();
+    shell.set_status(Status {
+        color_mode: Some(0x41),
+        is_recording: true,
+        ..Status::default()
+    });
+    assert!(shell.press(Key::Char('='), 0.0).is_empty());
+    assert_eq!(shell.notice(0.1), "ZOOM LOCKED · D-LOG2 WHILE ROLLING");
+    assert_eq!(shell.notice(5.0), "", "a notice does not stay forever");
+}
+
+#[test]
+fn a_format_just_sent_is_pinned_until_the_body_confirms_it_or_gives_up() {
+    use opc_monitor::SetOutcome;
+    let mut shell = framed();
+    // 4K at 30, with 60 on offer: codes from the body's own table.
+    shell.set_status(Status {
+        available_formats: vec![(0x10, 0x03), (0x10, 0x06)],
+        video_resolution: Some(0x10),
+        video_frame_rate: Some(0x03),
+        ..Status::default()
+    });
+    assert_eq!(shell.format_label(0.0), "4K·30");
+    shell.press(Key::Char(']'), 0.0);
+    assert_eq!(
+        shell.format_label(0.5),
+        "4K·60",
+        "the chip reads the format asked for"
+    );
+    // A stale status inside the window does not unpin it.
+    shell.set_status(Status {
+        available_formats: vec![(0x10, 0x03), (0x10, 0x06)],
+        video_resolution: Some(0x10),
+        video_frame_rate: Some(0x03),
+        ..Status::default()
+    });
+    assert_eq!(shell.format_label(0.5), "4K·60");
+    // The body confirms: the pin is done with, and the chip reads the body.
+    shell.set_status(Status {
+        available_formats: vec![(0x10, 0x03), (0x10, 0x06)],
+        video_resolution: Some(0x10),
+        video_frame_rate: Some(0x06),
+        ..Status::default()
+    });
+    assert_eq!(shell.format_label(0.6), "4K·60");
+    // A SET nobody answered drops the pin and tells the operator.
+    shell.press(Key::Char('['), 1.0);
+    shell.note_set(SetOutcome::Unanswered {
+        command: Command::SetVideoFormat {
+            resolution: 0x10,
+            frame_rate: 0x03,
+        },
+    });
+    assert_eq!(shell.notice(1.1), "NO ANSWER FROM THE CAMERA");
+    assert_eq!(shell.format_label(1.1), "4K·60");
 }
 
 #[test]
@@ -543,14 +931,14 @@ fn a_finger_released_frees_the_screen_for_the_next_one() {
 }
 
 #[test]
-fn a_tap_sends_nothing_by_finger_as_by_mouse() {
+fn a_tap_focuses_by_finger_as_by_mouse() {
     let mut shell = framed();
     shell.touch(1, TouchPhase::Started, 640.0, 360.0, 0.0);
+    let sent = sent(&shell.touch(1, TouchPhase::Ended, 641.0, 361.0, 0.0));
+    assert_eq!(sent.len(), 4, "a tap is not a box: it focuses");
     assert!(
-        shell
-            .touch(1, TouchPhase::Ended, 641.0, 361.0, 0.0)
-            .is_empty(),
-        "a tap is not a box, and must not clear what the camera is following"
+        !sent.contains(&Command::TrackClear),
+        "and must not clear what the camera is following"
     );
 }
 
@@ -576,7 +964,7 @@ fn gimbal_pad_throws_on_down_and_rests_on_release_and_cancel() {
     // positive on the pad exactly as the Up arrow is.
     let thrown = sent(&shell.control_down(280.0, 600.0, 0.0).expect("gimbal pad"));
     assert!(
-        matches!(thrown.as_slice(), [Command::GimbalStick { axis0, axis1 }] if *axis0 > 1024 && *axis1 > 1024)
+        matches!(thrown.as_slice(), [Command::GimbalStick { axis0, axis1 }] if *axis0 < 1024 && *axis1 < 1024)
     );
     assert_eq!(
         sent(&shell.control_up(280.0, 600.0, 0.0)),
@@ -828,7 +1216,7 @@ fn with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest() {
     };
     let start = axis0(&first);
     assert!(
-        start > 1024 && start < 1424,
+        start < 1024 && start > 624,
         "the first step is a fraction: {start}"
     );
     let mut last = start;
@@ -837,13 +1225,13 @@ fn with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest() {
         let step = sent(&shell.tick(t));
         if !step.is_empty() {
             let now = axis0(&step);
-            assert!(now >= last, "the throw only grows toward the target");
+            assert!(now <= last, "the throw only grows toward the target");
             last = now;
         }
         t += 0.05;
     }
     assert!(
-        last >= 1420,
+        last <= 628,
         "held long enough, the throw reaches full: {last}"
     );
 
@@ -922,4 +1310,329 @@ fn a_take_captures_points_from_the_live_pose_counts_down_and_sends_timed_targets
     let cancel = sent(&shell.press(Key::Left, t));
     assert!(cancel.contains(&Command::GimbalTimedStop), "{cancel:?}");
     assert!(!shell.move_running());
+}
+
+// ── The assist toolbar ───────────────────────────────────────────────────────
+
+/// Where a toolbar chip's centre lands at 1280 × 720: chips are 72 px wide on a 76 px
+/// pitch from 12 px in, with 12 px more per group, in a 44 px strip under the top bar.
+fn chip_centre(index: usize, group: usize) -> (f64, f64) {
+    (
+        12.0 + index as f64 * 76.0 + group as f64 * 12.0 + 36.0,
+        56.0 + 22.0,
+    )
+}
+
+#[test]
+fn a_shows_the_toolbar_and_a_chip_flips_its_tool() {
+    use opc_monitor::AssistTool;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    assert!(!shell.assist_bar_open());
+    assert!(shell.press(Key::Char('a'), 0.0).is_empty());
+    assert!(shell.assist_bar_open());
+    shell.chrome(0.0);
+    // ZEBRA is the fourth chip, in the second group.
+    let (x, y) = chip_centre(3, 1);
+    assert!(shell.is_control(x, y), "the strip is a control, not a box");
+    shell.control_down(x, y, 0.0).expect("chip");
+    assert!(
+        shell.control_up(x, y, 0.0).is_empty(),
+        "assists never reach the camera"
+    );
+    assert!(shell.tool_on(AssistTool::Zebra));
+    assert!(shell.toggles().zebra);
+    // The zoom dial moved down under the strip, and still counts as a control.
+    assert!(shell.is_control(640.0, 56.0 + 44.0 + 30.0));
+    // A scope chip flips its plate on, and sends nothing either.
+    let (x, y) = chip_centre(4, 1);
+    shell.control_down(x, y, 0.0);
+    assert!(shell.control_up(x, y, 0.0).is_empty());
+    assert!(shell.tool_on(AssistTool::Wave));
+    shell.press(Key::Char('a'), 0.0);
+    assert!(!shell.assist_bar_open());
+}
+
+#[test]
+fn false_colour_asks_the_window_for_lattices_once_per_scale_and_colour_mode() {
+    use opc_monitor::sheets::Pick;
+    use opc_monitor::{AssistTool, FalseColorKey, LutRequest};
+    use opc_render::FalseColorScale;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    shell.press(Key::Char('a'), 0.0);
+    shell.chrome(0.0);
+    let (x, y) = chip_centre(2, 0);
+    shell.control_down(x, y, 0.0);
+    shell.control_up(x, y, 0.0);
+    assert!(shell.tool_on(AssistTool::False));
+    assert!(shell.grade_options().false_color);
+    assert_eq!(
+        shell.take_lut_change(),
+        Some(LutRequest::FalseColor(Some(FalseColorKey {
+            scale: FalseColorScale::Stops,
+            color_mode: 0x3F,
+            iso: 0,
+        })))
+    );
+    assert_eq!(shell.take_lut_change(), None, "nothing moved");
+    // The body switching to D-Log moves every zone, so the lattices are rebuilt.
+    let status = Status {
+        color_mode: Some(0x17),
+        iso: Some(400),
+        ..Status::default()
+    };
+    shell.set_status(status.clone());
+    assert_eq!(
+        shell.take_lut_change(),
+        Some(LutRequest::FalseColor(Some(FalseColorKey {
+            scale: FalseColorScale::Stops,
+            color_mode: 0x17,
+            iso: 400,
+        })))
+    );
+    shell.set_status(status);
+    assert_eq!(
+        shell.take_lut_change(),
+        None,
+        "the same status asks for nothing"
+    );
+    shell.pick_for_test(Pick::FalseColorScale(FalseColorScale::ElZone));
+    assert!(matches!(
+        shell.take_lut_change(),
+        Some(LutRequest::FalseColor(Some(FalseColorKey {
+            scale: FalseColorScale::ElZone,
+            ..
+        })))
+    ));
+    shell.pick_for_test(Pick::Assist(AssistTool::False));
+    assert_eq!(shell.take_lut_change(), Some(LutRequest::FalseColor(None)));
+    assert!(!shell.grade_options().false_color);
+}
+
+#[test]
+fn a_chip_long_pressed_opens_its_sheet_and_the_sheet_sets_its_options() {
+    use opc_monitor::assists::{GridLine, ZebraPaint};
+    use opc_monitor::sheets::{Pick, SheetKind};
+    use opc_monitor::AssistTool;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    shell.toggle_sheet(SheetKind::Assist(AssistTool::Zebra));
+    shell.chrome(0.0);
+    // Row 1 is Units: its first chip reads 0-255.
+    let (x, y) = (
+        180.0 + 16.0 + 160.0 + 20.0,
+        56.0 + 16.0 + 60.0 + 8.0 + 56.0 + 28.0,
+    );
+    shell.control_down(x, y, 0.0).expect("chip");
+    assert!(shell.control_up(x, y, 0.0).is_empty());
+    assert!(!shell.assists().zebra.ire_units);
+    assert_eq!(
+        shell.sheet(),
+        Some(SheetKind::Assist(AssistTool::Zebra)),
+        "picking keeps the sheet open"
+    );
+    // The first row is the tool itself: "On" switches zebra on.
+    let (x, y) = (
+        180.0 + 16.0 + 160.0 + 56.0 + 6.0 + 20.0,
+        56.0 + 16.0 + 60.0 + 8.0 + 28.0,
+    );
+    shell.control_down(x, y, 0.0).expect("chip");
+    shell.control_up(x, y, 0.0);
+    assert!(shell.toggles().zebra);
+
+    shell.pick_for_test(Pick::ZebraHighlightIre(90.0));
+    shell.pick_for_test(Pick::ZebraHighlightColor(ZebraPaint::Red));
+    shell.pick_for_test(Pick::ZebraMidtoneOn(false));
+    let zebra = shell.grade_options().zebra.expect("zebra is on");
+    // Without the core linked the IRE is read as a plain fraction of the feed.
+    assert_eq!(zebra.highlight, Some(0.9));
+    assert_eq!(zebra.midtone, None);
+    assert_eq!(zebra.highlight_color, ZebraPaint::Red.rgba());
+
+    shell.pick_for_test(Pick::Assist(AssistTool::Grid));
+    shell.pick_for_test(Pick::GridLine(GridLine::Diagonal, true));
+    assert!(shell.tool_on(AssistTool::Grid));
+    assert!(shell.assists().grid.thirds && shell.assists().grid.diagonal);
+}
+
+// ── Playback extras ──────────────────────────────────────────────────────────
+
+#[test]
+fn the_conform_tool_slows_playback_and_cycles_back_to_the_clips_own_rate() {
+    use opc_chrome::ChromeIntent;
+    use opc_media::MediaFile;
+    use opc_monitor::MediaAction;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    let clip = MediaFile {
+        path: "DCIM/DJI_001/DJI_20260814125250_0034_D.MP4".to_string(),
+        handle: 0x4010_4480,
+        duration_seconds: 26,
+        fps: Some(120),
+        ..MediaFile::default()
+    };
+    shell.library_listed(vec![clip.clone()], true);
+    shell.open_player(clip, 26_000, false, false);
+    // Nothing to conform to until the file has been read: the clip's own rate.
+    assert_eq!(
+        shell.chrome_intent_for_test(ChromeIntent::PlayerConform),
+        [Intent::Media(MediaAction::Speed(1.0))]
+    );
+    assert_eq!(shell.player().unwrap().conform, None);
+    shell.player_conform_targets(120.0, vec![24.0, 60.0]);
+    assert_eq!(
+        shell.chrome_intent_for_test(ChromeIntent::PlayerConform),
+        [Intent::Media(MediaAction::Speed(0.2))]
+    );
+    assert_eq!(shell.player().unwrap().conform, Some(24.0));
+    assert_eq!(
+        shell.chrome_intent_for_test(ChromeIntent::PlayerConform),
+        [Intent::Media(MediaAction::Speed(0.5))]
+    );
+    assert_eq!(
+        shell.chrome_intent_for_test(ChromeIntent::PlayerConform),
+        [Intent::Media(MediaAction::Speed(1.0))]
+    );
+    assert_eq!(shell.player().unwrap().conform, None);
+}
+
+#[test]
+fn select_mode_deletes_the_checked_tiles_with_one_command_each() {
+    use opc_camera::Command;
+    use opc_chrome::ChromeIntent;
+    use opc_media::MediaFile;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    shell.press(Key::Char('g'), 0.0);
+    let files: Vec<MediaFile> = (1..=2)
+        .map(|n| MediaFile {
+            path: format!("DCIM/DJI_001/DJI_2026081412525{n}_003{n}_D.MP4"),
+            handle: 0x4010_4480 + n,
+            duration_seconds: 20 + i64::from(n),
+            ..MediaFile::default()
+        })
+        .collect();
+    shell.library_listed(files, true);
+    shell.chrome(0.0);
+    assert!(shell
+        .chrome_intent_for_test(ChromeIntent::LibrarySelectMode)
+        .is_empty());
+    shell.library_mut().toggle_checked(1);
+    shell.library_mut().toggle_checked(2);
+    assert!(
+        shell
+            .chrome_intent_for_test(ChromeIntent::LibraryDeleteChecked)
+            .is_empty(),
+        "the first tap only arms"
+    );
+    let fired = shell.chrome_intent_for_test(ChromeIntent::LibraryDeleteChecked);
+    let mut handles: Vec<u32> = fired
+        .iter()
+        .map(|intent| match intent {
+            Intent::Send(Command::MediaDelete { handle, .. }) => *handle,
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    handles.sort_unstable();
+    assert_eq!(handles, [0x4010_4481, 0x4010_4482]);
+    let counters: std::collections::HashSet<u32> = fired
+        .iter()
+        .map(|intent| match intent {
+            Intent::Send(Command::MediaDelete { counter, .. }) => *counter,
+            _ => 0,
+        })
+        .collect();
+    assert_eq!(counters.len(), 2, "one counter per delete");
+    assert!(shell.library().files.is_empty());
+    assert!(!shell.library().selecting);
+}
+
+// ── Virtual camera ───────────────────────────────────────────────────────────
+
+#[test]
+fn the_system_tab_picks_the_virtual_camera_and_what_it_carries() {
+    use opc_monitor::sheets::Pick;
+    use opc_vcam::Backend;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    assert_eq!(shell.vcam_backend(), None, "off until asked");
+    assert!(shell.pick_for_test(Pick::Vcam(1)).is_empty());
+    assert_eq!(shell.vcam_backend(), Some(Backend::Device));
+    shell.pick_for_test(Pick::Vcam(2));
+    assert_eq!(
+        shell.vcam_backend(),
+        Some(Backend::Stream {
+            port: opc_vcam::DEFAULT_PORT
+        })
+    );
+    assert_eq!(shell.prefs().vcam, 2);
+
+    // Clean drops the diagnostic assists but keeps the look; As shown keeps them.
+    shell.press(Key::Char('z'), 0.0);
+    assert!(shell.grade_options().zebra.is_some());
+    assert!(shell.vcam_grade_options().zebra.is_none());
+    shell.pick_for_test(Pick::VcamClean(false));
+    assert!(shell.vcam_grade_options().zebra.is_some());
+
+    shell.set_vcam_status("Stream · http://127.0.0.1:8890/stream · 30 frames");
+    assert!(shell.setup().vcam.contains("30 frames"));
+    shell.pick_for_test(Pick::Vcam(9));
+    assert_eq!(
+        shell.vcam_backend(),
+        Some(Backend::Stream {
+            port: opc_vcam::DEFAULT_PORT
+        }),
+        "an unknown mode clamps to the stream, never off by surprise"
+    );
+}
+
+#[test]
+fn the_output_tab_installs_the_component_and_says_when_the_camera_needs_it() {
+    use opc_monitor::sheets::Pick;
+    use opc_vcam::{ComponentReport, ComponentState};
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    // Before the window has looked, nothing is known.
+    assert_eq!(shell.setup().component.state, ComponentState::Unknown);
+    shell.set_component(ComponentReport {
+        platform: "Linux · v4l2loopback".into(),
+        state: ComponentState::NotInstalled,
+        detail: "Install loads the module".into(),
+        can_install: true,
+        can_remove: false,
+    });
+    // Asking for the camera device without the component says where to go.
+    shell.pick_for_test(Pick::Vcam(1));
+    assert!(shell.notice(0.0).contains("NOT INSTALLED"));
+    // Install goes to the window and the tab shows it working meanwhile.
+    assert_eq!(
+        shell.pick_for_test(Pick::ComponentInstall),
+        [Intent::ComponentInstall]
+    );
+    assert_eq!(shell.setup().component.state, ComponentState::Busy);
+    assert_eq!(shell.setup().component.detail, "Installing…");
+    // The window's answer replaces it.
+    shell.set_component(ComponentReport {
+        platform: "Linux · v4l2loopback".into(),
+        state: ComponentState::Installed,
+        detail: "/dev/video10 · module loaded".into(),
+        can_install: false,
+        can_remove: true,
+    });
+    assert_eq!(shell.setup().component.state, ComponentState::Installed);
+    assert_eq!(
+        shell.pick_for_test(Pick::ComponentRemove),
+        [Intent::ComponentRemove]
+    );
+    // The stream's page opens on the port the settings carry.
+    shell.pick_for_test(Pick::Vcam(2));
+    assert_eq!(
+        shell.pick_for_test(Pick::OpenStream),
+        [Intent::OpenUrl(format!(
+            "http://127.0.0.1:{}/",
+            opc_vcam::DEFAULT_PORT
+        ))]
+    );
+    assert!(shell.diagnostics_text(1.0).contains("camera component"));
 }

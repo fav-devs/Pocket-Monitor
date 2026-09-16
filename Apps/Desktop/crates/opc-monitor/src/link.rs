@@ -9,9 +9,24 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use opc_camera::DumlFrame;
-use opc_camera::{CameraSession, Command, Recovery, SessionEvent, Status};
+use opc_camera::{CameraSession, Command, Recovery, SessionEvent, SetOutcome, Status};
+
+/// Appends a concise diagnostic to the log beside the Windows executable. The window
+/// normally has no terminal, so decode outcomes must be available after it closes.
+pub(crate) fn diagnostic(message: impl std::fmt::Display) {
+    let Some(path) = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|dir| dir.join("opc-monitor.log")))
+    else {
+        return;
+    };
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "view: {message}");
+    }
+}
 
 /// What the camera thread tells the window.
 #[derive(Debug)]
@@ -29,6 +44,8 @@ pub enum FromCamera {
     /// A reply the media browser reads: catalogue chunks, delete and favourite
     /// answers, and the playback entry's acknowledgement.
     Frame(DumlFrame),
+    /// What became of a live-control SET.
+    Set(SetOutcome),
 }
 
 /// What the window tells the camera thread.
@@ -153,16 +170,21 @@ fn run(
         }
     };
     link_log!(
-        "UDP socket bound local_port={} remote={} phase={:?}",
+        "UDP socket bound local_port={} remote={} phase={:?} TCP-7001={}",
         session.local_port(),
         session.remote(),
-        session.phase()
+        session.phase(),
+        session.tcp_poke_status()
     );
     if let Some(model_id) = model_id {
         session.set_model(model_id);
     }
     let mut saw_picture = false;
     let mut logged_access_units = 0usize;
+    let mut access_units_since_log = 0usize;
+    let mut bytes_since_log = 0usize;
+    let mut access_unit_rate_started = Instant::now();
+    let mut diagnostics_started = Instant::now();
 
     loop {
         loop {
@@ -183,6 +205,29 @@ fn run(
                 return;
             }
         };
+        // With a nonblocking UDP socket, avoid monopolising a core while no complete
+        // shell event is ready. The next iteration still ticks the 40 Hz window ACK
+        // immediately, rather than waiting for Windows' coarse UDP timeout.
+        if polled.is_empty() {
+            std::thread::yield_now();
+        }
+        let diagnostics_elapsed = diagnostics_started.elapsed();
+        if diagnostics_elapsed.as_secs_f64() >= 1.0 {
+            let stats = session.take_diagnostics();
+            link_log!(
+                "transport: ack={:.1}/s max_gap={:.0}ms video={} au={} status={} cursors={:04x}/{:04x}/{:04x} last_video={:.1}s",
+                stats.acks as f64 / diagnostics_elapsed.as_secs_f64(),
+                stats.max_ack_gap * 1000.0,
+                stats.video_packets,
+                stats.access_units,
+                stats.status_packets,
+                stats.video_cursor,
+                stats.acked_data_cursor,
+                stats.extra_cursor,
+                stats.last_video_age
+            );
+            diagnostics_started = Instant::now();
+        }
         for event in polled {
             let message = match event {
                 SessionEvent::Opened => {
@@ -208,14 +253,53 @@ fn run(
                         );
                         logged_access_units += 1;
                     }
+                    access_units_since_log += 1;
+                    bytes_since_log += bytes.len();
+                    let elapsed = access_unit_rate_started.elapsed();
+                    if elapsed.as_secs_f64() >= 1.0 {
+                        link_log!(
+                            "video rate: {:.1} access-units/s, {:.1} KiB/s",
+                            access_units_since_log as f64 / elapsed.as_secs_f64(),
+                            bytes_since_log as f64 / elapsed.as_secs_f64() / 1024.0
+                        );
+                        access_units_since_log = 0;
+                        bytes_since_log = 0;
+                        access_unit_rate_started = Instant::now();
+                    }
                     FromCamera::Picture(bytes)
                 }
-                SessionEvent::StatusChanged => {
-                    link_log!("received camera status");
-                    FromCamera::Status(Box::new(session.status()))
+                SessionEvent::VideoStarted => {
+                    link_log!("received first raw video datagram; awaiting a complete access unit");
+                    continue;
                 }
+                SessionEvent::FirstPictureFormatPoke { original, kick } => {
+                    link_log!(
+                        "Pocket 3 first-picture format poke {:02x}/{:02x} -> {:02x}/{:02x} -> restore",
+                        original.0,
+                        original.1,
+                        kick.0,
+                        kick.1
+                    );
+                    continue;
+                }
+                SessionEvent::StatusChanged => FromCamera::Status(Box::new(session.status())),
                 SessionEvent::Recovering(recovery) => {
-                    link_log!("feed watchdog: {recovery:?}");
+                    let stats = session.take_diagnostics();
+                    link_log!(
+                        "feed watchdog: {recovery:?} phase={:?} dropped_access_units={} stage={} ack={} max_gap={:.0}ms video={} au={} status={} cursors={:04x}/{:04x}/{:04x} last_video={:.1}s",
+                        session.phase(),
+                        session.dropped_access_units(),
+                        session.recovery_stage(),
+                        stats.acks,
+                        stats.max_ack_gap * 1000.0,
+                        stats.video_packets,
+                        stats.access_units,
+                        stats.status_packets,
+                        stats.video_cursor,
+                        stats.acked_data_cursor,
+                        stats.extra_cursor,
+                        stats.last_video_age
+                    );
                     FromCamera::Recovering(recovery)
                 }
                 SessionEvent::Unreachable => {
@@ -234,6 +318,7 @@ fn run(
                         continue;
                     }
                 }
+                SessionEvent::Set(outcome) => FromCamera::Set(outcome),
             };
             if events.send(message).is_err() {
                 return;
@@ -248,5 +333,10 @@ fn is_media_reply(frame: &DumlFrame) -> bool {
     matches!(
         (frame.cmd_set, frame.cmd_id),
         (0x00, 0x27) | (0x00, 0x28) | (0x02, 0xBF) | (0x02, 0x0C)
-    )
+    ) || is_tracking_reply(frame)
+}
+
+/// The `0x02/0xA5` poll answer the shell reads to keep or drop its tracking box.
+fn is_tracking_reply(frame: &DumlFrame) -> bool {
+    (frame.cmd_set, frame.cmd_id) == (0x02, 0xA5)
 }

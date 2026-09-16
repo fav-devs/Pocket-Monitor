@@ -59,7 +59,41 @@ pub struct Status {
     pub gimbal_native_pitch_tenth: Option<i16>,
     /// Counts attitude pushes, so a shell can tell a fresh reading from a held one.
     pub gimbal_attitude_seq: u32,
+    /// Audio DSP `@2` as the core reads it: wind `0x18` off / `0x1A` on; directional
+    /// `0xDA` all / `0x3A` front / `0xBA` front+back.
+    pub wind_nr: Option<u8>,
+    pub directional_audio: Option<u8>,
+    /// The body's 26-byte DSP blob, which a wind or directional write carries back
+    /// patched. `None` until the `0x02/0xA0` GET has answered.
+    pub audio_dsp_blob: Option<[u8; AUDIO_DSP_BLOB]>,
+    /// The body's audio meters, once it has pushed one (`cam_audio_status_v2`).
+    pub audio_meters: Option<AudioMeters>,
 }
+
+/// Level and peak per channel in tenths of a dBFS, as the core meters them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AudioMeters {
+    pub left_tenth_db: i32,
+    pub right_tenth_db: i32,
+    pub left_peak_tenth_db: i32,
+    pub right_peak_tenth_db: i32,
+}
+
+impl AudioMeters {
+    /// The four readings in dBFS: left, right, left peak, right peak.
+    pub fn decibels(&self) -> [f32; 4] {
+        [
+            self.left_tenth_db,
+            self.right_tenth_db,
+            self.left_peak_tenth_db,
+            self.right_peak_tenth_db,
+        ]
+        .map(|tenths| tenths as f32 / 10.0)
+    }
+}
+
+/// The audio DSP blob's length on the wire.
+pub const AUDIO_DSP_BLOB: usize = 26;
 
 impl Status {
     /// Elapsed recording time as `h:mm:ss`, or `mm:ss` under an hour.
@@ -262,6 +296,21 @@ impl StatusDecoder {
                 .then_some(raw.gimbal_native_pitch_tenth as i16),
             gimbal_attitude_seq: raw.gimbal_attitude_seq.max(0) as u32,
             zoom_hundredths: optional(raw.zoom_hundredths),
+            wind_nr: optional_byte(raw.wind_nr),
+            directional_audio: optional_byte(raw.directional_audio),
+            audio_meters: (raw.audio_meters_count > 0).then_some(AudioMeters {
+                left_tenth_db: raw.audio_left_tenth_db,
+                right_tenth_db: raw.audio_right_tenth_db,
+                left_peak_tenth_db: raw.audio_left_peak_tenth_db,
+                right_peak_tenth_db: raw.audio_right_peak_tenth_db,
+            }),
+            audio_dsp_blob: (raw.audio_dsp_blob_count == AUDIO_DSP_BLOB as i32).then(|| {
+                let mut blob = [0u8; AUDIO_DSP_BLOB];
+                for (out, value) in blob.iter_mut().zip(raw.audio_dsp_blob.iter()) {
+                    *out = (*value).clamp(0, 255) as u8;
+                }
+                blob
+            }),
             available_shutter: list(&raw.available_shutter, raw.available_shutter_count),
             available_iso: list(&raw.available_iso, raw.available_iso_count)
                 .into_iter()

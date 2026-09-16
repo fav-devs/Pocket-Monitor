@@ -155,6 +155,7 @@ typedef struct {
 #define OPC_CAM_APP_PRESENCE 3
 #define OPC_CAM_LIVE_VIEW_ENABLE 4
 #define OPC_CAM_NANO_LIVE_GATE 5
+#define OPC_CAM_APP_DEVICE_INFO 6
 
 #define OPC_CAM_RECORD_START 10
 #define OPC_CAM_RECORD_STOP 11
@@ -214,6 +215,47 @@ typedef struct {
 // Native timed gimbal target `0x04/0x14`: yaw and native pitch in 0.1°, duration
 // in tenths of a second (1–255). The core refuses an unreachable or ill-timed one.
 #define OPC_CAM_GIMBAL_TIMED_TARGET 73
+/* Mimo's tap-to-focus burst, one frame each: 0x22 spot, 0x30 region, 0x68 hint, 0x32 commit. */
+#define OPC_CAM_TAP_FOCUS_PREPARE 74
+#define OPC_CAM_TAP_FOCUS_POINT 75
+#define OPC_CAM_TAP_FOCUS_HINT 76
+#define OPC_CAM_TAP_FOCUS_COMMIT 77
+/* Audio DSP: GET 0x02/0xA0; wind / directional patch @2 of the GET blob and SET 0x9F. */
+#define OPC_CAM_AUDIO_DSP_GET 78
+#define OPC_CAM_AUDIO_WIND 79
+#define OPC_CAM_AUDIO_DIRECTIONAL 80
+
+/* False-colour scales for opc_false_color_cube / opc_false_color_legend. */
+#define OPC_FALSE_COLOR_STOPS 0
+#define OPC_FALSE_COLOR_IRE 1
+#define OPC_FALSE_COLOR_LIMITS 2
+#define OPC_FALSE_COLOR_EL_ZONE 3
+
+/* CameraSetMailbox decisions, for opc_mailbox_*. */
+#define OPC_MAILBOX_LAUNCH 0
+#define OPC_MAILBOX_COALESCE 1
+#define OPC_MAILBOX_ACK_ACCEPT 0
+#define OPC_MAILBOX_ACK_ACCEPT_LATE 1
+#define OPC_MAILBOX_ACK_DROP_SUPERSEDED 2
+#define OPC_MAILBOX_ACK_DROP_UNKNOWN 3
+#define OPC_MAILBOX_TIMEOUT_SUBSCRIBE_MATCHES 0
+#define OPC_MAILBOX_TIMEOUT_WAIT_LATE 1
+#define OPC_MAILBOX_TIMEOUT_LAUNCH_PENDING 2
+#define OPC_MAILBOX_TIMEOUT_IDLE 3
+#define OPC_MAILBOX_PENDING_IMMEDIATE 0
+#define OPC_MAILBOX_PENDING_AFTER_HOLD 1
+#define OPC_MAILBOX_PENDING_NONE 2
+
+/* A 0x02/0xA5 tracking poll reply, for opc_tracking_poll. */
+#define OPC_TRACKING_UNKNOWN (-1)
+#define OPC_TRACKING_IDLE 0
+#define OPC_TRACKING_LOCKED 1
+#define OPC_TRACKING_LOCKED_BOX 2
+
+/* What a zoom write needs first, for opc_zoom_hop. */
+#define OPC_ZOOM_HOP_NONE 0
+#define OPC_ZOOM_HOP_COLOR 1
+#define OPC_ZOOM_HOP_BLOCKED 2
 
 // `DumlTransport.PktType`.
 #define OPC_PKT_HANDSHAKE 0x00
@@ -346,6 +388,21 @@ typedef struct {
     int32_t available_format_resolution[OPC_STATUS_LIST_CAP];
     int32_t available_format_frame_rate[OPC_STATUS_LIST_CAP];
     int32_t available_color[OPC_STATUS_LIST_CAP];
+    /// Audio DSP `@2` as the core reads it: wind (`0x18` off / `0x1A` on) and
+    /// directional (`0xDA` all / `0x3A` front / `0xBA` front+back), -1 unknown. The
+    /// blob itself is the 26 bytes a `0x02/0x9F` SET must carry back patched.
+    int32_t wind_nr;
+    int32_t directional_audio;
+    int32_t audio_dsp_blob_count;
+    int32_t audio_dsp_blob[OPC_STATUS_LIST_CAP];
+    /// `cam_audio_status_v2` as the core meters it: level and peak per channel in
+    /// tenths of a dBFS (negative; the floor is `opc_audio_meter_floor_db`).
+    /// `audio_meters_count` is 0 until the body has pushed one.
+    int32_t audio_meters_count;
+    int32_t audio_left_tenth_db;
+    int32_t audio_right_tenth_db;
+    int32_t audio_left_peak_tenth_db;
+    int32_t audio_right_peak_tenth_db;
 } OpcCameraStatus;
 
 #endif

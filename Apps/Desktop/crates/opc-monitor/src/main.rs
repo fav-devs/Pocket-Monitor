@@ -1,3 +1,7 @@
+// A release operator build is a normal Windows app, not a terminal program. Startup,
+// connection and crash diagnostics still go to `opc-monitor.log` beside the executable.
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+
 //! The viewfinder.
 //!
 //! `opc-monitor view` opens a window on the camera: the picture fills it, a thin strip
@@ -65,6 +69,7 @@ Viewfinder keys
   R            stop recording             S      write a still
   Arrows       pan and tilt               C      recentre the gimbal
   + / -        zoom in and out            F      flip to selfie and back
+  V            cycle gimbal mode          G      open gallery
   0            back to wide               Esc    close
 
   Drag         track what you drew around X      stop tracking
@@ -75,6 +80,11 @@ Viewfinder keys
 
 Two arrows at once pan diagonally. The gimbal keeps moving while a key is held and
 rests the moment it comes up.";
+
+/// A saved-profile reconnect is the fast path, not a reason to make an operator stare
+/// at a blank desktop while Windows waits through its full WLAN timeout.
+#[cfg(opc_core_linked)]
+const SAVED_WIFI_FAST_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 fn main() -> ExitCode {
     // Write a startup log beside the exe so silent crashes leave evidence.
@@ -190,6 +200,25 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         };
         (Some(addr), mid)
     } else {
+        // A first pair creates a manual Windows WLAN profile. On later launches that
+        // profile is all the authority Windows needs to join the camera SoftAP, so do
+        // not wake Bluetooth or ask the operator to pair again.
+        if let Some(saved) = load_saved_camera() {
+            match join_saved_camera_wifi(&saved.ssid) {
+                Ok(()) => {
+                    relaunch_viewfinder(
+                        args,
+                        saved
+                            .model_id
+                            .or_else(|| model_id_str.and_then(|text| text.parse().ok())),
+                    )?;
+                    return Ok(());
+                }
+                Err(error) => log_connection(&format!(
+                    "saved camera Wi-Fi join unavailable; opening pair flow: {error}"
+                )),
+            }
+        }
         // eframe's pairing window consumes this process's sole winit event loop.
         // Start the actual viewfinder in a fresh process after setup closes.
         let paired_model = match connect::run() {
@@ -201,6 +230,7 @@ fn view_camera(args: &[String]) -> Result<(), String> {
                 model_id,
             } => {
                 join_camera_wifi(&ssid, &password)?;
+                save_camera(&SavedCamera { ssid, model_id })?;
                 model_id
             }
         };
@@ -220,6 +250,80 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         model_id,
         still,
     })
+}
+
+/// The non-secret half of a paired desktop camera. Windows owns the WLAN profile and
+/// its protected password; this file merely tells the app which saved profile to use.
+#[cfg(opc_core_linked)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SavedCamera {
+    ssid: String,
+    model_id: Option<i32>,
+}
+
+#[cfg(opc_core_linked)]
+fn saved_camera_path() -> Result<std::path::PathBuf, String> {
+    let root = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .ok_or("Windows did not provide a local app-data folder")?;
+    Ok(root.join("OpenPocketCine").join("desktop-camera-v1.txt"))
+}
+
+#[cfg(opc_core_linked)]
+fn load_saved_camera() -> Option<SavedCamera> {
+    let path = saved_camera_path().ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    if lines.next()? != "openpocketcine-desktop-camera-v1" {
+        return None;
+    }
+    let ssid = lines.next()?.strip_prefix("ssid=")?.to_string();
+    if ssid.is_empty() || ssid.contains(['\r', '\n']) {
+        return None;
+    }
+    let model_id = lines
+        .next()
+        .and_then(|line| line.strip_prefix("model="))
+        .and_then(|value| value.parse().ok());
+    Some(SavedCamera { ssid, model_id })
+}
+
+#[cfg(opc_core_linked)]
+fn save_camera(camera: &SavedCamera) -> Result<(), String> {
+    if camera.ssid.is_empty() || camera.ssid.contains(['\r', '\n']) {
+        return Err("the camera returned an invalid Wi-Fi name".into());
+    }
+    let path = saved_camera_path()?;
+    let folder = path.parent().ok_or("invalid local app-data path")?;
+    std::fs::create_dir_all(folder)
+        .map_err(|error| format!("could not create saved-camera folder: {error}"))?;
+    let model = camera
+        .model_id
+        .map_or_else(String::new, |id| id.to_string());
+    std::fs::write(
+        path,
+        format!(
+            "openpocketcine-desktop-camera-v1\nssid={}\nmodel={model}\n",
+            camera.ssid
+        ),
+    )
+    .map_err(|error| format!("could not save camera identity: {error}"))
+}
+
+#[cfg(opc_core_linked)]
+fn log_connection(message: &str) {
+    use std::io::Write;
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("opc-monitor.log"))
+            {
+                let _ = writeln!(file, "wifi: {message}");
+            }
+        }
+    }
 }
 
 #[cfg(opc_core_linked)]
@@ -253,29 +357,11 @@ fn relaunch_viewfinder(args: &[String], model_id: Option<i32>) -> Result<(), Str
 /// own. The password exists only in a short-lived profile document and is never logged.
 #[cfg(all(opc_core_linked, target_os = "windows"))]
 fn join_camera_wifi(ssid: &str, password: &str) -> Result<(), String> {
-    use std::io::Write;
-    use std::process::Command;
-    use std::time::{Duration, Instant};
-
-    fn log(message: &str) {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(dir.join("opc-monitor.log"))
-                {
-                    let _ = writeln!(file, "wifi: {message}");
-                }
-            }
-        }
-    }
-
     let profile =
         std::env::temp_dir().join(format!("openpocketcine-wifi-{}.xml", std::process::id()));
     std::fs::write(&profile, opc_camera::wifi::profile_xml(ssid, password))
         .map_err(|error| format!("could not prepare the camera Wi-Fi profile: {error}"))?;
-    let add = Command::new("netsh")
+    let add = windows_background_command("netsh")
         .args(["wlan", "add", "profile"])
         .arg(format!("filename={}", profile.display()))
         .arg("user=current")
@@ -291,25 +377,44 @@ fn join_camera_wifi(ssid: &str, password: &str) -> Result<(), String> {
         Err(error) => return Err(format!("could not start Windows Wi-Fi service: {error}")),
     }
 
-    log("requesting connection to the camera network");
-    let deadline = Duration::from_secs_f64(opc_camera::wifi::JoinTiming::from_core().deadline);
+    join_saved_camera_wifi(ssid)
+}
+
+/// Connects using the protected Windows profile installed during first pair. This never
+/// needs the password and is deliberately the normal reconnect path.
+#[cfg(all(opc_core_linked, target_os = "windows"))]
+fn join_saved_camera_wifi(ssid: &str) -> Result<(), String> {
+    use std::time::{Duration, Instant};
+
+    let profiles = windows_background_command("netsh")
+        .args(["wlan", "show", "profiles"])
+        .output()
+        .map_err(|error| format!("could not inspect Windows Wi-Fi profiles: {error}"))?;
+    if !profiles.status.success() || !String::from_utf8_lossy(&profiles.stdout).contains(ssid) {
+        return Err(format!("no saved Windows Wi-Fi profile for {ssid}"));
+    }
+
+    log_connection("requesting connection to the saved camera network");
+    let deadline = SAVED_WIFI_FAST_PATH_TIMEOUT;
     let retry_pause =
         Duration::from_secs_f64(opc_camera::wifi::JoinTiming::from_core().retry_pause);
     let started = Instant::now();
     let mut next_attempt = Instant::now();
     while started.elapsed() < deadline {
         if Instant::now() >= next_attempt {
-            match Command::new("netsh")
+            match windows_background_command("netsh")
                 .args(["wlan", "connect"])
                 .arg(format!("name={ssid}"))
                 .arg(format!("ssid={ssid}"))
                 .status()
             {
                 Ok(status) if status.success() => {
-                    log("Windows accepted the camera Wi-Fi connection request")
+                    log_connection("Windows accepted the camera Wi-Fi connection request")
                 }
-                Ok(status) => log(&format!("Windows Wi-Fi connection request exited {status}")),
-                Err(error) => log(&format!(
+                Ok(status) => {
+                    log_connection(&format!("Windows Wi-Fi connection request exited {status}"))
+                }
+                Err(error) => log_connection(&format!(
                     "could not request Windows Wi-Fi connection: {error}"
                 )),
             }
@@ -318,20 +423,39 @@ fn join_camera_wifi(ssid: &str, password: &str) -> Result<(), String> {
 
         // DHCP on the Osmo network assigns 192.168.2.2 through .254. `ipconfig` is
         // available on every supported Windows host and avoids another platform crate.
-        if let Ok(output) = Command::new("ipconfig").output() {
+        if let Ok(output) = windows_background_command("ipconfig").output() {
             let addresses = String::from_utf8_lossy(&output.stdout);
             if addresses.split_whitespace().any(|word| {
                 word.trim_matches(|c: char| !c.is_ascii_digit() && c != '.')
                     .starts_with("192.168.2.")
             }) {
-                log("camera subnet is ready");
+                log_connection("camera subnet is ready");
                 return Ok(());
             }
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    log("timed out waiting for a camera DHCP address");
-    Err("Windows did not receive an address from the camera Wi-Fi within 90 seconds.".into())
+    log_connection("timed out waiting for a camera DHCP address");
+    Err("Windows did not receive an address from the saved camera Wi-Fi within 12 seconds."
+        .into())
+}
+
+/// A GUI process otherwise makes Windows flash a console for every `netsh` and
+/// `ipconfig` invocation. Wi-Fi joining retries those tools by design, so they must
+/// remain invisible to the operator.
+#[cfg(all(opc_core_linked, target_os = "windows"))]
+fn windows_background_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(all(opc_core_linked, not(target_os = "windows")))]
+fn join_saved_camera_wifi(_ssid: &str) -> Result<(), String> {
+    Err("automatic saved-camera Wi-Fi joining is currently implemented for Windows only.".into())
 }
 
 #[cfg(all(opc_core_linked, not(target_os = "windows")))]

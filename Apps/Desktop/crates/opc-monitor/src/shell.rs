@@ -8,15 +8,29 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use opc_camera::{Command, Status};
-use opc_chrome::{Chrome, ChromeIntent, ChromeState, Screen};
+use opc_camera::{Command, Status, TrackingPoll};
+use opc_chrome::{
+    AssistChip, Chrome, ChromeIntent, ChromeParts, ChromeState, Overlays, PlateKind, PlateState,
+    Screen,
+};
 use opc_media::MediaFile;
 
+use crate::assists::{
+    guide_rect, AssistOptions, AssistTool, ZebraSteps, ZEBRA_HIGHLIGHT_STEPS, ZEBRA_MIDTONE_STEPS,
+};
 use crate::library::{Library, MediaAction, Player};
-use crate::luts::{LutChoice, LutMenu};
+use crate::luts::{self, LutChoice, LutMenu};
 use crate::moves::{MoveEngine, Program, Waypoint};
-use crate::sheets::{self, Pick, Prefs, SheetKind, Slot};
-use opc_render::{letterbox, GradeOptions, Peaking, PeakingSense, Rgba, Zebra};
+use crate::pad::{PadAction, PadButton, REST as PAD_REST};
+use crate::prefs;
+use crate::scopes::{
+    self, LightsReading, NdReading, Plate, ScopeOptions, ScopeSamples, ScopeScale,
+    LIGHTS_COMPENSATION,
+};
+use crate::sheets::{self, Pick, Prefs, SetupInfo, SheetKind, Slot, TAB_AUDIO, TAB_STORAGE};
+use crate::zoom::{self, ZoomHop, ZoomNote, ZoomPolicy, ZoomRules, ZoomWrite};
+use opc_camera::SetOutcome;
+use opc_render::{letterbox, AssistScalars, FalseColorScale, GradeOptions, Peaking, Rgba, Zebra};
 use opc_ui::{
     next_frame_rate, next_resolution, Action, Controls, Countdown, Drag, Fit, Hud, Key, Phase,
     Stick,
@@ -31,10 +45,18 @@ const STICK_REPEAT: f64 = 0.2;
 /// It is not kept: the camera does not report where the subject moved to, so a box left
 /// on screen would stop being where the subject is and the operator would believe it.
 const BOX_CONFIRM: f64 = 1.5;
+/// How long the tap-to-focus reticle stays on the picture.
+const FOCUS_MARKER_SECONDS: f64 = 1.5;
+/// The phones' `0x02/0xA5` cadence, and how many idle answers end a search.
+const TRACK_POLL_INTERVAL: f64 = 0.5;
+const TRACK_IDLE_TICKS: u32 = 6;
+/// Mimo's yellow, for the reticle.
+const RETICLE: opc_ui::canvas::Colour = [255, 196, 0, 255];
 /// Frames older than this stop counting towards the rate shown.
 const FPS_WINDOW: f64 = 1.0;
-const ZOOM_MIN: f64 = 1.0;
-const ZOOM_MAX: f64 = 6.0;
+/// How long a FORMAT pin and a notice stay up, as the phones keep them.
+const PIN_SECONDS: f64 = 2.0;
+const NOTICE_SECONDS: f64 = 2.5;
 
 /// What the window is asked to do.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +71,15 @@ pub enum Intent {
     ToggleFullscreen,
     /// Something for the media browser: a fetch, a screen change, the player.
     Media(MediaAction),
+    /// Tear the datalink down and open a fresh one.
+    Reconnect,
+    /// Write a diagnostics report to the cache folder.
+    Diagnostics,
+    /// Put the platform camera component in, or take it out; the window runs it.
+    ComponentInstall,
+    ComponentRemove,
+    /// Show a page in the operator's browser.
+    OpenUrl(String),
 }
 
 /// The gimbal's live mode, as commanded. The body's GET cannot tell FPV from Tilt
@@ -122,20 +153,53 @@ pub struct Toggles {
     pub peaking: bool,
     pub grade: bool,
     pub mirror: bool,
+    pub false_color: bool,
+    pub grid: bool,
+    pub guides: bool,
+    pub cross: bool,
+    /// The scopes.
+    pub wave: bool,
+    pub parade: bool,
+    pub histo: bool,
+    pub vector: bool,
+    pub lights: bool,
+    pub nd: bool,
+    pub audio: bool,
 }
 
 impl Toggles {
-    fn options(self) -> GradeOptions {
+    /// Whether any plate reads the picture, so the window samples it.
+    pub fn any_scope(self) -> bool {
+        self.wave || self.parade || self.histo || self.vector || self.lights || self.nd
+    }
+}
+
+impl Toggles {
+    /// What the feed pass paints. The zebra thresholds are the operator's IRE put on
+    /// the feed's axis by the core; without the core linked they are read as a plain
+    /// fraction, which is right for Rec.709 and generous for log.
+    fn options(self, assists: &AssistOptions, scalars: Option<AssistScalars>) -> GradeOptions {
+        let zebra = assists.zebra;
+        let (highlight, midtone) = match scalars {
+            Some(scalars) => (scalars.highlight, (scalars.midtone, scalars.midtone_half)),
+            None => (
+                zebra.highlight_ire / 100.0,
+                (zebra.midtone_ire / 100.0, 0.05),
+            ),
+        };
         GradeOptions {
             mirror: self.mirror,
             zebra: self.zebra.then(|| Zebra {
-                highlight_color: [1.0, 1.0, 1.0, 1.0],
-                ..Zebra::highlight(0.94)
+                highlight: zebra.highlight_on.then_some(highlight),
+                midtone: zebra.midtone_on.then_some(midtone),
+                highlight_color: zebra.highlight_color.rgba(),
+                midtone_color: zebra.midtone_color.rgba(),
             }),
             peaking: self.peaking.then(|| Peaking {
-                sense: PeakingSense::default(),
-                color: [1.0, 0.0, 0.0, 1.0],
+                sense: assists.peaking_sense,
+                color: assists.peaking_color.rgba(),
             }),
+            false_color: self.false_color,
             ..GradeOptions::default()
         }
     }
@@ -145,6 +209,7 @@ impl Toggles {
             ("LUT", self.grade),
             ("ZEB", self.zebra),
             ("PEAK", self.peaking),
+            ("FALSE", self.false_color),
             ("MIR", self.mirror),
         ]
         .into_iter()
@@ -178,8 +243,41 @@ pub struct Shell {
     /// Tracking boxes are numbered so the camera can tell one request from the next.
     next_track_id: u16,
     chrome_visible: bool,
-    /// The window has to be told to load or drop the cube, which is not a per-frame job.
-    lut_pending: Option<LutRequest>,
+    /// The window has to be told to load or drop cubes, which is not a per-frame job.
+    lut_pending: VecDeque<LutRequest>,
+    /// Every assist tool's options.
+    assists: AssistOptions,
+    /// The assist toolbar is showing under the top bar.
+    assist_bar: bool,
+    /// Which false-colour lattices the window was last asked to load.
+    false_color_key: Option<FalseColorKey>,
+    /// The body's chip stops, and the D-Log2 hop a zoom may be waiting on.
+    zoom_rules: ZoomRules,
+    zoom_hop: ZoomHop,
+    zoom_policy: Box<dyn ZoomPolicy>,
+    /// A FORMAT just sent: the chip reads it until the body confirms or 2 s pass.
+    format_pin: Option<(u8, u8, String, f64)>,
+    /// A line for the operator in the top bar, and when it goes away.
+    notice: Option<(String, f64)>,
+    /// Where the operator tapped to focus, as seen, and when the reticle goes away.
+    focus_marker: Option<((f64, f64), f64)>,
+    /// The scopes: options, the last sample of the picture, the axis for the body's
+    /// colour mode, the readings, and where the operator parked each plate.
+    scope_options: ScopeOptions,
+    scope_samples: Option<ScopeSamples>,
+    scope_scale: Option<((i32, i32), ScopeScale)>,
+    lights: LightsReading,
+    nd: Option<NdReading>,
+    /// Plates dragged away from their default place, as window pixels.
+    plate_positions: Vec<(AssistTool, f32, f32)>,
+    /// What the setup tabs read about this machine and this link.
+    setup: SetupInfo,
+    /// Where the prefs are saved, once the window has said so.
+    prefs_path: Option<std::path::PathBuf>,
+    /// The controller's left stick, so a release can rest it.
+    controller_held: bool,
+    /// A box sent to the body and the polling that follows it.
+    tracking: Option<TrackingState>,
     stick_sent_at: f64,
     presented: VecDeque<f64>,
     /// The rasterised chrome, kept until something it draws changes.
@@ -216,6 +314,8 @@ pub struct Shell {
     move_countdown: Option<Countdown>,
     attitude_seq: u32,
     attitude_at: f64,
+    /// Status can arrive at video rate; keep its model current but bound HUD raster work.
+    next_status_chrome_at: f64,
     last_now: f64,
     move_ticked_at: f64,
 }
@@ -227,6 +327,16 @@ pub enum LutRequest {
     Toggle(bool),
     /// Load this cube and switch it on (or off, for `Off`).
     Load(LutChoice),
+    /// Load the false-colour lattices for this scale, colour mode and ISO, or drop them.
+    FalseColor(Option<FalseColorKey>),
+}
+
+/// Which false-colour lattices the window should hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FalseColorKey {
+    pub scale: FalseColorScale,
+    pub color_mode: i32,
+    pub iso: i32,
 }
 
 impl Default for Shell {
@@ -255,7 +365,29 @@ impl Shell {
             source: None,
             next_track_id: 1,
             chrome_visible: true,
-            lut_pending: None,
+            lut_pending: VecDeque::new(),
+            assists: AssistOptions::default(),
+            assist_bar: false,
+            false_color_key: None,
+            zoom_rules: ZoomRules::default(),
+            zoom_hop: ZoomHop::default(),
+            zoom_policy: zoom::policy(),
+            format_pin: None,
+            notice: None,
+            focus_marker: None,
+            tracking: None,
+            scope_options: ScopeOptions::default(),
+            scope_samples: None,
+            scope_scale: None,
+            lights: LightsReading::default(),
+            nd: None,
+            plate_positions: Vec::new(),
+            setup: SetupInfo {
+                chrome_visible: true,
+                ..SetupInfo::default()
+            },
+            prefs_path: None,
+            controller_held: false,
             stick_sent_at: f64::NEG_INFINITY,
             presented: VecDeque::new(),
             chrome: None,
@@ -280,6 +412,7 @@ impl Shell {
             move_countdown: None,
             attitude_seq: 0,
             attitude_at: f64::NEG_INFINITY,
+            next_status_chrome_at: f64::NEG_INFINITY,
             last_now: 0.0,
             move_ticked_at: 0.0,
             drawn_second: None,
@@ -302,13 +435,186 @@ impl Shell {
     }
 
     pub fn grade_options(&self) -> GradeOptions {
-        self.toggles.options()
+        self.toggles.options(&self.assists, self.scalars())
     }
 
-    /// Whether the cube should be loaded or dropped, once. The window does that between
-    /// frames because it waits for the device to go idle.
+    /// Every tool's options, as the sheets set them.
+    pub fn assists(&self) -> AssistOptions {
+        self.assists
+    }
+
+    /// The assist toolbar is showing.
+    pub fn assist_bar_open(&self) -> bool {
+        self.assist_bar
+    }
+
+    /// Whether `tool` is on, as its chip shows it.
+    pub fn tool_on(&self, tool: AssistTool) -> bool {
+        sheets::tool_on(tool, self.toggles)
+    }
+
+    /// Whether a cube should be loaded or dropped, once each. The window does that
+    /// between frames because it waits for the device to go idle.
     pub fn take_lut_change(&mut self) -> Option<LutRequest> {
-        self.lut_pending.take()
+        self.lut_pending.pop_front()
+    }
+
+    /// The body's colour mode and ISO, as the core's assist calls want them.
+    fn color_axis(&self) -> (i32, i32) {
+        let status = &self.hud.status;
+        (
+            i32::from(status.color_mode.unwrap_or(0x3F)),
+            status.iso.unwrap_or(0),
+        )
+    }
+
+    /// The zebra thresholds on the feed's axis, from the core. `None` without it.
+    #[cfg(opc_core_linked)]
+    fn scalars(&self) -> Option<AssistScalars> {
+        let (color_mode, iso) = self.color_axis();
+        let zebra = self.assists.zebra;
+        opc_render::assist_scalars(color_mode, iso, zebra.highlight_ire, zebra.midtone_ire)
+    }
+
+    #[cfg(not(opc_core_linked))]
+    fn scalars(&self) -> Option<AssistScalars> {
+        None
+    }
+
+    /// Where each zebra chip lands on the feed, for the sheet's 0–255 labels.
+    #[cfg(opc_core_linked)]
+    fn zebra_steps(&self) -> ZebraSteps {
+        let (color_mode, iso) = self.color_axis();
+        let native = |ire: f32| {
+            opc_render::assist_scalars(color_mode, iso, ire, ire)
+                .map_or(ire / 100.0, |scalars| scalars.highlight)
+        };
+        ZebraSteps {
+            highlight: ZEBRA_HIGHLIGHT_STEPS.map(native),
+            midtone: ZEBRA_MIDTONE_STEPS.map(native),
+        }
+    }
+
+    #[cfg(not(opc_core_linked))]
+    fn zebra_steps(&self) -> ZebraSteps {
+        let _ = (ZEBRA_HIGHLIGHT_STEPS, ZEBRA_MIDTONE_STEPS);
+        ZebraSteps::default()
+    }
+
+    /// The false-colour key: one swatch per zone, from the core. Empty without it.
+    #[cfg(opc_core_linked)]
+    fn legend(&self) -> Vec<opc_chrome::LegendBand> {
+        let (color_mode, iso) = self.color_axis();
+        opc_render::false_color_legend(self.assists.false_color.scale, color_mode, iso)
+            .into_iter()
+            .map(|band| opc_chrome::LegendBand {
+                label: band.label,
+                rgb: band.rgb,
+            })
+            .collect()
+    }
+
+    #[cfg(not(opc_core_linked))]
+    fn legend(&self) -> Vec<opc_chrome::LegendBand> {
+        Vec::new()
+    }
+
+    /// Which lattices false colour wants right now, or none while it is off.
+    fn false_color_wanted(&self) -> Option<FalseColorKey> {
+        let (color_mode, iso) = self.color_axis();
+        self.toggles.false_color.then_some(FalseColorKey {
+            scale: self.assists.false_color.scale,
+            color_mode,
+            iso,
+        })
+    }
+
+    /// Asks the window for new lattices when the scale, colour mode or ISO moved.
+    fn sync_false_color(&mut self) {
+        let wanted = self.false_color_wanted();
+        if wanted != self.false_color_key {
+            self.false_color_key = wanted;
+            self.lut_pending.push_back(LutRequest::FalseColor(wanted));
+        }
+    }
+
+    /// A toolbar chip tapped: the tool flips, and whatever it paints follows.
+    fn tap_tool(&mut self, tool: AssistTool) -> Vec<Intent> {
+        self.chrome_stale = true;
+        match tool {
+            AssistTool::Lut => return self.act(Action::ToggleGrade, 0.0),
+            AssistTool::Peak => return self.act(Action::TogglePeaking, 0.0),
+            AssistTool::Zebra => return self.act(Action::ToggleZebra, 0.0),
+            AssistTool::Mirror => return self.act(Action::ToggleMirror, 0.0),
+            AssistTool::False => {
+                self.toggles.false_color = !self.toggles.false_color;
+                self.sync_false_color();
+            }
+            AssistTool::Guides => self.toggles.guides = !self.toggles.guides,
+            AssistTool::Grid => self.toggles.grid = !self.toggles.grid,
+            AssistTool::Cross => self.toggles.cross = !self.toggles.cross,
+            AssistTool::Wave
+            | AssistTool::Parade
+            | AssistTool::Histo
+            | AssistTool::Vector
+            | AssistTool::Lights
+            | AssistTool::Nd
+            | AssistTool::Audio => self.flip_scope(tool),
+        }
+        self.refresh_assists();
+        Vec::new()
+    }
+
+    /// The toolbar's chips, in the phones' order.
+    fn assist_chips(&self) -> Vec<AssistChip> {
+        AssistTool::TOOLBAR
+            .iter()
+            .map(|tool| AssistChip {
+                label: tool.label().to_string(),
+                on: self.tool_on(*tool),
+                available: tool.available(),
+                group: tool.group(),
+            })
+            .collect()
+    }
+
+    /// What is drawn over the picture, at the fitted rectangle.
+    fn overlays(&self) -> Overlays {
+        let fit = self.hud.fit.unwrap_or(opc_ui::Fit {
+            x: 0.0,
+            y: 0.0,
+            width: f64::from(self.window.0),
+            height: f64::from(self.window.1),
+        });
+        let feed = (
+            fit.x as f32,
+            fit.y as f32,
+            fit.width as f32,
+            fit.height as f32,
+        );
+        let grid = self.assists.grid;
+        let guides = self.assists.guides;
+        Overlays {
+            grid_thirds: self.toggles.grid && grid.thirds,
+            grid_phi: self.toggles.grid && grid.phi,
+            grid_diagonal: self.toggles.grid && grid.diagonal,
+            guides: if self.toggles.guides {
+                guides
+                    .frames()
+                    .into_iter()
+                    .map(|aspect| guide_rect(feed, aspect.ratio()))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            guide_mask: guides.mask,
+            crosshair: self.toggles.cross,
+            legend: if self.toggles.false_color && self.assists.false_color.reference {
+                self.legend()
+            } else {
+                Vec::new()
+            },
+        }
     }
 
     /// The names the LUT row offers, found by the window.
@@ -319,6 +625,12 @@ impl Shell {
 
     pub fn lut_choice(&self) -> &LutChoice {
         &self.lut_choice
+    }
+
+    /// Any chip, as the sheet would pick it. For tests that do not want to find the
+    /// chip by coordinate.
+    pub fn pick_for_test(&mut self, pick: Pick) -> Vec<Intent> {
+        self.apply_pick(pick)
     }
 
     /// The ramp setting, as the sheet would set it. For tests that do not want to
@@ -346,6 +658,7 @@ impl Shell {
     pub fn set_phase(&mut self, phase: Phase) {
         if self.hud.phase != phase {
             self.hud.phase = phase;
+            self.setup.phase = self.hud.connection_chip().to_string();
             self.chrome_stale = true;
         }
     }
@@ -366,7 +679,134 @@ impl Shell {
             self.attitude_at = self.last_now;
         }
         self.hud.status = status;
+        // Pocket 3 pushes status at roughly the video rate. Re-rasterising a 720p HUD
+        // for every push starves integrated GPUs; keep the model current but refresh
+        // its bitmap at 4 Hz.
+        if self.last_now >= self.next_status_chrome_at {
+            self.chrome_stale = true;
+            self.next_status_chrome_at = self.last_now + 0.25;
+        }
+        // A colour-mode or ISO change moves the false-colour zones.
+        self.sync_false_color();
+        self.sync_zoom();
+        self.settle_format_pin();
+    }
+
+    /// The body's stops follow its model, format and shooting mode; a zoom held for
+    /// the D-Log2 hop goes once the body reports the hop.
+    fn sync_zoom(&mut self) {
+        let status = &self.hud.status;
+        self.zoom_rules.refresh(
+            self.zoom_policy.as_ref(),
+            self.model_id,
+            status.video_resolution,
+            status.shooting_mode,
+        );
+        let color_mode = status.color_mode;
+        let (released, note) = self.zoom_hop.status(color_mode, self.last_now);
+        if let Some(command) = released {
+            self.chrome_pending_intents.push(Intent::Send(command));
+        }
+        if let Some(note) = note {
+            self.set_notice(note.text());
+        }
+    }
+
+    /// The FORMAT chip stops reading the pin once the body reports it, or gives up
+    /// after the settle window.
+    fn settle_format_pin(&mut self) {
+        let Some((resolution, frame_rate, _, deadline)) = self.format_pin else {
+            return;
+        };
+        let status = &self.hud.status;
+        let confirmed = status.video_resolution == Some(resolution)
+            && status.video_frame_rate == Some(frame_rate);
+        if confirmed || self.last_now >= deadline {
+            self.format_pin = None;
+        }
+    }
+
+    /// The FORMAT chip: the pinned label while a SET is out, else what the body says.
+    pub fn format_label(&self, now: f64) -> String {
+        match &self.format_pin {
+            Some((_, _, label, deadline)) if now < *deadline => label.clone(),
+            _ => self.hud.status.format_label(),
+        }
+    }
+
+    /// The body's chip stops right now.
+    pub fn zoom_stops(&self) -> &[f64] {
+        self.zoom_rules.stops()
+    }
+
+    /// A zoom, as the body allows it: clamped to its stops, hopped out of D-Log2
+    /// first, refused while rolling in D-Log2.
+    fn zoom_write(&mut self, write: ZoomWrite, now: f64) -> Vec<Intent> {
         self.chrome_stale = true;
+        let write = match write {
+            ZoomWrite::Slider(factor) => ZoomWrite::Slider(self.zoom_rules.clamp(factor)),
+            ZoomWrite::Jump(factor) => ZoomWrite::Jump(self.zoom_rules.clamp(factor)),
+        };
+        let status = &self.hud.status;
+        let (commands, note) = self.zoom_hop.request(
+            write,
+            self.zoom_policy.as_ref(),
+            status.color_mode,
+            status.is_recording,
+            self.model_id,
+            now,
+        );
+        if let Some(note) = note {
+            self.set_notice(note.text());
+        }
+        if note != Some(ZoomNote::LockedWhileRecording) {
+            self.controls.set_zoom(write.factor());
+        }
+        commands.into_iter().map(Intent::Send).collect()
+    }
+
+    /// Something sent that the chrome should reflect before the body confirms it.
+    fn note_sent(&mut self, command: Command, now: f64) {
+        if let Command::SetVideoFormat {
+            resolution,
+            frame_rate,
+        } = command
+        {
+            let label = Status {
+                video_resolution: Some(resolution),
+                video_frame_rate: Some(frame_rate),
+                ..Status::default()
+            }
+            .format_label();
+            self.format_pin = Some((resolution, frame_rate, label, now + PIN_SECONDS));
+            self.chrome_stale = true;
+        }
+    }
+
+    /// What became of a SET, from the mailbox.
+    pub fn note_set(&mut self, outcome: SetOutcome) {
+        match outcome {
+            SetOutcome::Unanswered { command } => {
+                if matches!(command, Command::SetVideoFormat { .. }) {
+                    self.format_pin = None;
+                }
+                self.set_notice("NO ANSWER FROM THE CAMERA");
+            }
+            SetOutcome::Acked { .. } | SetOutcome::Superseded { .. } => {}
+        }
+    }
+
+    fn set_notice(&mut self, text: &str) {
+        self.notice = Some((text.to_string(), self.last_now + NOTICE_SECONDS));
+        self.chrome_stale = true;
+    }
+
+    /// The notice for the top bar, while it lasts.
+    pub fn notice(&self, now: f64) -> String {
+        match &self.notice {
+            Some((text, until)) if now < *until => text.clone(),
+            _ => String::new(),
+        }
     }
 
     /// The body's live pose, when it has reported one.
@@ -383,6 +823,42 @@ impl Shell {
             .as_ref()
             .is_some_and(MoveEngine::is_running)
             || self.move_countdown.is_some()
+    }
+
+    pub fn move_paused(&self) -> bool {
+        self.move_engine.as_ref().is_some_and(MoveEngine::is_paused)
+    }
+
+    /// Pause pressed: the motors stop, the remaining time freezes.
+    fn move_pause(&mut self) -> Vec<Intent> {
+        let mut intents = Vec::new();
+        if let Some(engine) = self.move_engine.as_mut() {
+            if engine.pause().stop {
+                intents.push(Intent::Send(Command::GimbalTimedStop));
+            }
+        }
+        self.chrome_stale = true;
+        intents
+    }
+
+    /// Resume pressed: from the body's settled pose, without a countdown.
+    fn move_resume(&mut self, now: f64) -> Vec<Intent> {
+        let Some(live) = self.live_pose() else {
+            return Vec::new();
+        };
+        let mut intents = Vec::new();
+        if let Some(engine) = self.move_engine.as_mut() {
+            let output = engine.resume(live);
+            if let Some((target, duration)) = output.target {
+                intents.push(Intent::Send(target.timed_target(duration)));
+            }
+            if output.stop {
+                intents.push(Intent::Send(Command::GimbalTimedStop));
+            }
+            self.move_ticked_at = now;
+        }
+        self.chrome_stale = true;
+        intents
     }
 
     /// What the top bar says about a take, or nothing.
@@ -488,6 +964,282 @@ impl Shell {
     /// The body's model id, when the link knows it. Colour modes encode per model.
     pub fn set_model(&mut self, model_id: Option<i32>) {
         self.model_id = model_id.unwrap_or(-1);
+        self.setup.model = model_name(self.model_id);
+    }
+
+    /// Reads the operator's saved settings and keeps saving them from here on.
+    pub fn with_saved_prefs(mut self) -> Self {
+        let path = prefs::path();
+        if let Some(saved) = prefs::load(&path) {
+            self.prefs = saved;
+        }
+        self.prefs_path = Some(path);
+        self
+    }
+
+    fn persist_prefs(&self) {
+        if let Some(path) = &self.prefs_path {
+            if let Err(error) = prefs::save(path, &self.prefs) {
+                eprintln!("could not save the settings: {error}");
+            }
+        }
+    }
+
+    /// What the Link tab reads: how this machine reaches the body.
+    pub fn set_link_info(&mut self, link: &str) {
+        self.setup.link = link.to_string();
+        self.chrome_stale = true;
+    }
+
+    /// The controller's name while one is connected.
+    pub fn set_gamepad(&mut self, name: Option<String>) {
+        if self.setup.gamepad != name {
+            self.setup.gamepad = name;
+            self.chrome_stale = true;
+        }
+    }
+
+    /// The media cache's size on disk, from the window.
+    pub fn set_cache_size(&mut self, bytes: u64) {
+        self.setup.cache = if bytes < 1_000_000 {
+            format!("{} KB", bytes / 1000)
+        } else if bytes < 1_000_000_000 {
+            format!("{} MB", bytes / 1_000_000)
+        } else {
+            format!("{:.1} GB", bytes as f64 / 1e9)
+        };
+        self.chrome_stale = true;
+    }
+
+    pub fn set_renderer_name(&mut self, name: &str) {
+        self.setup.renderer = name.to_string();
+    }
+
+    /// What the window found out about the platform camera component.
+    pub fn set_component(&mut self, report: opc_vcam::ComponentReport) {
+        if self.setup.component != report {
+            self.setup.component = report;
+            self.chrome_stale = true;
+        }
+    }
+
+    /// What the virtual camera is doing, from the window, for the Output tab.
+    pub fn set_vcam_status(&mut self, line: &str) {
+        if self.setup.vcam != line {
+            self.setup.vcam = line.to_string();
+            self.chrome_stale = true;
+        }
+    }
+
+    /// The virtual camera the operator asked for, or `None` while it is off.
+    pub fn vcam_backend(&self) -> Option<opc_vcam::Backend> {
+        match self.prefs.vcam {
+            1 => Some(opc_vcam::Backend::Device),
+            2 => Some(opc_vcam::Backend::Stream {
+                port: self.prefs.vcam_port,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The grade the virtual camera carries: the picture as shown, or without the
+    /// diagnostic assists when the operator asked for it clean. The LUT is the look and
+    /// stays either way.
+    pub fn vcam_grade_options(&self) -> GradeOptions {
+        let options = self.grade_options();
+        if self.prefs.vcam_clean {
+            GradeOptions {
+                zebra: None,
+                peaking: None,
+                false_color: false,
+                ..options
+            }
+        } else {
+            options
+        }
+    }
+
+    /// What the watchdog last did, for the Link tab.
+    pub fn note_recovery(&mut self, what: &str) {
+        self.setup.recovery = what.to_string();
+        self.chrome_stale = true;
+    }
+
+    /// A line for the top bar, from the window.
+    pub fn say(&mut self, text: &str) {
+        self.set_notice(text);
+    }
+
+    /// The setup readouts, for tests.
+    pub fn setup(&self) -> &SetupInfo {
+        &self.setup
+    }
+
+    /// Everything a bug report needs, as text.
+    pub fn diagnostics_text(&self, now: f64) -> String {
+        let status = &self.hud.status;
+        let toggles = self.toggles;
+        format!(
+            "OpenPocketCine desktop {}\nuptime {now:.1} s\n{link}\nphase {phase}\nbody {model} (id {id})\nfirmware {fw}\nrenderer {renderer}\nrecovery {recovery}\nwindow {w}x{h}\nsource {src:?}\nformat {format}\ncolour mode {color:?} iso {iso:?}\nzoom {zoom:?} stops {stops:?}\nrecording {rec}\ntoggles {toggles:?}\nprefs {prefs:?}\nassists {assists:?}\nscopes {scopes:?}\ncamera component {component:?}\nvirtual camera {vcam}\n",
+            env!("CARGO_PKG_VERSION"),
+            link = self.setup.link,
+            phase = self.setup.phase,
+            model = self.setup.model,
+            id = self.model_id,
+            fw = status.firmware.clone().unwrap_or_default(),
+            renderer = self.setup.renderer,
+            recovery = self.setup.recovery,
+            w = self.window.0,
+            h = self.window.1,
+            src = self.source,
+            format = status.format_label(),
+            color = status.color_mode,
+            iso = status.iso,
+            zoom = status.zoom_hundredths,
+            stops = self.zoom_rules.stops(),
+            rec = status.is_recording,
+            prefs = self.prefs,
+            assists = self.assists,
+            scopes = self.scope_options,
+            component = self.setup.component,
+            vcam = self.setup.vcam,
+        )
+    }
+
+    /// The gimbal stick from an analog source, with the operator's sensitivity.
+    fn stick_axes(&self, x: f64, y: f64) -> Command {
+        stick_axes(x, y, self.prefs.stick_sensitivity)
+    }
+
+    /// A game controller's left stick.
+    pub fn controller_stick(&mut self, x: f64, y: f64, now: f64) -> Vec<Intent> {
+        if !self.prefs.gamepad || self.screen != Screen::Viewfinder {
+            return Vec::new();
+        }
+        self.last_now = self.last_now.max(now);
+        let resting = x.abs() < PAD_REST && y.abs() < PAD_REST;
+        if resting {
+            if !self.controller_held {
+                return Vec::new();
+            }
+            self.controller_held = false;
+            return self.pad_released();
+        }
+        self.controller_held = true;
+        self.pad_moved(x as f32, y as f32)
+    }
+
+    /// The triggers: hold to zoom, at the phones' rate.
+    pub fn controller_zoom(&mut self, left: f64, right: f64, dt: f64, now: f64) -> Vec<Intent> {
+        if !self.prefs.gamepad || self.screen != Screen::Viewfinder || dt <= 0.0 {
+            return Vec::new();
+        }
+        if left.abs() < PAD_REST && right.abs() < PAD_REST {
+            return Vec::new();
+        }
+        let current = self.controls.zoom();
+        let next = zoom_trigger_step(current, left, right, dt, self.zoom_rules.max());
+        if (next - current).abs() < 0.005 {
+            return Vec::new();
+        }
+        self.zoom_write(ZoomWrite::Slider(next), now)
+    }
+
+    /// A controller button, on its way down.
+    pub fn controller_button(&mut self, button: PadButton, now: f64) -> Vec<Intent> {
+        if !self.prefs.gamepad || self.screen != Screen::Viewfinder {
+            return Vec::new();
+        }
+        self.last_now = self.last_now.max(now);
+        match button.action() {
+            PadAction::Record => {
+                let command = if self.hud.status.is_recording {
+                    Command::RecordStop
+                } else {
+                    Command::RecordStart
+                };
+                self.act(Action::Send(command), now)
+            }
+            PadAction::Recenter => self.act(Action::Send(Command::GimbalRecenter), now),
+            PadAction::Flip => self.act(Action::Send(Command::GimbalFlip), now),
+            PadAction::Track => self.act(Action::ClearTracking, now),
+            PadAction::ZoomIn => self.act(Action::ZoomIn, now),
+            PadAction::ZoomOut => self.act(Action::ZoomOut, now),
+            PadAction::IsoUp => self.iso_step(1),
+            PadAction::IsoDown => self.iso_step(-1),
+            PadAction::ShutterOpen => self.shutter_step(1),
+            PadAction::ShutterClose => self.shutter_step(-1),
+        }
+    }
+
+    /// The on-screen pad or a controller stick moved. Right and up are positive, the
+    /// same axes as the keys.
+    fn pad_moved(&mut self, x: f32, y: f32) -> Vec<Intent> {
+        self.pad_held = true;
+        self.pad_target = (f64::from(x), f64::from(y));
+        if self.prefs.ramp_tau() > 0.0 {
+            // A pointer event carries no clock: step one nominal frame.
+            let now = self.ramp_ticked_at + 0.04;
+            self.ramp_step(now)
+        } else {
+            vec![Intent::Send(self.stick_axes(f64::from(x), f64::from(y)))]
+        }
+    }
+
+    /// The pad or the controller stick let go: rest the gimbal, eased if the ramp is on.
+    fn pad_released(&mut self) -> Vec<Intent> {
+        self.pad_held = false;
+        self.pad_target = (0.0, 0.0);
+        if self.prefs.ramp_tau() > 0.0 && self.stick.is_resting() {
+            // The ramp eases the stick back; the ticks send the steps.
+            let now = self.ramp_ticked_at + 0.04;
+            self.ramp_step(now)
+        } else {
+            vec![Intent::Send(Command::GimbalStick {
+                axis0: 1024,
+                axis1: 1024,
+            })]
+        }
+    }
+
+    /// The next ISO index up or down the body's own list (or the wire's table).
+    fn iso_step(&mut self, delta: i32) -> Vec<Intent> {
+        let status = &self.hud.status;
+        let list: Vec<u8> = if status.available_iso.is_empty() {
+            sheets::ISO_INDEX.iter().map(|(code, _)| *code).collect()
+        } else {
+            status.available_iso.clone()
+        };
+        let at = status
+            .iso_index
+            .and_then(|now| list.iter().position(|code| *code == now))
+            .unwrap_or(0) as i32;
+        let next = (at + delta).clamp(0, list.len() as i32 - 1) as usize;
+        if next == at as usize && status.iso_index.is_some() {
+            return Vec::new();
+        }
+        vec![Intent::Send(Command::SetIsoIndex(list[next]))]
+    }
+
+    /// The next shutter along the body's list: "open" is a longer exposure, so a
+    /// smaller denominator.
+    fn shutter_step(&mut self, delta: i32) -> Vec<Intent> {
+        let status = &self.hud.status;
+        let mut list: Vec<i32> = if status.available_shutter.is_empty() {
+            sheets::SHUTTER_DEFAULT.to_vec()
+        } else {
+            status.available_shutter.clone()
+        };
+        list.sort_unstable_by(|a, b| b.cmp(a));
+        let at = status
+            .shutter_denominator
+            .and_then(|now| list.iter().position(|denom| *denom == now))
+            .unwrap_or(0) as i32;
+        let next = (at + delta).clamp(0, list.len() as i32 - 1) as usize;
+        if next == at as usize && status.shutter_denominator.is_some() {
+            return Vec::new();
+        }
+        vec![Intent::Send(Command::SetShutter(list[next]))]
     }
 
     /// Which sheet is open, if any.
@@ -502,7 +1254,30 @@ impl Shell {
         } else {
             Some(kind)
         };
+        if self.sheet == Some(SheetKind::Settings) {
+            self.on_settings_tab(self.sheet_tab);
+        }
         self.chrome_stale = true;
+    }
+
+    /// Shows a settings tab, as a tap on its name would.
+    pub fn select_settings_tab(&mut self, tab: usize) {
+        self.sheet_tab = tab.min(sheets::SETTINGS_TABS.len() - 1);
+        if self.sheet == Some(SheetKind::Settings) {
+            self.on_settings_tab(self.sheet_tab);
+        }
+        self.chrome_stale = true;
+    }
+
+    /// Some tabs read something the window has to go and fetch.
+    fn on_settings_tab(&mut self, tab: usize) {
+        if tab == TAB_AUDIO {
+            self.ask_audio_dsp();
+        }
+        if tab == TAB_STORAGE {
+            self.chrome_pending_intents
+                .push(Intent::Media(MediaAction::CacheSize));
+        }
     }
 
     pub fn close_sheet(&mut self) {
@@ -528,21 +1303,412 @@ impl Shell {
             program: &self.program,
             live_pose: self.live_pose(),
             move_running: self.move_running(),
+            move_paused: self.move_paused(),
+            assists: self.assists,
+            zebra_steps: self.zebra_steps(),
+            scopes: self.scope_options,
+            setup: &self.setup,
         }
     }
 
-    /// Carries out a chip tap on the open sheet.
+    /// A scope chip tapped.
+    fn flip_scope(&mut self, tool: AssistTool) {
+        match tool {
+            AssistTool::Wave => self.toggles.wave = !self.toggles.wave,
+            AssistTool::Parade => self.toggles.parade = !self.toggles.parade,
+            AssistTool::Histo => self.toggles.histo = !self.toggles.histo,
+            AssistTool::Vector => self.toggles.vector = !self.toggles.vector,
+            AssistTool::Lights => self.toggles.lights = !self.toggles.lights,
+            AssistTool::Nd => self.toggles.nd = !self.toggles.nd,
+            AssistTool::Audio => self.toggles.audio = !self.toggles.audio,
+            _ => {}
+        }
+    }
+
+    /// Whether the window should sample the picture for the plates.
+    pub fn scopes_wanted(&self) -> bool {
+        self.screen == Screen::Viewfinder && self.toggles.any_scope()
+    }
+
+    /// The scope options, as the sheets set them.
+    pub fn scope_options(&self) -> ScopeOptions {
+        self.scope_options
+    }
+
+    /// A fresh read of the picture. The lights and the ND chip are read from it by
+    /// the core here, once per sample rather than once per frame.
+    pub fn set_scope_samples(&mut self, samples: ScopeSamples) {
+        let (color_mode, iso) = self.color_axis();
+        if self.toggles.lights {
+            self.lights = LightsReading::from_core(
+                &samples,
+                color_mode,
+                iso,
+                self.scope_options.lights_compensation / 10.0,
+                Some(&self.lights),
+            );
+        }
+        if self.toggles.nd {
+            self.nd = NdReading::from_core(&samples, color_mode, iso);
+        }
+        self.scope_samples = Some(samples);
+        self.chrome_stale = true;
+    }
+
+    /// The axis for the body's colour mode and ISO, asked of the core once per change.
+    fn scope_scale(&mut self) -> ScopeScale {
+        let key = self.color_axis();
+        match &self.scope_scale {
+            Some((cached, scale)) if *cached == key => scale.clone(),
+            _ => {
+                let scale = ScopeScale::from_core(key.0, key.1);
+                self.scope_scale = Some((key, scale.clone()));
+                scale
+            }
+        }
+    }
+
+    /// Where a plate sits: where the operator dragged it, else its default place.
+    fn plate_origin(&self, tool: AssistTool, default: (f32, f32)) -> (f32, f32) {
+        self.plate_positions
+            .iter()
+            .find(|(parked, _, _)| *parked == tool)
+            .map_or(default, |(_, x, y)| (*x, *y))
+    }
+
+    fn fit_now(&self) -> opc_ui::Fit {
+        self.hud.fit.unwrap_or(opc_ui::Fit {
+            x: 0.0,
+            y: 0.0,
+            width: f64::from(self.window.0),
+            height: f64::from(self.window.1),
+        })
+    }
+
+    /// The plates to draw this frame, with their images rasterised.
+    fn plates(&mut self) -> (Vec<PlateState>, Vec<(String, Plate)>) {
+        let mut plates = Vec::new();
+        let mut images = Vec::new();
+        let toggles = self.toggles;
+        if self.screen != Screen::Viewfinder || !(toggles.any_scope() || toggles.audio) {
+            return (plates, images);
+        }
+        let fit = self.fit_now();
+        let scale = self.scope_scale();
+        let options = self.scope_options;
+        let (fx, fy, fw, fh) = (
+            fit.x as f32,
+            fit.y as f32,
+            fit.width as f32,
+            fit.height as f32,
+        );
+        let top = fy.max(56.0) + 92.0;
+        let bottom = (fy + fh).min(self.window.1 as f32 - 152.0);
+        let gap = 12.0;
+        let index_of = |tool: AssistTool| {
+            AssistTool::TOOLBAR
+                .iter()
+                .position(|t| *t == tool)
+                .unwrap_or(0)
+        };
+        let samples = self.scope_samples.clone().unwrap_or_default();
+        let mut image_plates: Vec<(AssistTool, (f32, f32), Plate)> = Vec::new();
+        let mut column_x = fx + gap;
+        if toggles.wave {
+            let plate = scopes::waveform(&samples, &scale, &options);
+            let default = (column_x, bottom - plate.height as f32 - gap);
+            column_x += plate.width as f32 + gap;
+            image_plates.push((AssistTool::Wave, default, plate));
+        }
+        if toggles.parade {
+            let plate = scopes::parade(&samples, &scale, &options);
+            let default = (column_x, bottom - plate.height as f32 - gap);
+            column_x += plate.width as f32 + gap;
+            image_plates.push((AssistTool::Parade, default, plate));
+        }
+        if toggles.vector {
+            let plate = scopes::vectorscope(&samples, &options);
+            let default = (column_x, bottom - plate.height as f32 - gap);
+            image_plates.push((AssistTool::Vector, default, plate));
+        }
+        let mut right_x = fx + fw - gap;
+        if toggles.histo {
+            let plate = scopes::histogram(&samples, &scale);
+            right_x -= plate.width as f32;
+            let default = (right_x, top);
+            right_x -= gap;
+            image_plates.push((AssistTool::Histo, default, plate));
+        }
+        if toggles.lights {
+            let plate = scopes::traffic_lights(&self.lights);
+            right_x -= plate.width as f32;
+            let default = (right_x, top);
+            image_plates.push((AssistTool::Lights, default, plate));
+        }
+        for (tool, default, plate) in image_plates {
+            let (x, y) = self.plate_origin(tool, default);
+            let name = tool.label().to_lowercase();
+            plates.push(PlateState {
+                tool_index: index_of(tool),
+                name: name.clone(),
+                title: tool.label().to_string(),
+                x,
+                y,
+                width: plate.width as f32,
+                height: plate.height as f32,
+                kind: PlateKind::Image,
+            });
+            images.push((name, plate));
+        }
+        if toggles.nd {
+            let text = self
+                .nd
+                .as_ref()
+                .map_or_else(|| "—".to_string(), |nd| nd.text(options.nd_notation));
+            let (x, y) = self.plate_origin(AssistTool::Nd, (fx + gap, top));
+            plates.push(PlateState {
+                tool_index: index_of(AssistTool::Nd),
+                name: "nd".to_string(),
+                title: "ND".to_string(),
+                x,
+                y,
+                width: 84.0,
+                height: 30.0,
+                kind: PlateKind::Text(text),
+            });
+        }
+        if toggles.audio {
+            let floor = scopes::audio_floor_db();
+            let norm = |db: f32| ((db - floor) / -floor).clamp(0.0, 1.0);
+            let meters = self
+                .hud
+                .status
+                .audio_meters
+                .map_or([floor; 4], |meters| meters.decibels());
+            let above_wave = if toggles.wave {
+                scopes::WAVEFORM_SIZE.1 as f32 + gap
+            } else {
+                0.0
+            };
+            let default = (fx + gap, bottom - 168.0 - gap - above_wave);
+            let (x, y) = self.plate_origin(AssistTool::Audio, default);
+            plates.push(PlateState {
+                tool_index: index_of(AssistTool::Audio),
+                name: "audio".to_string(),
+                title: "AUDIO".to_string(),
+                x,
+                y,
+                width: 28.0,
+                height: 168.0,
+                kind: PlateKind::Audio {
+                    left: norm(meters[0]),
+                    right: norm(meters[1]),
+                    left_peak: norm(meters[2]),
+                    right_peak: norm(meters[3]),
+                },
+            });
+        }
+        (plates, images)
+    }
+
+    /// A plate dragged to a new top-left, in window pixels.
+    fn park_plate(&mut self, tool: AssistTool, x: f32, y: f32) {
+        let x = x.clamp(0.0, (self.window.0 as f32 - 40.0).max(0.0));
+        let y = y.clamp(0.0, (self.window.1 as f32 - 40.0).max(0.0));
+        if let Some(slot) = self
+            .plate_positions
+            .iter_mut()
+            .find(|(parked, _, _)| *parked == tool)
+        {
+            slot.1 = x;
+            slot.2 = y;
+        } else {
+            self.plate_positions.push((tool, x, y));
+        }
+        self.chrome_stale = true;
+    }
+
+    /// Where a plate sits right now, for tests: `(x, y, width, height)`.
+    pub fn plate_rect(&mut self, tool: AssistTool) -> Option<(f32, f32, f32, f32)> {
+        let (plates, _) = self.plates();
+        plates
+            .into_iter()
+            .find(|plate| AssistTool::TOOLBAR[plate.tool_index] == tool)
+            .map(|plate| (plate.x, plate.y, plate.width, plate.height))
+    }
+
+    /// Carries out a chip tap on the open sheet, and saves the settings it changed.
     fn apply_pick(&mut self, pick: Pick) -> Vec<Intent> {
+        let before = self.prefs;
+        let intents = self.apply_pick_inner(pick);
+        if self.prefs != before {
+            self.persist_prefs();
+        }
+        intents
+    }
+
+    fn apply_pick_inner(&mut self, pick: Pick) -> Vec<Intent> {
         self.chrome_stale = true;
         match pick {
-            Pick::Send(commands) => commands.into_iter().map(Intent::Send).collect(),
+            Pick::Send(commands) => {
+                for command in &commands {
+                    self.note_sent(*command, self.last_now);
+                }
+                commands.into_iter().map(Intent::Send).collect()
+            }
             Pick::Zebra => self.act(Action::ToggleZebra, 0.0),
             Pick::Peaking => self.act(Action::TogglePeaking, 0.0),
             Pick::Grade => self.act(Action::ToggleGrade, 0.0),
             Pick::Mirror => self.act(Action::ToggleMirror, 0.0),
             Pick::Grid(on) => {
-                self.prefs.grid = on;
+                self.toggles.grid = on;
+                self.refresh_assists();
                 Vec::new()
+            }
+            Pick::Assist(tool) => self.tap_tool(tool),
+            Pick::FalseColorScale(scale) => {
+                self.assists.false_color.scale = scale;
+                self.sync_false_color();
+                Vec::new()
+            }
+            Pick::FalseColorReference(on) => {
+                self.assists.false_color.reference = on;
+                Vec::new()
+            }
+            Pick::PeakingColor(color) => {
+                self.assists.peaking_color = color;
+                Vec::new()
+            }
+            Pick::PeakingSense(sense) => {
+                self.assists.peaking_sense = sense;
+                Vec::new()
+            }
+            Pick::ZebraUnits(ire) => {
+                self.assists.zebra.ire_units = ire;
+                Vec::new()
+            }
+            Pick::ZebraHighlightOn(on) => {
+                self.assists.zebra.highlight_on = on;
+                Vec::new()
+            }
+            Pick::ZebraHighlightIre(ire) => {
+                self.assists.zebra.highlight_ire = ire;
+                Vec::new()
+            }
+            Pick::ZebraHighlightColor(paint) => {
+                self.assists.zebra.highlight_color = paint;
+                Vec::new()
+            }
+            Pick::ZebraMidtoneOn(on) => {
+                self.assists.zebra.midtone_on = on;
+                Vec::new()
+            }
+            Pick::ZebraMidtoneIre(ire) => {
+                self.assists.zebra.midtone_ire = ire;
+                Vec::new()
+            }
+            Pick::ZebraMidtoneColor(paint) => {
+                self.assists.zebra.midtone_color = paint;
+                Vec::new()
+            }
+            Pick::GridLine(line, on) => {
+                self.assists.grid.set(line, on);
+                Vec::new()
+            }
+            Pick::GuideFamily(family) => {
+                self.assists.guides.family = family;
+                Vec::new()
+            }
+            Pick::GuideAspect(aspect) => {
+                self.assists.guides.toggle(aspect);
+                Vec::new()
+            }
+            Pick::GuideMask(on) => {
+                self.assists.guides.mask = on;
+                Vec::new()
+            }
+            Pick::WaveMode(mode) => {
+                self.scope_options.wave = mode;
+                Vec::new()
+            }
+            Pick::WaveGuide(which, on) => {
+                match which {
+                    0 => self.scope_options.wave_guides.0 = on,
+                    1 => self.scope_options.wave_guides.1 = on,
+                    _ => self.scope_options.wave_guides.2 = on,
+                }
+                Vec::new()
+            }
+            Pick::ParadeMode(mode) => {
+                self.scope_options.parade = mode;
+                Vec::new()
+            }
+            Pick::VectorGain(gain) => {
+                self.scope_options.vector_gain = gain as f32;
+                Vec::new()
+            }
+            Pick::Brightness(level) => {
+                self.scope_options.brightness = level;
+                Vec::new()
+            }
+            Pick::LightsCompensation(index) => {
+                if let Some((stops, _)) = LIGHTS_COMPENSATION.get(index as usize) {
+                    self.scope_options.lights_compensation = *stops;
+                }
+                Vec::new()
+            }
+            Pick::NdNotation(notation) => {
+                self.scope_options.nd_notation = notation;
+                Vec::new()
+            }
+            Pick::Reconnect => vec![Intent::Reconnect],
+            Pick::StickSensitivity(tick) => {
+                self.prefs.stick_sensitivity = tick.clamp(1, 5);
+                Vec::new()
+            }
+            Pick::Gamepad(on) => {
+                self.prefs.gamepad = on;
+                Vec::new()
+            }
+            Pick::Disp(clean) => {
+                self.chrome_visible = !clean;
+                self.setup.chrome_visible = self.chrome_visible;
+                Vec::new()
+            }
+            Pick::ShowPart(part, on) => {
+                self.prefs.set_shows(part, on);
+                Vec::new()
+            }
+            Pick::ClearCache => vec![Intent::Media(MediaAction::ClearCache)],
+            Pick::Diagnostics => vec![Intent::Diagnostics],
+            Pick::Vcam(mode) => {
+                self.prefs.vcam = mode.min(2);
+                if self.prefs.vcam == 1
+                    && self.setup.component.state != opc_vcam::ComponentState::Installed
+                {
+                    self.set_notice("CAMERA COMPONENT NOT INSTALLED · SETTINGS › OUTPUT");
+                }
+                Vec::new()
+            }
+            Pick::ComponentInstall => {
+                self.setup.component = self.setup.component.busy("Installing…");
+                vec![Intent::ComponentInstall]
+            }
+            Pick::ComponentRemove => {
+                self.setup.component = self.setup.component.busy("Removing…");
+                vec![Intent::ComponentRemove]
+            }
+            Pick::OpenStream => vec![Intent::OpenUrl(format!(
+                "http://127.0.0.1:{}/",
+                self.prefs.vcam_port
+            ))],
+            Pick::VcamClean(clean) => {
+                self.prefs.vcam_clean = clean;
+                Vec::new()
+            }
+            Pick::Wind(on) => self.audio_dsp_write(|blob| Command::AudioWind { on, blob }),
+            Pick::Directional(mode) => {
+                self.audio_dsp_write(|blob| Command::AudioDirectional { mode, blob })
             }
             Pick::Timecode(on) => {
                 self.prefs.timecode = on;
@@ -579,8 +1745,9 @@ impl Shell {
             }
             Pick::Lut(choice) => {
                 self.toggles.grade = choice != LutChoice::Off;
+                self.refresh_assists();
                 self.lut_choice = choice.clone();
-                self.lut_pending = Some(LutRequest::Load(choice));
+                self.lut_pending.push_back(LutRequest::Load(choice));
                 self.refresh_assists();
                 Vec::new()
             }
@@ -613,6 +1780,15 @@ impl Shell {
                 self.move_start(now)
             }
             Pick::MoveStop => self.move_stop(),
+            Pick::MovePause => self.move_pause(),
+            Pick::MoveResume => {
+                let now = self.last_now;
+                self.move_resume(now)
+            }
+            Pick::Smoothness(percent) => {
+                self.program.smoothness = f64::from(percent) / 100.0;
+                Vec::new()
+            }
             Pick::Nothing => Vec::new(),
         }
     }
@@ -673,6 +1849,16 @@ impl Shell {
         }
         if key == Key::Char('g') || key == Key::Char('G') {
             return self.open_library();
+        }
+        if matches!(key, Key::Char('v' | 'V')) {
+            self.gimbal_mode = self.gimbal_mode.next();
+            self.chrome_stale = true;
+            return self
+                .gimbal_mode
+                .commands()
+                .into_iter()
+                .map(Intent::Send)
+                .collect();
         }
         if self.stick.set(key, true) {
             // Manual control cancels the path, as on the phones.
@@ -739,7 +1925,7 @@ impl Shell {
         let rested_now = x == 0.0 && y == 0.0 && (before.x != 0.0 || before.y != 0.0);
         if moved || rested_now {
             self.stick_sent_at = now;
-            return vec![Intent::Send(opc_ui::stick_command(x, y))];
+            return vec![Intent::Send(self.stick_axes(x, y))];
         }
         Vec::new()
     }
@@ -753,7 +1939,19 @@ impl Shell {
     fn act(&mut self, action: Action, now: f64) -> Vec<Intent> {
         self.chrome_stale = true;
         match action {
-            Action::Send(command) => vec![Intent::Send(command)],
+            Action::Send(command) => {
+                self.note_sent(command, now);
+                vec![Intent::Send(command)]
+            }
+            Action::ZoomIn => {
+                let target = self.zoom_rules.next(self.controls.zoom());
+                self.zoom_write(ZoomWrite::Jump(target), now)
+            }
+            Action::ZoomOut => {
+                let target = self.zoom_rules.previous(self.controls.zoom());
+                self.zoom_write(ZoomWrite::Jump(target), now)
+            }
+            Action::ZoomWide => self.zoom_write(ZoomWrite::Jump(1.0), now),
             Action::Still => vec![Intent::Still],
             Action::Quit => vec![Intent::Quit],
             Action::ToggleTimer => {
@@ -785,12 +1983,14 @@ impl Shell {
             }
             Action::ToggleGrade => {
                 self.toggles.grade = !self.toggles.grade;
-                self.lut_pending = Some(LutRequest::Toggle(self.toggles.grade));
+                self.lut_pending
+                    .push_back(LutRequest::Toggle(self.toggles.grade));
                 self.refresh_assists();
                 Vec::new()
             }
             Action::ToggleChrome => {
                 self.chrome_visible = !self.chrome_visible;
+                self.setup.chrome_visible = self.chrome_visible;
                 Vec::new()
             }
             Action::ToggleSettings => {
@@ -805,10 +2005,15 @@ impl Shell {
                 self.toggle_sheet(SheetKind::Moves);
                 Vec::new()
             }
+            Action::ToggleAssists => {
+                self.assist_bar = !self.assist_bar;
+                Vec::new()
+            }
             Action::ClearTracking => {
                 self.drag = None;
                 self.committed = None;
                 self.hud.drag = None;
+                self.tracking = None;
                 vec![Intent::Send(Command::TrackClear)]
             }
             Action::CycleResolution | Action::CycleFrameRate => {
@@ -823,10 +2028,12 @@ impl Shell {
                 // back unchanged is a command that only costs a round trip.
                 stepped
                     .map(|(resolution, frame_rate)| {
-                        Intent::Send(Command::SetVideoFormat {
+                        let command = Command::SetVideoFormat {
                             resolution,
                             frame_rate,
-                        })
+                        };
+                        self.note_sent(command, now);
+                        Intent::Send(command)
                     })
                     .into_iter()
                     .collect()
@@ -875,14 +2082,119 @@ impl Shell {
         };
         self.chrome_stale = true;
         let Some(command) = drag.command(self.next_track_id) else {
-            // A click, not a drag. Leaving whatever the camera is already following
-            // alone is safer than clearing it by accident.
+            // A click, not a drag: tap to focus there, the way a tap on the phones does.
             self.hud.drag = None;
-            return Vec::new();
+            let (x, y, _, _) = drag.rectangle();
+            return self.tap_focus((x, y), now);
         };
         self.next_track_id = self.next_track_id.wrapping_add(1).max(1);
         self.committed = Some((drag.rectangle(), now + BOX_CONFIRM));
+        self.tracking = Some(TrackingState::new(drag.rectangle(), now));
         vec![Intent::Send(command)]
+    }
+
+    /// Mimo's tap-to-focus burst at a point on the picture as seen. Mirroring is
+    /// undone so the body focuses where the operator pointed. A body that is already
+    /// following something is told to stop first, as on the phones.
+    fn tap_focus(&mut self, seen: (f64, f64), now: f64) -> Vec<Intent> {
+        if !opc_camera::supports_tap_focus(self.model_id) {
+            return Vec::new();
+        }
+        let mut intents = Vec::new();
+        if self.tracking.is_some() {
+            self.tracking = None;
+            self.committed = None;
+            intents.push(Intent::Send(Command::TrackClear));
+        }
+        let x = if self.toggles.mirror {
+            1.0 - seen.0
+        } else {
+            seen.0
+        };
+        intents.extend(
+            Command::tap_focus(x as f32, seen.1 as f32)
+                .into_iter()
+                .map(Intent::Send),
+        );
+        self.focus_marker = Some((seen, now + FOCUS_MARKER_SECONDS));
+        self.chrome_stale = true;
+        intents
+    }
+
+    /// The body answered a tracking poll.
+    pub fn tracking_reply(&mut self, poll: TrackingPoll, now: f64) {
+        let Some(tracking) = self.tracking.as_mut() else {
+            return;
+        };
+        match poll {
+            TrackingPoll::Locked(subject) => {
+                tracking.saw_lock = true;
+                tracking.idle_ticks = 0;
+                if let Some((x, y, w, h)) = subject {
+                    tracking.subject =
+                        Some((f64::from(x), f64::from(y), f64::from(w), f64::from(h)));
+                }
+                // The box stays as long as the body says it has the subject.
+                let shown = tracking.subject.unwrap_or(tracking.search);
+                self.committed = Some((shown, now + 2.0 * TRACK_POLL_INTERVAL));
+            }
+            TrackingPoll::Idle => {
+                if tracking.saw_lock {
+                    self.tracking = None;
+                    self.committed = None;
+                    self.hud.drag = None;
+                } else {
+                    tracking.idle_ticks += 1;
+                    if tracking.idle_ticks >= TRACK_IDLE_TICKS {
+                        self.tracking = None;
+                        self.committed = None;
+                        self.hud.drag = None;
+                    }
+                }
+            }
+        }
+        self.chrome_stale = true;
+    }
+
+    /// Whether a box is out with the body and being polled.
+    pub fn is_tracking(&self) -> bool {
+        self.tracking.is_some()
+    }
+
+    /// The Pocket reports a subject box and lock state, not facial identity. Keep that
+    /// distinction explicit in the operator copy rather than pretending it knows who
+    /// the person is.
+    pub fn tracking_label(&self) -> Option<&'static str> {
+        self.tracking.as_ref().map(|tracking| {
+            if tracking.saw_lock {
+                "TRACKING SUBJECT"
+            } else {
+                "ACQUIRING SUBJECT"
+            }
+        })
+    }
+
+    /// A wind or directional write: the body's own blob patched and sent back, then
+    /// read again so the chips show what took. Without the blob, only the read goes.
+    fn audio_dsp_write(
+        &mut self,
+        make: impl FnOnce([u8; opc_camera::AUDIO_DSP_BLOB]) -> Command,
+    ) -> Vec<Intent> {
+        match self.hud.status.audio_dsp_blob {
+            Some(blob) => vec![Intent::Send(make(blob)), Intent::Send(Command::AudioDspGet)],
+            None => {
+                self.set_notice("READING THE AUDIO DSP FIRST");
+                vec![Intent::Send(Command::AudioDspGet)]
+            }
+        }
+    }
+
+    /// The Audio tab needs the DSP blob before wind and directional can be set.
+    fn ask_audio_dsp(&mut self) {
+        if self.hud.status.audio_dsp_blob.is_none() && self.hud.phase == Phase::Live {
+            self.chrome_pending_intents
+                .push(Intent::Send(Command::AudioDspGet));
+        }
     }
 
     /// A finger touched, moved, or left the screen.
@@ -950,195 +2262,229 @@ impl Shell {
         };
         let intents = cr.drain_intents();
         for intent in intents {
-            match intent {
-                ChromeIntent::RecordToggle => {
-                    fired.push(Intent::Send(if self.hud.status.is_recording {
-                        Command::RecordStop
-                    } else {
-                        Command::RecordStart
-                    }));
+            self.act_on_chrome(intent, &mut fired);
+        }
+        fired
+    }
+
+    /// One control's intent, as the chrome would fire it. For tests that do not want
+    /// to find the control by coordinate.
+    pub fn chrome_intent_for_test(&mut self, intent: ChromeIntent) -> Vec<Intent> {
+        let mut fired = Vec::new();
+        self.act_on_chrome(intent, &mut fired);
+        fired
+    }
+
+    fn act_on_chrome(&mut self, intent: ChromeIntent, fired: &mut Vec<Intent>) {
+        match intent {
+            ChromeIntent::RecordToggle => {
+                fired.push(Intent::Send(if self.hud.status.is_recording {
+                    Command::RecordStop
+                } else {
+                    Command::RecordStart
+                }));
+            }
+            ChromeIntent::TakeStill => fired.push(Intent::Send(Command::ShootPhoto)),
+            ChromeIntent::GimbalFlip => fired.push(Intent::Send(Command::GimbalFlip)),
+            ChromeIntent::GimbalRecenter => {
+                fired.push(Intent::Send(Command::GimbalRecenter));
+            }
+            ChromeIntent::ZoomSet(v) => {
+                let now = self.last_now;
+                fired.extend(self.zoom_write(ZoomWrite::Slider(f64::from(v)), now));
+            }
+            ChromeIntent::GimbalMoved { x, y } => fired.extend(self.pad_moved(x, y)),
+            ChromeIntent::GimbalReleased => fired.extend(self.pad_released()),
+            ChromeIntent::FollowToggle => {
+                // ON is Follow; OFF is the tilt-locked follow the body offers.
+                self.gimbal_mode = if self.gimbal_mode == GimbalMode::Follow {
+                    GimbalMode::TiltLocked
+                } else {
+                    GimbalMode::Follow
+                };
+                self.chrome_stale = true;
+                fired.extend(self.gimbal_mode.commands().into_iter().map(Intent::Send));
+            }
+            ChromeIntent::FollowCycle => {
+                self.gimbal_mode = self.gimbal_mode.next();
+                self.chrome_stale = true;
+                fired.extend(self.gimbal_mode.commands().into_iter().map(Intent::Send));
+            }
+            ChromeIntent::ModeSelected(index) => {
+                if let Some(code) = MODE_CODES.get(index).copied().flatten() {
+                    fired.push(Intent::Send(Command::SetShootingMode(code)));
                 }
-                ChromeIntent::TakeStill => fired.push(Intent::Send(Command::ShootPhoto)),
-                ChromeIntent::GimbalFlip => fired.push(Intent::Send(Command::GimbalFlip)),
-                ChromeIntent::GimbalRecenter => {
-                    fired.push(Intent::Send(Command::GimbalRecenter));
+            }
+            ChromeIntent::OpenFormat => self.toggle_sheet(SheetKind::Format),
+            ChromeIntent::OpenExposure => self.toggle_sheet(SheetKind::Exposure),
+            ChromeIntent::OpenMenu => self.toggle_sheet(SheetKind::Settings),
+            ChromeIntent::AssistBarToggle => {
+                self.assist_bar = !self.assist_bar;
+                self.chrome_stale = true;
+            }
+            ChromeIntent::AssistTap(index) => {
+                if let Some(tool) = AssistTool::TOOLBAR.get(index) {
+                    fired.extend(self.tap_tool(*tool));
                 }
-                ChromeIntent::ZoomSet(v) => {
-                    let z = (v as f64).clamp(ZOOM_MIN, ZOOM_MAX);
-                    self.controls.set_zoom(z);
+            }
+            ChromeIntent::AssistConfigure(index) => {
+                if let Some(tool) = AssistTool::TOOLBAR.get(index) {
+                    self.toggle_sheet(SheetKind::Assist(*tool));
+                }
+            }
+            ChromeIntent::PlateMoved { tool, x, y } => {
+                if let Some(tool) = AssistTool::TOOLBAR.get(tool) {
+                    self.park_plate(*tool, x, y);
+                }
+            }
+            ChromeIntent::SheetClose => self.close_sheet(),
+            ChromeIntent::SheetTab(tab) => {
+                self.sheet_tab = tab;
+                if self.sheet == Some(SheetKind::Settings) {
+                    self.on_settings_tab(tab);
+                }
+                self.chrome_stale = true;
+            }
+            ChromeIntent::SheetPick { row, option } => {
+                let pick = self.sheet.and_then(|kind| {
+                    sheets::build(kind, self.sheet_tab, self.sheet_context())
+                        .pick(row, option)
+                        .cloned()
+                });
+                if let Some(pick) = pick {
+                    fired.extend(self.apply_pick(pick));
+                }
+            }
+            ChromeIntent::Exit => fired.push(Intent::Quit),
+            ChromeIntent::OpenGallery => fired.extend(self.open_library()),
+            ChromeIntent::LibraryBack => fired.extend(self.close_library()),
+            ChromeIntent::LibraryTab(index) => {
+                if let Some(tab) = opc_media::LibraryTab::ALL.get(index) {
+                    self.library.tab = *tab;
                     self.chrome_stale = true;
-                    fired.push(Intent::Send(Command::ZoomFactor(z)));
                 }
-                ChromeIntent::GimbalMoved { x, y } => {
-                    // The pad reports right and up positive, the same axes as the keys.
-                    self.pad_held = true;
-                    self.pad_target = (f64::from(x), f64::from(y));
-                    if self.prefs.ramp_tau() > 0.0 {
-                        // A pointer event carries no clock: step one nominal frame.
-                        let now = self.ramp_ticked_at + 0.04;
-                        fired.extend(self.ramp_step(now));
-                    } else {
-                        fired.push(Intent::Send(opc_ui::stick_command(
-                            f64::from(x),
-                            f64::from(y),
-                        )));
-                    }
-                }
-                ChromeIntent::GimbalReleased => {
-                    self.pad_held = false;
-                    self.pad_target = (0.0, 0.0);
-                    if self.prefs.ramp_tau() > 0.0 && self.stick.is_resting() {
-                        // The ramp eases the stick back; the ticks send the steps.
-                        let now = self.ramp_ticked_at + 0.04;
-                        fired.extend(self.ramp_step(now));
-                    } else {
-                        fired.push(Intent::Send(Command::GimbalStick {
-                            axis0: 1024,
-                            axis1: 1024,
-                        }));
-                    }
-                }
-                ChromeIntent::FollowToggle => {
-                    // ON is Follow; OFF is the tilt-locked follow the body offers.
-                    self.gimbal_mode = if self.gimbal_mode == GimbalMode::Follow {
-                        GimbalMode::TiltLocked
-                    } else {
-                        GimbalMode::Follow
-                    };
-                    self.chrome_stale = true;
-                    fired.extend(self.gimbal_mode.commands().into_iter().map(Intent::Send));
-                }
-                ChromeIntent::FollowCycle => {
-                    self.gimbal_mode = self.gimbal_mode.next();
-                    self.chrome_stale = true;
-                    fired.extend(self.gimbal_mode.commands().into_iter().map(Intent::Send));
-                }
-                ChromeIntent::ModeSelected(index) => {
-                    if let Some(code) = MODE_CODES.get(index).copied().flatten() {
-                        fired.push(Intent::Send(Command::SetShootingMode(code)));
-                    }
-                }
-                ChromeIntent::OpenFormat => self.toggle_sheet(SheetKind::Format),
-                ChromeIntent::OpenExposure => self.toggle_sheet(SheetKind::Exposure),
-                ChromeIntent::OpenMenu => self.toggle_sheet(SheetKind::Settings),
-                ChromeIntent::SheetClose => self.close_sheet(),
-                ChromeIntent::SheetTab(tab) => {
-                    self.sheet_tab = tab;
-                    self.chrome_stale = true;
-                }
-                ChromeIntent::SheetPick { row, option } => {
-                    let pick = self.sheet.and_then(|kind| {
-                        sheets::build(kind, self.sheet_tab, self.sheet_context())
-                            .pick(row, option)
-                            .cloned()
-                    });
-                    if let Some(pick) = pick {
-                        fired.extend(self.apply_pick(pick));
-                    }
-                }
-                ChromeIntent::Exit => fired.push(Intent::Quit),
-                ChromeIntent::OpenGallery => fired.extend(self.open_library()),
-                ChromeIntent::LibraryBack => fired.extend(self.close_library()),
-                ChromeIntent::LibraryTab(index) => {
-                    if let Some(tab) = opc_media::LibraryTab::ALL.get(index) {
-                        self.library.tab = *tab;
-                        self.chrome_stale = true;
-                    }
-                }
-                ChromeIntent::LibrarySortNext => {
-                    self.library.sort = self.library.sort.next();
-                    self.chrome_stale = true;
-                }
-                ChromeIntent::LibraryRefresh => {
-                    fired.extend(self.press_on_screen(Key::Char('r')));
-                }
-                ChromeIntent::LibrarySelect(index) => {
+            }
+            ChromeIntent::LibrarySortNext => {
+                self.library.sort = self.library.sort.next();
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibraryRefresh => {
+                fired.extend(self.press_on_screen(Key::Char('r')));
+            }
+            ChromeIntent::LibrarySelect(index) => {
+                if self.library.selecting {
+                    self.library.toggle_checked(index);
+                } else {
                     self.library.select_index(index);
+                }
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibrarySelectMode => {
+                self.library.toggle_select_mode();
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibraryDeleteChecked => {
+                let mut counter = self.media_counter;
+                let commands = self.library.delete_checked(|| {
+                    counter = counter.wrapping_add(1).max(1);
+                    counter
+                });
+                self.media_counter = counter;
+                fired.extend(commands.into_iter().map(Intent::Send));
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibraryBurst => {
+                self.library.toggle_burst();
+                self.chrome_stale = true;
+            }
+            ChromeIntent::PlayerConform => {
+                if let Some(player) = self.player.as_mut() {
+                    player.next_conform();
+                    let speed = player.speed();
+                    fired.push(Intent::Media(MediaAction::Speed(speed)));
+                }
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibraryPlay => fired.extend(self.library_open_selected()),
+            ChromeIntent::LibraryDownload => {
+                if let Some(file) = self.library.selected_file().cloned() {
+                    self.library.progress.insert(file.path.clone(), (0, None));
+                    self.chrome_stale = true;
+                    fired.push(Intent::Media(MediaAction::Download(file)));
+                }
+            }
+            ChromeIntent::LibraryFavorite => {
+                let counter = self.next_media_counter();
+                if let Some(command) = self.library.toggle_favorite(counter) {
+                    fired.push(Intent::Send(command));
+                }
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibraryDelete => {
+                let counter = self.next_media_counter();
+                if let Some(command) = self.library.delete_tapped(counter) {
+                    fired.push(Intent::Send(command));
+                }
+                self.chrome_stale = true;
+            }
+            ChromeIntent::LibrarySource(local) => {
+                self.library.local = local;
+                self.library.selected = None;
+                self.chrome_stale = true;
+            }
+            ChromeIntent::PlayerBack => fired.extend(self.close_player()),
+            ChromeIntent::PlayerToggle => fired.extend(self.player_toggle()),
+            ChromeIntent::PlayerInfo => {
+                if let Some(player) = self.player.as_mut() {
+                    player.show_info = !player.show_info;
                     self.chrome_stale = true;
                 }
-                ChromeIntent::LibraryPlay => fired.extend(self.library_open_selected()),
-                ChromeIntent::LibraryDownload => {
-                    if let Some(file) = self.library.selected_file().cloned() {
-                        self.library.progress.insert(file.path.clone(), (0, None));
-                        self.chrome_stale = true;
-                        fired.push(Intent::Media(MediaAction::Download(file)));
-                    }
+            }
+            ChromeIntent::PlayerDownload => {
+                if let Some(file) = self.player.as_ref().map(|p| p.file.clone()) {
+                    self.library.progress.insert(file.path.clone(), (0, None));
+                    fired.push(Intent::Media(MediaAction::Download(file)));
                 }
-                ChromeIntent::LibraryFavorite => {
+            }
+            ChromeIntent::PlayerScreenshot => fired.push(Intent::Still),
+            ChromeIntent::PlayerLut => fired.extend(self.act(Action::ToggleGrade, 0.0)),
+            ChromeIntent::PlayerZebra => fired.extend(self.act(Action::ToggleZebra, 0.0)),
+            ChromeIntent::PlayerPeaking => {
+                fired.extend(self.act(Action::TogglePeaking, 0.0));
+            }
+            ChromeIntent::PlayerFavorite => {
+                if self.player_select() {
                     let counter = self.next_media_counter();
                     if let Some(command) = self.library.toggle_favorite(counter) {
                         fired.push(Intent::Send(command));
                     }
                     self.chrome_stale = true;
                 }
-                ChromeIntent::LibraryDelete => {
+            }
+            ChromeIntent::PlayerDelete => {
+                if self.player_select() {
                     let counter = self.next_media_counter();
                     if let Some(command) = self.library.delete_tapped(counter) {
                         fired.push(Intent::Send(command));
+                        // The clip is gone: back to the grid.
+                        fired.extend(self.close_player());
                     }
                     self.chrome_stale = true;
                 }
-                ChromeIntent::LibrarySource(local) => {
-                    self.library.local = local;
-                    self.library.selected = None;
-                    self.chrome_stale = true;
-                }
-                ChromeIntent::PlayerBack => fired.extend(self.close_player()),
-                ChromeIntent::PlayerToggle => fired.extend(self.player_toggle()),
-                ChromeIntent::PlayerInfo => {
-                    if let Some(player) = self.player.as_mut() {
-                        player.show_info = !player.show_info;
-                        self.chrome_stale = true;
-                    }
-                }
-                ChromeIntent::PlayerDownload => {
-                    if let Some(file) = self.player.as_ref().map(|p| p.file.clone()) {
-                        self.library.progress.insert(file.path.clone(), (0, None));
-                        fired.push(Intent::Media(MediaAction::Download(file)));
-                    }
-                }
-                ChromeIntent::PlayerScreenshot => fired.push(Intent::Still),
-                ChromeIntent::PlayerLut => fired.extend(self.act(Action::ToggleGrade, 0.0)),
-                ChromeIntent::PlayerZebra => fired.extend(self.act(Action::ToggleZebra, 0.0)),
-                ChromeIntent::PlayerPeaking => {
-                    fired.extend(self.act(Action::TogglePeaking, 0.0));
-                }
-                ChromeIntent::PlayerFavorite => {
-                    if self.player_select() {
-                        let counter = self.next_media_counter();
-                        if let Some(command) = self.library.toggle_favorite(counter) {
-                            fired.push(Intent::Send(command));
-                        }
-                        self.chrome_stale = true;
-                    }
-                }
-                ChromeIntent::PlayerDelete => {
-                    if self.player_select() {
-                        let counter = self.next_media_counter();
-                        if let Some(command) = self.library.delete_tapped(counter) {
-                            fired.push(Intent::Send(command));
-                            // The clip is gone: back to the grid.
-                            fired.extend(self.close_player());
-                        }
-                        self.chrome_stale = true;
-                    }
-                }
-                ChromeIntent::PlayerSeek(fraction) => {
-                    if let Some(player) = self.player.as_mut() {
-                        let position = (f64::from(fraction).clamp(0.0, 1.0)
-                            * player.duration_ms as f64)
-                            as i64;
-                        player.position_ms = position;
-                        self.chrome_stale = true;
-                        fired.push(Intent::Media(MediaAction::PlayerSeek(position)));
-                    }
-                }
-                ChromeIntent::FullscreenToggle => fired.push(Intent::ToggleFullscreen),
-                // Surfaces that do not exist on the desktop yet.
-                ChromeIntent::OrientationToggle => {}
             }
+            ChromeIntent::PlayerSeek(fraction) => {
+                if let Some(player) = self.player.as_mut() {
+                    let position =
+                        (f64::from(fraction).clamp(0.0, 1.0) * player.duration_ms as f64) as i64;
+                    player.position_ms = position;
+                    self.chrome_stale = true;
+                    fired.push(Intent::Media(MediaAction::PlayerSeek(position)));
+                }
+            }
+            ChromeIntent::FullscreenToggle => fired.push(Intent::ToggleFullscreen),
+            // Surfaces that do not exist on the desktop yet.
+            ChromeIntent::OrientationToggle => {}
         }
-        fired
     }
 
     // ── Screens ──────────────────────────────────────────────────────────────
@@ -1265,8 +2611,40 @@ impl Shell {
             proxy,
             is_photo,
             show_info: false,
+            capture_rate: 0.0,
+            conform_targets: Vec::new(),
+            conform: None,
         });
         self.chrome_stale = true;
+    }
+
+    /// What the clip could be conformed to, once the file has been read.
+    pub fn player_conform_targets(&mut self, capture_rate: f64, targets: Vec<f64>) {
+        if let Some(player) = self.player.as_mut() {
+            player.capture_rate = capture_rate;
+            player.conform_targets = targets;
+            player.conform = None;
+        }
+        self.chrome_stale = true;
+    }
+
+    /// Auto LUT for the clip on screen: the official cube for its shot colour, from
+    /// the LUT folder, when the operator dropped it there. The clip's own colour
+    /// wins; a proxy with no original on disk falls back to the body's live colour.
+    pub fn auto_lut(&mut self, clip_color: Option<u8>) {
+        let color = clip_color.or(self.hud.status.color_mode);
+        let Some(color) = color else {
+            return;
+        };
+        let Some(file) = luts::auto_lut_file(color, self.model_id) else {
+            return;
+        };
+        if self.lut_menu.custom.contains(&file) {
+            self.apply_pick(Pick::Lut(LutChoice::File(file)));
+            self.set_notice("AUTO LUT · OFFICIAL CUBE FOR THE CLIP");
+        } else {
+            self.set_notice("AUTO LUT · DROP THE OFFICIAL CUBE IN THE LUT FOLDER");
+        }
     }
 
     /// Frames across the clip for the filmstrip scrubber.
@@ -1457,6 +2835,17 @@ impl Shell {
         let mut intents = Vec::new();
         // Drain intents queued by Slint button callbacks.
         intents.append(&mut self.chrome_pending_intents);
+        // Ask the body about its subject on the phones' cadence.
+        if let Some(tracking) = self.tracking.as_mut() {
+            if now >= tracking.next_poll_at {
+                tracking.next_poll_at = now + TRACK_POLL_INTERVAL;
+                intents.push(Intent::Send(Command::TrackPoll));
+            }
+        }
+        if self.focus_marker.is_some_and(|(_, until)| now >= until) {
+            self.focus_marker = None;
+            self.chrome_stale = true;
+        }
         intents.extend(self.move_tick(now));
         if self.hud.countdown_fired(now) {
             self.hud.countdown = None;
@@ -1474,10 +2863,7 @@ impl Shell {
                 intents.extend(self.ramp_step(now));
             } else if held && now - self.stick_sent_at >= STICK_REPEAT {
                 self.stick_sent_at = now;
-                intents.push(Intent::Send(opc_ui::stick_command(
-                    self.ramp.x,
-                    self.ramp.y,
-                )));
+                intents.push(Intent::Send(self.stick_axes(self.ramp.x, self.ramp.y)));
             }
         } else if !self.stick.is_resting() && now - self.stick_sent_at >= STICK_REPEAT {
             self.stick_sent_at = now;
@@ -1523,7 +2909,13 @@ impl Shell {
             } else {
                 String::new()
             };
-            let grid_on = self.prefs.grid;
+            let overlays = self.overlays();
+            let assist_bar = self.assist_bar.then(|| self.assist_chips());
+            let format_label = self.format_label(now);
+            let notice = self.notice(now);
+            let (plates, plate_images) = self.plates();
+            let zoom_max = self.zoom_rules.max() as f32;
+            let zoom_stops: Vec<f32> = self.zoom_rules.stops().iter().map(|s| *s as f32).collect();
             let move_text = self.move_text(now);
             let screen = self.screen;
             let grid_width = self.window.0 as f32;
@@ -1539,6 +2931,9 @@ impl Shell {
                 .as_ref()
                 .map(|player| player.state(&self.library, self.toggles));
             let mut canvas = if let Some(cr) = self.chrome_renderer.as_mut() {
+                for (name, plate) in &plate_images {
+                    cr.set_plate(name, plate.width, plate.height, &plate.rgba);
+                }
                 let status = &self.hud.status;
                 let link_state = self.hud.connection_chip();
                 let zoom = self.controls.zoom();
@@ -1564,7 +2959,7 @@ impl Shell {
                     is_recording: status.is_recording,
                     rec_elapsed: status.elapsed_label(),
                     follow_on: self.gimbal_mode == GimbalMode::Follow,
-                    format_label: status.format_label(),
+                    format_label,
                     expo_label: match status.expo_mode {
                         Some(0x04) => "M".to_string(),
                         _ => "AUTO".to_string(),
@@ -1574,6 +2969,9 @@ impl Shell {
                     storage_text: status.remaining_label(),
                     zoom: zoom as f32,
                     zoom_label: format!("{:.1}×", zoom),
+                    zoom_max,
+                    zoom_stops,
+                    notice,
                     mode,
                     photo_mode: mode == 4,
                     controls_enabled,
@@ -1586,7 +2984,16 @@ impl Shell {
                     countdown: second,
                     fps_shown: self.hud.fps,
                     timecode,
-                    grid_on,
+                    overlays,
+                    assist_bar,
+                    plates,
+                    parts: ChromeParts {
+                        exposure: self.prefs.show_exposure,
+                        status: self.prefs.show_status,
+                        zoom: self.prefs.show_zoom,
+                        pad: self.prefs.show_pad,
+                        modes: self.prefs.show_modes,
+                    },
                     move_text,
                     sheet,
                     screen,
@@ -1600,21 +3007,51 @@ impl Shell {
             };
 
             // Draw tracking box on top.
+            let fit = self.hud.fit.unwrap_or(opc_ui::Fit {
+                x: 0.0,
+                y: 0.0,
+                width: f64::from(self.window.0),
+                height: f64::from(self.window.1),
+            });
             if let Some((x, y, bw, bh)) = self.hud.drag {
-                let fit = self.hud.fit.unwrap_or(opc_ui::Fit {
-                    x: 0.0,
-                    y: 0.0,
-                    width: f64::from(self.window.0),
-                    height: f64::from(self.window.1),
-                });
+                let box_x = (fit.x + x * fit.width) as i64;
+                let box_y = (fit.y + y * fit.height) as i64;
                 canvas.stroke(
-                    (fit.x + x * fit.width) as i64,
-                    (fit.y + y * fit.height) as i64,
+                    box_x,
+                    box_y,
                     (bw * fit.width) as u32,
                     (bh * fit.height) as u32,
                     2,
                     opc_ui::canvas::TRACKING,
                 );
+                if let Some(label) = self.tracking_label() {
+                    canvas.label(
+                        box_x + 3,
+                        (box_y - 13).max(fit.y as i64 + 3),
+                        label,
+                        1,
+                        opc_ui::canvas::TRACKING,
+                    );
+                }
+            }
+            // The tap-to-focus reticle: Mimo's bracketed square with the AE spot
+            // marked at its corner.
+            if let Some(((x, y), until)) = self.focus_marker {
+                if now < until {
+                    let cx = (fit.x + x * fit.width) as i64;
+                    let cy = (fit.y + y * fit.height) as i64;
+                    let half = 32;
+                    let arm = 12;
+                    for (sx, sy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+                        let corner_x = cx + sx * half;
+                        let corner_y = cy + sy * half;
+                        let hx = if sx < 0 { corner_x } else { corner_x - arm };
+                        let vy = if sy < 0 { corner_y } else { corner_y - arm };
+                        canvas.stroke(hx, corner_y - 1, arm as u32, 2, 2, RETICLE);
+                        canvas.stroke(corner_x - 1, vy, 2, arm as u32, 2, RETICLE);
+                    }
+                    canvas.circle(cx + half + 10, cy - half - 10, 5, RETICLE);
+                }
             }
 
             self.chrome = Some(Rgba {
@@ -1634,4 +3071,100 @@ impl Shell {
     pub fn chrome_visible(&self) -> bool {
         self.chrome_visible
     }
+}
+
+/// A box out with the body, and the polling that decides whether it took.
+#[derive(Debug, Clone, PartialEq)]
+struct TrackingState {
+    /// What was drawn and sent.
+    search: (f64, f64, f64, f64),
+    /// Where the body says the subject is, once it has said.
+    subject: Option<(f64, f64, f64, f64)>,
+    saw_lock: bool,
+    idle_ticks: u32,
+    next_poll_at: f64,
+}
+
+impl TrackingState {
+    fn new(search: (f64, f64, f64, f64), now: f64) -> Self {
+        Self {
+            search,
+            subject: None,
+            saw_lock: false,
+            idle_ticks: 0,
+            next_poll_at: now + TRACK_POLL_INTERVAL,
+        }
+    }
+}
+
+/// The body's name for a model id, from the core; a plain "camera" without it.
+#[cfg(opc_core_linked)]
+fn model_name(model_id: i32) -> String {
+    // Safety: probing with a null destination only reports the size needed.
+    let needed = unsafe { opc_core_sys::opc_model_name(model_id, std::ptr::null_mut(), 0) };
+    if needed <= 0 {
+        return "camera".to_string();
+    }
+    let mut bytes = vec![0u8; needed as usize];
+    // Safety: `bytes` has exactly the capacity the core asked for.
+    let written =
+        unsafe { opc_core_sys::opc_model_name(model_id, bytes.as_mut_ptr(), bytes.len()) };
+    if written != needed {
+        return "camera".to_string();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[cfg(not(opc_core_linked))]
+fn model_name(model_id: i32) -> String {
+    if model_id < 0 {
+        "camera".to_string()
+    } else {
+        format!("camera 0x{model_id:02X}")
+    }
+}
+
+/// An analog stick onto the gimbal axes with the phones' curve and sensitivity ticks.
+/// The Pocket 3's desktop UDP control direction is opposite to the on-screen and
+/// controller coordinate system: right/up must therefore be negated at this desktop
+/// boundary before the portable mapping encodes tilt/pan. Without the core, a plain
+/// scaled throw stands in.
+#[cfg(opc_core_linked)]
+fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
+    let mut out = [0_i32; 2];
+    // Safety: `out` has the two slots the core writes.
+    let status = unsafe {
+        opc_core_sys::opc_gimbal_stick_axes(-x, -y, i32::from(sensitivity), out.as_mut_ptr())
+    };
+    if status != opc_core_sys::OPC_RELAY_OK {
+        return opc_ui::stick_command(x, y);
+    }
+    Command::GimbalStick {
+        axis0: u16::try_from(out[0]).unwrap_or(opc_ui::STICK_CENTRE),
+        axis1: u16::try_from(out[1]).unwrap_or(opc_ui::STICK_CENTRE),
+    }
+}
+
+#[cfg(not(opc_core_linked))]
+fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
+    let gain = f64::from(sensitivity.clamp(1, 5)) / 4.0;
+    opc_ui::stick_command((-x * gain).clamp(-1.0, 1.0), (-y * gain).clamp(-1.0, 1.0))
+}
+
+/// Hold-to-zoom on the triggers at the phones' rate; three stops a second without the core.
+#[cfg(opc_core_linked)]
+fn zoom_trigger_step(current: f64, left: f64, right: f64, dt: f64, max: f64) -> f64 {
+    // Safety: plain values in.
+    unsafe { opc_core_sys::opc_zoom_trigger_step(current, left, right, dt, max) }
+}
+
+#[cfg(not(opc_core_linked))]
+fn zoom_trigger_step(current: f64, left: f64, right: f64, dt: f64, max: f64) -> f64 {
+    let axis = right.clamp(0.0, 1.0) - left.clamp(0.0, 1.0);
+    let throw = if axis.abs() < PAD_REST {
+        0.0
+    } else {
+        axis.signum() * (axis.abs() - PAD_REST) / (1.0 - PAD_REST)
+    };
+    (current + throw * 3.0 * dt).clamp(1.0, max.max(1.0))
 }

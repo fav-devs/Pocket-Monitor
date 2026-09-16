@@ -151,6 +151,7 @@ component TopBar {
     in property <string> rec-elapsed;
     in property <string> timecode;
     in property <string> move-text;
+    in property <string> notice;
     in property <bool>   enabled;
 
     callback menu-tapped();
@@ -158,6 +159,8 @@ component TopBar {
     callback format-tapped();
     callback expo-tapped();
     callback exit-tapped();
+    callback assist-tapped();
+    in property <bool> assist-open;
 
     height: 56px;
 
@@ -196,6 +199,13 @@ component TopBar {
             key: "E";
             enabled: root.enabled;
             tapped => { root.expo-tapped(); }
+        }
+        IconButton {
+            icon: @image-url("../assets/icons/adjustments.svg");
+            label: "ASSIST";
+            key: "A";
+            tint: root.assist-open ? Pal.accent : Pal.ink;
+            tapped => { root.assist-tapped(); }
         }
     }
 
@@ -240,6 +250,26 @@ component TopBar {
                 mt := Text {
                     text: root.move-text;
                     color: Pal.accent;
+                    font-family: Pal.font;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 0.8px;
+                    x: (parent.width - self.preferred-width) / 2;
+                    y: (parent.height - self.preferred-height) / 2;
+                }
+            }
+
+            if root.move-text == "" && root.notice != "": Rectangle {
+                height: 28px;
+                width: nt.preferred-width + 24px;
+                y: (parent.height - self.height) / 2;
+                background: #ffffff14;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: #ffffff2e;
+                nt := Text {
+                    text: root.notice;
+                    color: Pal.ink-dim;
                     font-family: Pal.font;
                     font-size: 12px;
                     font-weight: 700;
@@ -307,6 +337,8 @@ component ZoomDial {
     in property <float> maximum: 6.0;
     in property <string> label;
     in property <bool> enabled: true;
+    /// The body's chip stops, marked under the ruler.
+    in property <[float]> stops: [];
     callback changed(float);
 
     width: 360px;
@@ -332,6 +364,18 @@ component ZoomDial {
         background: Pal.ink;
         opacity: 1.0 - min(1.0, abs((self.px - root.centre) / (root.width / 2 - 8px)));
         visible: abs((self.px - root.centre) / 1px) > 26 && self.px > 0 && self.px < root.width;
+    }
+
+    for stop in root.stops: Text {
+        property <length> px: root.centre + root.ruler-w * ((stop - root.minimum) / max(0.001, root.maximum - root.minimum) - root.pct);
+        text: stop == floor(stop) ? floor(stop) + "×" : stop + "×";
+        color: Pal.ink-dim;
+        font-family: Pal.font;
+        font-size: 9px;
+        font-weight: 600;
+        x: self.px - self.preferred-width / 2;
+        y: 32px;
+        visible: self.px > 8px && self.px < root.width - 8px && abs((self.px - root.centre) / 1px) > 26;
     }
 
     Rectangle {
@@ -663,6 +707,8 @@ component BottomBar {
     in property <bool> is-recording;
     in property <bool> photo-mode;
     in property <bool> enabled;
+    in property <bool> show-pad: true;
+    in property <bool> show-modes: true;
     in property <[string]> modes;
     in property <[bool]> modes-available;
     in property <int> mode-selected;
@@ -718,7 +764,8 @@ component BottomBar {
         Rectangle { width: 8px; }
         GimbalPad {
             y: 0;
-            enabled: root.enabled;
+            visible: root.show-pad;
+            enabled: root.enabled && root.show-pad;
             gimbal-moved(x, y) => { root.gimbal-moved(x, y); }
             gimbal-released => { root.gimbal-released(); }
         }
@@ -779,6 +826,7 @@ component BottomBar {
         x: 0;
         y: parent.height - self.height - 6px;
         width: parent.width;
+        visible: root.show-modes;
         modes: root.modes;
         available: root.modes-available;
         selected: root.mode-selected;
@@ -824,6 +872,220 @@ export struct SheetRow {
     options: [string],
     selected: int,
     enabled: bool,
+    /// Per-chip lit flags for rows where more than one chip may be on; empty otherwise.
+    lit: [bool],
+}
+
+// ── Assist toolbar ────────────────────────────────────────────────────────────
+// The phones' fifteen-tool strip, parked under the top bar. A tap toggles the tool;
+// a long press or a right click opens its options.
+
+export struct AssistChipView {
+    label: string,
+    on: bool,
+    available: bool,
+    group: int,
+}
+
+export struct GuideRect {
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+}
+
+export struct LegendChip {
+    label: string,
+    color: color,
+}
+
+component AssistChipButton {
+    in property <AssistChipView> chip;
+    callback tapped();
+    callback configure();
+    property <bool> long: false;
+
+    width: 72px;
+    height: 32px;
+    opacity: root.chip.available ? 1.0 : 0.35;
+
+    Rectangle {
+        border-radius: 8px;
+        background: root.chip.on ? Pal.accent : (ta.has-hover ? #ffffff1f : #ffffff14);
+        border-width: 1px;
+        border-color: root.chip.on ? Pal.accent : #ffffff2e;
+    }
+    Text {
+        text: root.chip.label;
+        color: root.chip.on ? #000000 : Pal.ink;
+        font-family: Pal.font;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        x: (parent.width - self.preferred-width) / 2;
+        y: (parent.height - self.preferred-height) / 2;
+    }
+    ta := TouchArea {
+        enabled: root.chip.available;
+        changed pressed => { if self.pressed { root.long = false; } }
+        clicked => { if !root.long { root.tapped(); } }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.long = true;
+                root.configure();
+            }
+        }
+    }
+    Timer {
+        interval: 450ms;
+        running: ta.pressed && !root.long;
+        triggered => { root.long = true; root.configure(); }
+    }
+}
+
+// ── Scope plates ──────────────────────────────────────────────────────────────
+// Movable plates over the picture: a rasterised scope, the ND chip, or the audio
+// meters. A drag anywhere on the plate moves it; the shell keeps where it went.
+
+export struct PlateView {
+    tool: int,
+    title: string,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    image: image,
+    has-image: bool,
+    /// 0 image, 1 text chip, 2 audio meters.
+    kind: int,
+    text: string,
+    left: float,
+    right: float,
+    left-peak: float,
+    right-peak: float,
+}
+
+component ScopePlate {
+    in property <PlateView> plate;
+    callback moved(length, length);
+
+    x: root.plate.x;
+    y: root.plate.y;
+    width: root.plate.w;
+    height: root.plate.h;
+
+    if root.plate.kind == 0: Rectangle {
+        border-radius: 8px;
+        clip: true;
+        background: #06090899;
+        Image {
+            x: 0; y: 0;
+            width: parent.width; height: parent.height;
+            source: root.plate.image;
+            image-rendering: pixelated;
+            visible: root.plate.has-image;
+        }
+        Text {
+            text: root.plate.title;
+            color: Pal.ink-dim;
+            font-family: Pal.font;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            x: 8px;
+            y: 7px;
+        }
+    }
+    if root.plate.kind == 1: Rectangle {
+        border-radius: 8px;
+        background: #000000b3;
+        border-width: 1px;
+        border-color: #ffffff1f;
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 6px;
+            alignment: center;
+            Text {
+                text: root.plate.title;
+                color: Pal.ink-dim;
+                font-family: Pal.font;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.plate.text;
+                color: Pal.ink;
+                font-family: Pal.font;
+                font-size: 13px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+    }
+    if root.plate.kind == 2: Rectangle {
+        border-radius: 6px;
+        background: #000000b3;
+        border-width: 1px;
+        border-color: #ffffff1f;
+        // Two bars, green to yellow at -18 dBFS to red at -6, with the peak tick.
+        for channel[i] in [root.plate.left, root.plate.right]: Rectangle {
+            x: 5px + i * 10px;
+            y: 6px;
+            width: 8px;
+            height: parent.height - 12px;
+            background: #ffffff14;
+            border-radius: 2px;
+            Rectangle {
+                x: 0;
+                y: parent.height * (1 - channel);
+                width: parent.width;
+                height: parent.height * channel;
+                border-radius: 2px;
+                background: channel > 0.9 ? Pal.rec : (channel > 0.7 ? Pal.warn : Pal.online);
+            }
+        }
+        for peak[i] in [root.plate.left-peak, root.plate.right-peak]: Rectangle {
+            x: 5px + i * 10px;
+            y: 6px + (parent.height - 12px) * (1 - peak) - 1px;
+            width: 8px;
+            height: 2px;
+            background: Pal.ink;
+        }
+    }
+    ta := TouchArea {
+        moved => {
+            if self.pressed {
+                root.moved(root.x + self.mouse-x - self.pressed-x, root.y + self.mouse-y - self.pressed-y);
+            }
+        }
+    }
+}
+
+component AssistBar {
+    in property <[AssistChipView]> chips;
+    callback tapped(int);
+    callback configure(int);
+
+    height: 44px;
+    Rectangle { background: #000000b3; }
+    Rectangle { y: parent.height - 1px; height: 1px; width: parent.width; background: #ffffff14; }
+
+    Flickable {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        viewport-width: max(parent.width, 24px + root.chips.length * 76px + 6 * 12px);
+        viewport-height: parent.height;
+        for chip[i] in root.chips: AssistChipButton {
+            x: 12px + i * 76px + chip.group * 12px;
+            y: 6px;
+            chip: chip;
+            tapped => { root.tapped(i); }
+            configure => { root.configure(i); }
+        }
+    }
 }
 
 component Chip {
@@ -876,8 +1138,9 @@ component SheetPanel {
         border-color: #ffffff1f;
     }
 
-    // Header: title, tabs, close.
-    Text {
+    // Header: title, tabs, close. The tabs sit centred until there are enough of them
+    // to reach the title, then they start after it.
+    sheet-title := Text {
         text: root.title;
         color: Pal.ink;
         font-family: Pal.font;
@@ -890,16 +1153,16 @@ component SheetPanel {
     Rectangle {
         width: tab-row.preferred-width;
         height: root.head-h;
-        x: (parent.width - self.width) / 2;
+        x: max((parent.width - self.width) / 2, sheet-title.x + sheet-title.preferred-width + 20px);
         y: 0;
         tab-row := HorizontalLayout {
             x: 0;
             y: 0;
             height: root.head-h;
-            spacing: 4px;
+            spacing: 2px;
             alignment: center;
             for name[i] in root.tabs: Rectangle {
-                width: tt.preferred-width + 28px;
+                width: tt.preferred-width + 22px;
                 height: 32px;
                 y: (root.head-h - self.height) / 2;
                 border-radius: 8px;
@@ -914,7 +1177,16 @@ component SheetPanel {
                     x: (parent.width - self.preferred-width) / 2;
                     y: (parent.height - self.preferred-height) / 2;
                 }
-                TouchArea { clicked => { root.tab-picked(i); } }
+                // The host forwards pointer input through its own control router.
+                // Commit the tab on press, not release: a release can be consumed by
+                // a resize/focus transition while the live HUD is presenting.
+                TouchArea {
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down {
+                            root.tab-picked(i);
+                        }
+                    }
+                }
             }
         }
     }
@@ -958,7 +1230,7 @@ component SheetPanel {
                 alignment: start;
                 for opt[j] in row.options: Chip {
                     text: opt;
-                    selected: j == row.selected;
+                    selected: j == row.selected || (j < row.lit.length && row.lit[j]);
                     enabled: row.enabled;
                     tapped => { root.picked(i, j); }
                 }
@@ -985,6 +1257,9 @@ export struct MediaCell {
     starred: bool,
     cached: bool,
     selected: bool,
+    checked: bool,
+    /// A folded burst: how many members the tile stands for.
+    burst: int,
 }
 
 export struct MediaSelection {
@@ -998,6 +1273,8 @@ export struct MediaSelection {
     /// -1 when nothing is transferring, else 0…1.
     progress: float,
     note: string,
+    burst: int,
+    expanded: bool,
 }
 
 component Pill {
@@ -1076,8 +1353,14 @@ component LibraryPage {
     in property <length> cell-h;
     in property <MediaSelection> selection;
     in property <bool> has-selection;
+    in property <bool> selecting;
+    in property <int> checked-count;
+    in property <bool> batch-armed;
 
     callback back();
+    callback select-mode();
+    callback delete-checked();
+    callback burst();
     callback source-tapped(bool);
     callback tab-picked(int);
     callback sort-tapped();
@@ -1140,6 +1423,12 @@ component LibraryPage {
                 alignment: center;
                 TextButton {
                     y: 8px;
+                    text: root.selecting ? "Done" : "Select";
+                    accent: root.selecting;
+                    tapped => { root.select-mode(); }
+                }
+                TextButton {
+                    y: 8px;
                     text: root.sort-label;
                     tapped => { root.sort-tapped(); }
                 }
@@ -1199,6 +1488,32 @@ component LibraryPage {
                 colorize: Pal.accent;
                 width: 18px; height: 18px; x: parent.width - self.width - 10px; y: 10px;
             }
+            // A folded burst: how many frames are under this tile, top right beside the star.
+            if !cell.header && cell.burst > 1: Rectangle {
+                x: parent.width - self.width - (cell.starred ? 34px : 10px); y: 9px;
+                width: bt.preferred-width + 14px; height: 20px;
+                border-radius: 10px; background: #000000b3;
+                bt := Text {
+                    text: "×" + cell.burst;
+                    color: Pal.ink; font-family: Pal.font; font-size: 11px; font-weight: 700;
+                    x: (parent.width - self.preferred-width) / 2;
+                    y: (parent.height - self.preferred-height) / 2;
+                }
+            }
+            // Select mode: a check circle on every tile.
+            if !cell.header && root.selecting: Rectangle {
+                x: parent.width - self.width - 10px; y: parent.height - self.height - 10px;
+                width: 24px; height: 24px; border-radius: 12px;
+                background: cell.checked ? Pal.accent : #00000099;
+                border-width: 2px;
+                border-color: cell.checked ? Pal.accent : Pal.ink;
+                if cell.checked: Image {
+                    source: @image-url("../assets/icons/check.svg");
+                    colorize: #000000;
+                    width: 16px; height: 16px;
+                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                }
+            }
             if !cell.header && cell.is-video: HorizontalLayout {
                 x: 10px; y: parent.height - 30px; height: 20px;
                 spacing: 6px;
@@ -1226,14 +1541,38 @@ component LibraryPage {
         height: root.foot-h;
         background: #0a0a0a;
 
-        if !root.has-selection: Text {
+        if root.selecting: Text {
+            text: root.checked-count + " selected";
+            color: Pal.ink;
+            font-family: Pal.font; font-size: 15px; font-weight: 700;
+            x: root.inset; y: (parent.height - self.preferred-height) / 2;
+        }
+        if root.selecting: Rectangle {
+            width: batch.preferred-width;
+            height: parent.height;
+            x: parent.width - self.width - root.inset;
+            batch := HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+                TextButton {
+                    y: (root.foot-h - self.height) / 2;
+                    text: root.batch-armed ? "Confirm delete " + root.checked-count : "Delete selected";
+                    icon: @image-url("../assets/icons/trash.svg");
+                    danger: true;
+                    enabled: root.checked-count > 0;
+                    tapped => { root.delete-checked(); }
+                }
+            }
+        }
+
+        if !root.has-selection && !root.selecting: Text {
             text: root.status;
             color: #8a8a8a;
             font-family: Pal.font; font-size: 13px; font-weight: 600;
             x: root.inset; y: (parent.height - self.preferred-height) / 2;
         }
 
-        if root.has-selection: VerticalLayout {
+        if root.has-selection && !root.selecting: VerticalLayout {
             x: root.inset; y: 0; height: parent.height;
             width: parent.width * 0.42;
             alignment: center;
@@ -1259,13 +1598,18 @@ component LibraryPage {
             }
         }
 
-        if root.has-selection: Rectangle {
+        if root.has-selection && !root.selecting: Rectangle {
             width: actions.preferred-width;
             height: parent.height;
             x: parent.width - self.width - root.inset;
             actions := HorizontalLayout {
                 spacing: 8px;
                 alignment: center;
+                if root.selection.burst > 0 || root.selection.expanded: TextButton {
+                    y: (root.foot-h - self.height) / 2;
+                    text: root.selection.expanded ? "Fold burst" : "Expand ×" + root.selection.burst;
+                    tapped => { root.burst(); }
+                }
                 TextButton {
                     y: (root.foot-h - self.height) / 2;
                     text: root.selection.is-video ? "Play" : "View";
@@ -1321,12 +1665,17 @@ export struct PlayerView {
     peaking-on: bool,
     /// A still: no transport, the picture is the whole screen.
     is-photo: bool,
+    /// The conform preview chip.
+    conform-label: string,
+    conform-on: bool,
+    conform-available: bool,
 }
 
 component Tool {
     in property <image> icon;
     in property <string> text;
     in property <bool> on;
+    in property <bool> enabled: true;
     callback tapped();
     width: 96px;
     height: 72px;
@@ -1362,6 +1711,7 @@ component PlayerPage {
     callback lut();
     callback zebra();
     callback peaking();
+    callback conform();
     callback favorite();
     callback delete();
 
@@ -1489,6 +1839,7 @@ component PlayerPage {
                 Tool { icon: @image-url("../assets/icons/contrast-2.svg"); text: "LUT"; on: root.view.lut-on; tapped => { root.lut(); } }
                 Tool { icon: @image-url("../assets/icons/wave-sine.svg"); text: "Zebra"; on: root.view.zebra-on; tapped => { root.zebra(); } }
                 Tool { icon: @image-url("../assets/icons/aperture.svg"); text: "Peaking"; on: root.view.peaking-on; tapped => { root.peaking(); } }
+                Tool { icon: @image-url("../assets/icons/player-play.svg"); text: root.view.conform-label; on: root.view.conform-on; enabled: root.view.conform-available; tapped => { root.conform(); } }
             }
         }
 
@@ -1572,8 +1923,27 @@ export component HudOverlay inherits Window {
     in property <string> fps-text: "";
     /// The body's timecode, shown in the top bar when the operator asks for it.
     in property <string> timecode: "";
-    /// Rule-of-thirds lines over the picture.
-    in property <bool> grid-on: false;
+    // Overlays on the picture: the grid, guide frames, the crosshair and the false
+    // colour key. The shell decides what is on; the geometry is the fitted picture's.
+    in property <bool> grid-thirds: false;
+    in property <bool> grid-phi: false;
+    in property <bool> grid-diagonal: false;
+    in property <[GuideRect]> guides: [];
+    in property <bool> guide-mask: false;
+    /// The union of the guide frames, for the mask around them.
+    in property <GuideRect> guide-box;
+    in property <bool> crosshair: false;
+    in property <[LegendChip]> legend: [];
+    /// The assist toolbar under the top bar.
+    in property <bool> assist-open: false;
+    in property <[AssistChipView]> assist-chips: [];
+    in property <[PlateView]> plates: [];
+    // The phones' DISP toggles: which parts of the chrome are drawn.
+    in property <bool> show-exposure: true;
+    in property <bool> show-status: true;
+    in property <bool> show-zoom: true;
+    in property <bool> show-pad: true;
+    in property <bool> show-modes: true;
     /// A programmed move's readout, shown in the top bar while a take runs.
     in property <string> move-text: "";
 
@@ -1590,6 +1960,9 @@ export component HudOverlay inherits Window {
     in property <length> library-cell-h: 124px;
     in property <MediaSelection> library-selection;
     in property <bool> library-has-selection: false;
+    in property <bool> library-selecting: false;
+    in property <int> library-checked-count: 0;
+    in property <bool> library-batch-armed: false;
     in property <PlayerView> player;
     in property <[image]> player-strip: [];
 
@@ -1603,6 +1976,10 @@ export component HudOverlay inherits Window {
     // Zoom.
     in-out property <float> zoom-value: 1.0;
     in property <string>    zoom-label: "1.0×";
+    in property <float>     zoom-max: 6.0;
+    in property <[float]>   zoom-stops: [];
+    /// A line for the operator in the top bar (a refused zoom, a SET nobody answered).
+    in property <string>    notice: "";
 
     // Modes. Pano and Livestream are shown but unavailable.
     in property <[string]> modes: ["TIMELAPSE", "SLOWMOTION", "LOW-LIGHT", "VIDEO", "PHOTO", "PANO", "LIVESTREAM"];
@@ -1647,6 +2024,10 @@ export component HudOverlay inherits Window {
     callback library-favorite();
     callback library-delete();
     callback library-source-tapped(bool);
+    callback library-select-mode();
+    callback library-delete-checked();
+    callback library-burst();
+    callback player-conform();
     callback player-back();
     callback player-toggle();
     callback player-seek(float);
@@ -1658,6 +2039,10 @@ export component HudOverlay inherits Window {
     callback player-peaking();
     callback player-favorite();
     callback player-delete();
+    callback assist-bar-tapped();
+    callback assist-tapped(int);
+    callback assist-configure(int);
+    callback plate-moved(int, length, length);
 
     background: transparent;
 
@@ -1668,19 +2053,102 @@ export component HudOverlay inherits Window {
     property <length> mid-bottom: min(root.height - root.bottom-h, root.fit-y + root.fit-height);
     property <length> left-gutter: root.fit-x;
     property <length> right-gutter: root.width - root.fit-x - root.fit-width;
+    property <length> bar-h: root.assist-open ? 44px : 0;
+    property <color> grid-ink: #ffffff59;
+    property <int> diagonal-dots: 64;
 
-    if root.screen == 0 && root.grid-on: Rectangle {
+    // The grid: thirds, the phi grid, and dotted diagonals (the software renderer has no
+    // slanted line, so the diagonals are beads).
+    if root.screen == 0 && root.grid-thirds: Rectangle {
         x: root.fit-x; y: root.fit-y; width: root.fit-width; height: root.fit-height;
-        Rectangle { x: parent.width / 3; width: 1px; height: parent.height; background: #ffffff59; }
-        Rectangle { x: parent.width * 2 / 3; width: 1px; height: parent.height; background: #ffffff59; }
-        Rectangle { y: parent.height / 3; height: 1px; width: parent.width; background: #ffffff59; }
-        Rectangle { y: parent.height * 2 / 3; height: 1px; width: parent.width; background: #ffffff59; }
+        Rectangle { x: parent.width / 3; width: 1px; height: parent.height; background: root.grid-ink; }
+        Rectangle { x: parent.width * 2 / 3; width: 1px; height: parent.height; background: root.grid-ink; }
+        Rectangle { y: parent.height / 3; height: 1px; width: parent.width; background: root.grid-ink; }
+        Rectangle { y: parent.height * 2 / 3; height: 1px; width: parent.width; background: root.grid-ink; }
+    }
+    if root.screen == 0 && root.grid-phi: Rectangle {
+        x: root.fit-x; y: root.fit-y; width: root.fit-width; height: root.fit-height;
+        Rectangle { x: parent.width * 0.382; width: 1px; height: parent.height; background: root.grid-ink; }
+        Rectangle { x: parent.width * 0.618; width: 1px; height: parent.height; background: root.grid-ink; }
+        Rectangle { y: parent.height * 0.382; height: 1px; width: parent.width; background: root.grid-ink; }
+        Rectangle { y: parent.height * 0.618; height: 1px; width: parent.width; background: root.grid-ink; }
+    }
+    if root.screen == 0 && root.grid-diagonal: Rectangle {
+        x: root.fit-x; y: root.fit-y; width: root.fit-width; height: root.fit-height;
+        for i in root.diagonal-dots: Rectangle {
+            x: parent.width * (i + 0.5) / root.diagonal-dots - 1px;
+            y: parent.height * (i + 0.5) / root.diagonal-dots - 1px;
+            width: 2px; height: 2px; border-radius: 1px;
+            background: root.grid-ink;
+        }
+        for i in root.diagonal-dots: Rectangle {
+            x: parent.width * (i + 0.5) / root.diagonal-dots - 1px;
+            y: parent.height - parent.height * (i + 0.5) / root.diagonal-dots - 1px;
+            width: 2px; height: 2px; border-radius: 1px;
+            background: root.grid-ink;
+        }
+    }
+
+    // Guides: aspect frames centred on the picture, and a mask around their union.
+    if root.screen == 0 && root.guide-mask && root.guides.length > 0: Rectangle {
+        x: root.fit-x; y: root.fit-y; width: root.fit-width; height: root.fit-height;
+        Rectangle { x: 0; y: 0; width: parent.width; height: root.guide-box.y - root.fit-y; background: #00000099; }
+        Rectangle { x: 0; y: root.guide-box.y - root.fit-y + root.guide-box.h; width: parent.width; height: parent.height - self.y; background: #00000099; }
+        Rectangle { x: 0; y: root.guide-box.y - root.fit-y; width: root.guide-box.x - root.fit-x; height: root.guide-box.h; background: #00000099; }
+        Rectangle { x: root.guide-box.x - root.fit-x + root.guide-box.w; y: root.guide-box.y - root.fit-y; width: parent.width - self.x; height: root.guide-box.h; background: #00000099; }
+    }
+    if root.screen == 0: Rectangle {
+        x: 0; y: 0; width: parent.width; height: parent.height;
+        for g in root.guides: Rectangle {
+            x: g.x; y: g.y; width: g.w; height: g.h;
+            border-width: 1px;
+            border-color: #ffffffb3;
+            background: transparent;
+        }
+    }
+
+    // The centre crosshair: a 40 px cross, 1.4 px stroke, white at 65%.
+    if root.screen == 0 && root.crosshair: Rectangle {
+        x: root.fit-x + root.fit-width / 2 - 20px;
+        y: root.fit-y + root.fit-height / 2 - 20px;
+        width: 40px; height: 40px;
+        Rectangle { x: 19.3px; y: 0; width: 1.4px; height: 40px; background: #ffffffa6; }
+        Rectangle { x: 0; y: 19.3px; width: 40px; height: 1.4px; background: #ffffffa6; }
+    }
+
+    // The false colour key: one swatch per zone, darkest first, above the bottom bar.
+    if root.screen == 0 && root.legend.length > 0: Rectangle {
+        width: 16px + root.legend.length * 34px;
+        height: 52px;
+        x: root.fit-x + (root.fit-width - self.width) / 2;
+        y: root.mid-bottom - self.height - 12px;
+        background: #000000b3;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: #ffffff1f;
+        for chip[i] in root.legend: Rectangle {
+            x: 8px + i * 34px;
+            y: 6px;
+            width: 30px;
+            height: 40px;
+            Rectangle { x: 0; y: 0; width: 30px; height: 18px; border-radius: 3px; background: chip.color; }
+            Text {
+                text: chip.label;
+                color: Pal.ink-dim;
+                font-family: Pal.font;
+                font-size: 8px;
+                font-weight: 600;
+                x: (parent.width - self.preferred-width) / 2;
+                y: 22px;
+            }
+        }
     }
 
     if root.screen == 0: TopBar {
         x: 0; y: 0; width: parent.width;
         timecode: root.timecode;
         move-text: root.move-text;
+        notice: root.notice;
         follow-label: root.follow-label;
         format-label: root.format-label;
         expo-label: root.expo-label;
@@ -1688,23 +2156,34 @@ export component HudOverlay inherits Window {
         is-recording: root.is-recording;
         rec-elapsed: root.rec-elapsed;
         enabled: root.controls-enabled;
+        assist-open: root.assist-open;
         menu-tapped => { root.menu-tapped(); }
         follow-tapped => { root.follow-tapped(); }
         format-tapped => { root.format-tapped(); }
         expo-tapped => { root.expo-tapped(); }
         exit-tapped => { root.exit-tapped(); }
+        assist-tapped => { root.assist-bar-tapped(); }
     }
 
-    if root.screen == 0: ZoomDial {
+    if root.screen == 0 && root.assist-open: AssistBar {
+        x: 0; y: root.top-h; width: parent.width;
+        chips: root.assist-chips;
+        tapped(i) => { root.assist-tapped(i); }
+        configure(i) => { root.assist-configure(i); }
+    }
+
+    if root.screen == 0 && root.show-zoom: ZoomDial {
         x: root.fit-x + (root.fit-width - self.width) / 2;
-        y: root.mid-top + 10px;
+        y: root.mid-top + root.bar-h + 10px;
         value <=> root.zoom-value;
         label: root.zoom-label;
-        enabled: root.controls-enabled;
+        maximum: root.zoom-max;
+        stops: root.zoom-stops;
+        enabled: root.controls-enabled && root.zoom-max > 1.0;
         changed(v) => { root.zoom-changed(v); }
     }
 
-    if root.screen == 0: ExposureColumn {
+    if root.screen == 0 && root.show-exposure: ExposureColumn {
         // Park in the left gutter when there is one wide enough, else over the picture edge.
         x: root.left-gutter >= self.width + 24px ? (root.left-gutter - self.width) / 2 : root.fit-x + 16px;
         y: root.mid-top + (root.mid-bottom - root.mid-top - self.height) / 2;
@@ -1714,7 +2193,7 @@ export component HudOverlay inherits Window {
         wb: root.wb;
     }
 
-    if root.screen == 0: StatusColumn {
+    if root.screen == 0 && root.show-status: StatusColumn {
         x: root.right-gutter >= self.width + 24px
             ? root.width - root.right-gutter + (root.right-gutter - self.width) / 2
             : root.fit-x + root.fit-width - self.width - 16px;
@@ -1730,6 +2209,8 @@ export component HudOverlay inherits Window {
         x: 0; y: parent.height - self.height; width: parent.width;
         is-recording: root.is-recording;
         photo-mode: root.photo-mode;
+        show-pad: root.show-pad;
+        show-modes: root.show-modes;
         enabled: root.controls-enabled;
         modes: root.modes;
         modes-available: root.modes-available;
@@ -1745,6 +2226,14 @@ export component HudOverlay inherits Window {
         mode-selected-changed(i) => { root.mode-selected-changed(i); }
         gimbal-moved(x, y) => { root.gimbal-moved(x, y); }
         gimbal-released => { root.gimbal-released(); }
+    }
+
+    if root.screen == 0: Rectangle {
+        x: 0; y: 0; width: parent.width; height: parent.height;
+        for plate in root.plates: ScopePlate {
+            plate: plate;
+            moved(nx, ny) => { root.plate-moved(plate.tool, nx, ny); }
+        }
     }
 
     if root.screen == 0 && root.countdown != "": CountdownPanel {
@@ -1793,6 +2282,12 @@ export component HudOverlay inherits Window {
         has-selection: root.library-has-selection;
         back => { root.library-back(); }
         source-tapped(local) => { root.library-source-tapped(local); }
+        select-mode => { root.library-select-mode(); }
+        delete-checked => { root.library-delete-checked(); }
+        burst => { root.library-burst(); }
+        selecting: root.library-selecting;
+        checked-count: root.library-checked-count;
+        batch-armed: root.library-batch-armed;
         tab-picked(i) => { root.library-tab-picked(i); }
         sort-tapped => { root.library-sort-tapped(); }
         refresh => { root.library-refresh(); }
@@ -1816,6 +2311,7 @@ export component HudOverlay inherits Window {
         lut => { root.player-lut(); }
         zebra => { root.player-zebra(); }
         peaking => { root.player-peaking(); }
+        conform => { root.player-conform(); }
         favorite => { root.player-favorite(); }
         delete => { root.player-delete(); }
     }

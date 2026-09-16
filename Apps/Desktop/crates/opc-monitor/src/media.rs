@@ -11,6 +11,8 @@ use opc_media::{
     catalog, Browse, BrowseEvent, BrowseStep, MediaCache, MediaFile, MediaJob, MediaReport,
     MediaWorker, ResumeAction, ResumePolicy,
 };
+use opc_monitor::library;
+use opc_monitor::luts;
 use opc_monitor::{MediaAction, Shell};
 
 /// Leaving playback: exit until the bit clears, then enable live view.
@@ -40,6 +42,8 @@ pub struct MediaDriver {
     /// Presentation time of the frame on screen, and the wall clock it was shown at.
     shown_ms: i64,
     shown_at: f64,
+    /// Playback rate: 1 is the clip's own, a conform preview slows it.
+    speed: f64,
     /// The next frame, decoded ahead of its time.
     next: Option<(OwnedPicture, i64)>,
     /// A clip the operator asked to play; the worker is fetching it.
@@ -150,6 +154,24 @@ impl MediaDriver {
                     exit_acked: false,
                 });
             }
+            MediaAction::CacheSize => {
+                let bytes = self
+                    .cache
+                    .as_ref()
+                    .map_or(0, |cache| folder_size(cache.root()));
+                shell.set_cache_size(bytes);
+            }
+            MediaAction::ClearCache => {
+                if let Some(cache) = &self.cache {
+                    let root = cache.root().to_path_buf();
+                    if let Err(error) = std::fs::remove_dir_all(&root) {
+                        eprintln!("could not clear the cache: {error}");
+                    }
+                    let _ = std::fs::create_dir_all(&root);
+                }
+                shell.set_cache_size(0);
+                shell.say("MEDIA CACHE CLEARED");
+            }
             MediaAction::Thumb(file) => {
                 if let Some(worker) = &self.worker {
                     worker.ask(MediaJob::Thumb(file));
@@ -185,6 +207,15 @@ impl MediaDriver {
                         }
                     }
                 }
+            }
+            MediaAction::Speed(speed) => {
+                // Re-anchor the clock so the rate change starts from the frame on screen.
+                self.shown_at = now;
+                self.speed = if speed.is_finite() && speed > 0.0 {
+                    speed
+                } else {
+                    1.0
+                };
             }
             MediaAction::PlayerSeek(position_ms) => {
                 self.seek(shell, position_ms);
@@ -269,8 +300,22 @@ impl MediaDriver {
                 self.reader = Some(reader);
                 self.playing = true;
                 self.shown_at = now;
+                self.speed = 1.0;
                 shell.library_file_ready(&file.path, proxy);
+                // The shot colour lives in the original's tail; a proxy is Rec.709
+                // whatever the take was.
+                let tail_color = self
+                    .cache
+                    .as_ref()
+                    .filter(|cache| cache.has_original(&file))
+                    .and_then(|cache| luts::read_tail(&cache.original_path(&file)))
+                    .and_then(|tail| luts::clip_color_mode(&tail));
+                let capture_rate = info.fps();
+                let listed = file.fps.map_or(0.0, |fps| fps as f64);
+                let targets = library::conform_targets(capture_rate, listed);
                 shell.open_player(file, info.duration_ms, proxy, false);
+                shell.player_conform_targets(capture_rate, targets);
+                shell.auto_lut(tail_color);
             }
             Err(error) => {
                 shell.library_failed(&file.path, &format!("cannot play: {error}"));
@@ -369,7 +414,8 @@ impl MediaDriver {
         // Playback pacing: show each frame when its time comes.
         if self.playing {
             if let Some(reader) = self.reader.as_mut() {
-                let target_ms = self.shown_ms + ((now - self.shown_at) * 1000.0) as i64;
+                let target_ms =
+                    self.shown_ms + ((now - self.shown_at) * 1000.0 * self.speed) as i64;
                 let mut ended = false;
                 while let Some((_, pts)) = &self.next {
                     if *pts > target_ms {
@@ -477,4 +523,26 @@ fn strip_frame(picture: &OwnedPicture) -> (u32, u32, Vec<u8>) {
         }
     }
     (width, height, rgba)
+}
+
+/// Every file under `root`, added up.
+fn folder_size(root: &std::path::Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(folder) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }

@@ -17,6 +17,9 @@ pub enum Command {
     SessionKeepalive,
     GimbalInit,
     AppPresence,
+    /// `0x00/0x81` registration record. Pocket 3 can expose status without video
+    /// until this precedes app presence and gimbal initialisation.
+    AppDeviceInfo,
     /// `0x09/0xa8`. Enable-once: the watchdog owns every repeat.
     LiveViewEnable,
     NanoLiveGate {
@@ -30,7 +33,10 @@ pub enum Command {
     SetShootingMode(u8),
 
     // Zoom.
+    /// A slider tick: coalesced, never retransmitted, pipelined at 20 Hz.
     ZoomFactor(f64),
+    /// A chip stop or a key: urgent, retransmitted, announced.
+    ZoomJump(f64),
     ZoomLens(u16),
     /// Continuous slew; pair with `ZoomStop`.
     ZoomSlew(u16),
@@ -63,6 +69,31 @@ pub enum Command {
     TrackPoll,
     FocusTrackSet(u8),
     FocusTrackGet,
+    /// Mimo's tap-to-focus burst, in order: `0x22` spot, `0x30` region, `0x68` hint,
+    /// `0x32` commit. `x` and `y` are picture fractions on the sensor.
+    TapFocusPrepare,
+    TapFocusPoint {
+        x: f32,
+        y: f32,
+    },
+    TapFocusHint,
+    TapFocusCommit {
+        x: f32,
+        y: f32,
+    },
+    /// `0x02/0xA0`: read the audio DSP blob. Wind and directional need it first.
+    AudioDspGet,
+    /// `0x02/0x9F`: the body's own blob with `@2` patched for wind noise reduction.
+    AudioWind {
+        on: bool,
+        blob: [u8; crate::status::AUDIO_DSP_BLOB],
+    },
+    /// `0x02/0x9F`: the blob with `@2` patched for directional audio (`0xDA` all,
+    /// `0x3A` front, `0xBA` front+back).
+    AudioDirectional {
+        mode: u8,
+        blob: [u8; crate::status::AUDIO_DSP_BLOB],
+    },
 
     // Exposure and look.
     SetIsoIndex(u8),
@@ -144,6 +175,7 @@ impl Command {
             Self::SessionKeepalive => (sys::OPC_CAM_SESSION_KEEPALIVE, vec![], vec![]),
             Self::GimbalInit => (sys::OPC_CAM_GIMBAL_INIT, vec![], vec![]),
             Self::AppPresence => (sys::OPC_CAM_APP_PRESENCE, vec![], vec![]),
+            Self::AppDeviceInfo => (sys::OPC_CAM_APP_DEVICE_INFO, vec![], vec![]),
             Self::LiveViewEnable => (sys::OPC_CAM_LIVE_VIEW_ENABLE, vec![], vec![]),
             Self::NanoLiveGate { start } => (
                 sys::OPC_CAM_NANO_LIVE_GATE,
@@ -160,7 +192,9 @@ impl Command {
                 vec![],
             ),
 
-            Self::ZoomFactor(factor) => (sys::OPC_CAM_ZOOM_FACTOR, vec![], vec![factor]),
+            Self::ZoomFactor(factor) | Self::ZoomJump(factor) => {
+                (sys::OPC_CAM_ZOOM_FACTOR, vec![], vec![factor])
+            }
             Self::ZoomLens(position) => {
                 (sys::OPC_CAM_ZOOM_LENS, ints(&[i32::from(position)]), vec![])
             }
@@ -211,6 +245,33 @@ impl Command {
                 vec![],
             ),
             Self::FocusTrackGet => (sys::OPC_CAM_FOCUS_TRACK_GET, vec![], vec![]),
+            Self::TapFocusPrepare => (sys::OPC_CAM_TAP_FOCUS_PREPARE, vec![], vec![]),
+            Self::TapFocusPoint { x, y } => (
+                sys::OPC_CAM_TAP_FOCUS_POINT,
+                vec![],
+                vec![f64::from(x), f64::from(y)],
+            ),
+            Self::TapFocusHint => (sys::OPC_CAM_TAP_FOCUS_HINT, vec![], vec![]),
+            Self::AudioDspGet => (sys::OPC_CAM_AUDIO_DSP_GET, vec![], vec![]),
+            Self::AudioWind { on, blob } => (
+                sys::OPC_CAM_AUDIO_WIND,
+                std::iter::once(i32::from(on))
+                    .chain(blob.iter().map(|byte| i32::from(*byte)))
+                    .collect(),
+                vec![],
+            ),
+            Self::AudioDirectional { mode, blob } => (
+                sys::OPC_CAM_AUDIO_DIRECTIONAL,
+                std::iter::once(i32::from(mode))
+                    .chain(blob.iter().map(|byte| i32::from(*byte)))
+                    .collect(),
+                vec![],
+            ),
+            Self::TapFocusCommit { x, y } => (
+                sys::OPC_CAM_TAP_FOCUS_COMMIT,
+                vec![],
+                vec![f64::from(x), f64::from(y)],
+            ),
 
             Self::SetIsoIndex(index) => (
                 sys::OPC_CAM_SET_ISO_INDEX,
@@ -306,6 +367,57 @@ impl Command {
     }
 
     /// Builds this command as an encoded DUML frame, CRC included.
+    /// Mimo's tap-to-focus burst for a point on the sensor. AF-S and AF-C are the same
+    /// four writes; the phones wait for the region's ACK before the last two.
+    pub fn tap_focus(x: f32, y: f32) -> [Self; 4] {
+        let x = x.clamp(0.0, 1.0);
+        let y = y.clamp(0.0, 1.0);
+        [
+            Self::TapFocusPrepare,
+            Self::TapFocusPoint { x, y },
+            Self::TapFocusHint,
+            Self::TapFocusCommit { x, y },
+        ]
+    }
+
+    /// The opcode key (`set << 8 | cmd`) of the frame this becomes, from the core.
+    /// `None` without the core, or for a command it cannot build.
+    #[cfg(opc_core_linked)]
+    pub fn opcode_key(self) -> Option<u16> {
+        let (kind, ints, reals) = self.parts();
+        // Safety: both argument slices outlive the call.
+        let key = unsafe {
+            sys::opc_camera_command_key(
+                kind,
+                ints.as_ptr(),
+                ints.len(),
+                reals.as_ptr(),
+                reals.len(),
+            )
+        };
+        u16::try_from(key).ok()
+    }
+
+    #[cfg(not(opc_core_linked))]
+    pub fn opcode_key(self) -> Option<u16> {
+        None
+    }
+
+    /// Whether this write is one the SET mailbox governs, as the core lists them.
+    pub fn is_live_control(self) -> bool {
+        self.opcode_key().is_some_and(is_live_control)
+    }
+
+    /// A slider tick that must not be retransmitted and may coalesce.
+    pub fn is_slider(self) -> bool {
+        matches!(self, Self::ZoomFactor(_) | Self::ZoomLens(_))
+    }
+
+    /// Writes the phones fire without a retransmit: one photo is one photo.
+    pub fn retransmits(self) -> bool {
+        !matches!(self, Self::ShootPhoto) && !self.is_slider()
+    }
+
     pub fn encode(self, seq: u16) -> Result<Vec<u8>, CameraError> {
         let (kind, ints, reals) = self.parts();
         let call = |out: *mut u8, capacity: usize| {
@@ -336,4 +448,29 @@ impl Command {
         out.truncate(written as usize);
         Ok(out)
     }
+}
+
+/// Whether an opcode key is one the SET mailbox governs.
+#[cfg(opc_core_linked)]
+pub fn is_live_control(key: u16) -> bool {
+    // Safety: a plain value in.
+    unsafe { sys::opc_duml_is_live_control(i32::from(key)) != 0 }
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn is_live_control(_key: u16) -> bool {
+    false
+}
+
+/// The key a reply frame carries, packed the way the core packs it.
+#[cfg(opc_core_linked)]
+pub fn opcode_key(cmd_set: u8, cmd_id: u8) -> Option<u16> {
+    // Safety: plain values in.
+    let key = unsafe { sys::opc_duml_opcode_key(i32::from(cmd_set), i32::from(cmd_id)) };
+    u16::try_from(key).ok()
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn opcode_key(_cmd_set: u8, _cmd_id: u8) -> Option<u16> {
+    None
 }

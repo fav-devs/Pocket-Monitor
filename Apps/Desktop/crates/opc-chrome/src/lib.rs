@@ -29,7 +29,10 @@ mod generated {
     #![allow(missing_debug_implementations)]
     slint::include_modules!();
 }
-use generated::{HudOverlay, MediaCell, MediaSelection, PlayerView as SlintPlayerView, SheetRow};
+use generated::{
+    AssistChipView, GuideRect, HudOverlay, LegendChip as SlintLegendChip, MediaCell,
+    MediaSelection, PlateView, PlayerView as SlintPlayerView, SheetRow,
+};
 use slint::ComponentHandle;
 
 // ── Custom RGBA pixel ────────────────────────────────────────────────────────
@@ -171,6 +174,19 @@ pub enum ChromeIntent {
     SheetTab(usize),
     /// The sheet's close button, or a tap on the scrim around it.
     SheetClose,
+    /// The ASSIST button in the top bar: show or hide the toolbar.
+    AssistBarToggle,
+    /// A toolbar chip tapped, by index into the chips the shell passed.
+    AssistTap(usize),
+    /// A toolbar chip long-pressed or right-clicked: open its options.
+    AssistConfigure(usize),
+    /// A scope plate dragged to a new top-left, in window pixels; `tool` indexes the
+    /// toolbar.
+    PlateMoved {
+        tool: usize,
+        x: f32,
+        y: f32,
+    },
     // The library.
     LibraryBack,
     LibraryTab(usize),
@@ -184,6 +200,10 @@ pub enum ChromeIntent {
     LibraryDelete,
     /// Device (false) or Local (true): the card, or what is on this machine.
     LibrarySource(bool),
+    /// Select mode on or off, the batch delete, and a burst opened or folded.
+    LibrarySelectMode,
+    LibraryDeleteChecked,
+    LibraryBurst,
     // The player.
     PlayerBack,
     PlayerToggle,
@@ -197,6 +217,8 @@ pub enum ChromeIntent {
     PlayerPeaking,
     PlayerFavorite,
     PlayerDelete,
+    /// The conform chip: the next target, or off.
+    PlayerConform,
 }
 
 /// Which screen the chrome draws.
@@ -237,6 +259,10 @@ pub struct CellState {
     pub starred: bool,
     pub cached: bool,
     pub selected: bool,
+    /// Checked for a batch delete.
+    pub checked: bool,
+    /// A folded burst: how many members the tile stands for; 0 otherwise.
+    pub burst: u32,
 }
 
 /// The selected file's bar at the bottom of the library.
@@ -252,6 +278,9 @@ pub struct SelectionState {
     /// A transfer in flight, 0…1.
     pub progress: Option<f32>,
     pub note: String,
+    /// A burst lead: how many members, and whether they are shown.
+    pub burst: u32,
+    pub expanded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,6 +296,10 @@ pub struct LibraryState {
     pub cell_width: f32,
     pub cell_height: f32,
     pub selection: Option<SelectionState>,
+    /// Select mode for a batch delete, and its state.
+    pub selecting: bool,
+    pub checked_count: usize,
+    pub batch_armed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -289,6 +322,11 @@ pub struct PlayerState {
     pub zebra_on: bool,
     pub peaking_on: bool,
     pub is_photo: bool,
+    /// The conform chip's text, and whether a conform is playing.
+    pub conform_label: String,
+    pub conform_on: bool,
+    /// Greyed when the clip has nothing to conform to.
+    pub conform_available: bool,
 }
 
 /// One row of a sheet: a title and the chips beside it.
@@ -300,6 +338,116 @@ pub struct SheetRowState {
     pub selected: Option<usize>,
     /// A row the operator cannot use right now is drawn but greyed.
     pub enabled: bool,
+    /// Per-chip lit flags for rows where more than one chip may be on. Empty means
+    /// `selected` alone says which chip is lit.
+    pub lit: Vec<bool>,
+}
+
+/// One chip on the assist toolbar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssistChip {
+    pub label: String,
+    pub on: bool,
+    /// Greyed when the tool is not on the desktop yet.
+    pub available: bool,
+    /// Which cluster the chip sits in; a gap is drawn between clusters.
+    pub group: usize,
+}
+
+/// Which parts of the viewfinder chrome are drawn (the phones' DISP toggles).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChromeParts {
+    pub exposure: bool,
+    pub status: bool,
+    pub zoom: bool,
+    pub pad: bool,
+    pub modes: bool,
+}
+
+impl Default for ChromeParts {
+    fn default() -> Self {
+        Self {
+            exposure: true,
+            status: true,
+            zoom: true,
+            pad: true,
+            modes: true,
+        }
+    }
+}
+
+/// What a scope plate shows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlateKind {
+    /// A rasterised plate the shell handed over under the plate's name.
+    Image,
+    /// The ND chip: one line of text.
+    Text(String),
+    /// The audio meters: bar and peak per channel, 0…1 of the scale.
+    Audio {
+        left: f32,
+        right: f32,
+        left_peak: f32,
+        right_peak: f32,
+    },
+}
+
+/// A movable plate over the picture.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlateState {
+    /// Index into the assist toolbar, so a drag names its tool.
+    pub tool_index: usize,
+    /// The key the image was handed over under.
+    pub name: String,
+    pub title: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub kind: PlateKind,
+}
+
+/// One zone of the false-colour key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendBand {
+    pub label: String,
+    pub rgb: [f32; 3],
+}
+
+/// What is drawn over the picture, in window pixels.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Overlays {
+    pub grid_thirds: bool,
+    pub grid_phi: bool,
+    pub grid_diagonal: bool,
+    /// Aspect frames as `(x, y, width, height)`.
+    pub guides: Vec<(f32, f32, f32, f32)>,
+    /// Darken outside the frames' union.
+    pub guide_mask: bool,
+    pub crosshair: bool,
+    /// The false-colour key; empty hides it.
+    pub legend: Vec<LegendBand>,
+}
+
+impl Overlays {
+    /// The union of the guide frames, as the box the mask leaves clear.
+    fn guide_box(&self) -> (f32, f32, f32, f32) {
+        let mut left = f32::MAX;
+        let mut top = f32::MAX;
+        let mut right = f32::MIN;
+        let mut bottom = f32::MIN;
+        for (x, y, w, h) in &self.guides {
+            left = left.min(*x);
+            top = top.min(*y);
+            right = right.max(x + w);
+            bottom = bottom.max(y + h);
+        }
+        if self.guides.is_empty() {
+            (0.0, 0.0, 0.0, 0.0)
+        } else {
+            (left, top, right - left, bottom - top)
+        }
+    }
 }
 
 /// A sheet over the picture: the format picker, the exposure sheet or the settings.
@@ -350,6 +498,12 @@ pub struct ChromeState<'a> {
     pub zoom: f32,
     /// Formatted zoom label, e.g. "1.0×".
     pub zoom_label: String,
+    /// The body's top stop; 1.0 greys the dial.
+    pub zoom_max: f32,
+    /// The body's chip stops, marked on the ruler.
+    pub zoom_stops: Vec<f32>,
+    /// A line for the operator in the top bar, or empty.
+    pub notice: String,
     /// Index into [`MODES`].
     pub mode: usize,
     /// The record button fires a still instead.
@@ -364,8 +518,14 @@ pub struct ChromeState<'a> {
     pub fps_shown: u32,
     /// The body's timecode, when the operator wants it in the top bar.
     pub timecode: String,
-    /// Rule-of-thirds lines over the picture.
-    pub grid_on: bool,
+    /// The grid, guides, crosshair and false-colour key over the picture.
+    pub overlays: Overlays,
+    /// The assist toolbar's chips while it is open; `None` keeps it hidden.
+    pub assist_bar: Option<Vec<AssistChip>>,
+    /// The scope plates over the picture.
+    pub plates: Vec<PlateState>,
+    /// Which parts of the chrome are drawn.
+    pub parts: ChromeParts,
     /// A programmed move's readout for the top bar, or empty.
     pub move_text: String,
     /// The open sheet, if any.
@@ -378,6 +538,7 @@ pub struct ChromeState<'a> {
 // Layout metrics mirrored from `hud.slint`; `is_over_control` uses them for hit zones.
 const TOP_BAR_H: f64 = 56.0;
 const BOTTOM_BAR_H: f64 = 152.0;
+const ASSIST_BAR_H: f64 = 44.0;
 const ZOOM_DIAL_W: f64 = 320.0;
 const ZOOM_DIAL_H: f64 = 76.0;
 const SIDE_COLUMN_W: f64 = 110.0;
@@ -392,6 +553,10 @@ pub struct Chrome {
     intents: Rc<RefCell<Vec<ChromeIntent>>>,
     /// Thumbnails by camera path, built once and reused across redraws.
     thumbs: HashMap<String, Image>,
+    /// Rasterised scope plates, by the name their state carries.
+    plates: HashMap<String, Image>,
+    /// Where the plates were last drawn, so a press on one is a drag, not a box.
+    plate_rects: RefCell<Vec<(f64, f64, f64, f64)>>,
     /// Filmstrip frames by camera path.
     strips: HashMap<String, Vec<Image>>,
 }
@@ -505,6 +670,13 @@ impl Chrome {
         simple!(on_library_download, ChromeIntent::LibraryDownload);
         simple!(on_library_favorite, ChromeIntent::LibraryFavorite);
         simple!(on_library_delete, ChromeIntent::LibraryDelete);
+        simple!(on_library_select_mode, ChromeIntent::LibrarySelectMode);
+        simple!(
+            on_library_delete_checked,
+            ChromeIntent::LibraryDeleteChecked
+        );
+        simple!(on_library_burst, ChromeIntent::LibraryBurst);
+        simple!(on_player_conform, ChromeIntent::PlayerConform);
         simple!(on_player_back, ChromeIntent::PlayerBack);
         simple!(on_player_toggle, ChromeIntent::PlayerToggle);
         simple!(on_player_info, ChromeIntent::PlayerInfo);
@@ -515,6 +687,36 @@ impl Chrome {
         simple!(on_player_peaking, ChromeIntent::PlayerPeaking);
         simple!(on_player_favorite, ChromeIntent::PlayerFavorite);
         simple!(on_player_delete, ChromeIntent::PlayerDelete);
+        simple!(on_assist_bar_tapped, ChromeIntent::AssistBarToggle);
+        {
+            let q = intents.clone();
+            component.on_plate_moved(move |tool, x, y| {
+                if tool >= 0 {
+                    q.borrow_mut().push(ChromeIntent::PlateMoved {
+                        tool: tool as usize,
+                        x,
+                        y,
+                    });
+                }
+            });
+        }
+        {
+            let q = intents.clone();
+            component.on_assist_tapped(move |i| {
+                if i >= 0 {
+                    q.borrow_mut().push(ChromeIntent::AssistTap(i as usize));
+                }
+            });
+        }
+        {
+            let q = intents.clone();
+            component.on_assist_configure(move |i| {
+                if i >= 0 {
+                    q.borrow_mut()
+                        .push(ChromeIntent::AssistConfigure(i as usize));
+                }
+            });
+        }
         {
             let q = intents.clone();
             component.on_library_source_tapped(move |local| {
@@ -551,6 +753,8 @@ impl Chrome {
             size: (0, 0),
             intents,
             thumbs: HashMap::new(),
+            plates: HashMap::new(),
+            plate_rects: RefCell::new(Vec::new()),
             strips: HashMap::new(),
         })
     }
@@ -608,6 +812,20 @@ impl Chrome {
         self.thumbs.contains_key(path)
     }
 
+    /// A rasterised scope plate, under the name its [`PlateState`] carries.
+    pub fn set_plate(&mut self, name: &str, width: u32, height: u32, rgba: &[u8]) {
+        if width == 0 || height == 0 || rgba.len() < (width * height * 4) as usize {
+            return;
+        }
+        let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+            &rgba[..(width * height * 4) as usize],
+            width,
+            height,
+        );
+        self.plates
+            .insert(name.to_string(), Image::from_rgba8(buffer));
+    }
+
     /// The filmstrip for a clip: frames across it, each tightly packed RGBA.
     pub fn set_strip(&mut self, path: &str, frames: &[(u32, u32, Vec<u8>)]) {
         let images = frames
@@ -639,16 +857,34 @@ impl Chrome {
         if self.component.get_sheet_open() || self.component.get_screen() != 0 {
             return true;
         }
-        // Top bar and bottom bar (with the mode strip) hold every button.
-        if y <= TOP_BAR_H || y >= h - BOTTOM_BAR_H {
+        // Top bar (with the assist strip under it when open) and bottom bar (with the
+        // mode strip) hold every button.
+        let c = &self.component;
+        let bar = if c.get_assist_open() {
+            ASSIST_BAR_H
+        } else {
+            0.0
+        };
+        if y <= TOP_BAR_H + bar || y >= h - BOTTOM_BAR_H {
             return true;
         }
         // Zoom dial sits under the top bar, centred.
-        let c = &self.component;
         let fit_x = f64::from(c.get_fit_x());
         let fit_w = f64::from(c.get_fit_width());
         let dial_x = fit_x + (fit_w - ZOOM_DIAL_W) / 2.0;
-        if y <= TOP_BAR_H + ZOOM_DIAL_H && (dial_x..=dial_x + ZOOM_DIAL_W).contains(&x) {
+        if c.get_show_zoom()
+            && y <= TOP_BAR_H + bar + ZOOM_DIAL_H
+            && (dial_x..=dial_x + ZOOM_DIAL_W).contains(&x)
+        {
+            return true;
+        }
+        // A plate is dragged, never drawn on.
+        if self
+            .plate_rects
+            .borrow()
+            .iter()
+            .any(|(px, py, pw, ph)| x >= *px && x <= px + pw && y >= *py && y <= py + ph)
+        {
             return true;
         }
         // Side columns are read-only, but a press there must not start a tracking box.
@@ -701,6 +937,9 @@ impl Chrome {
         c.set_storage_text(state.storage_text.clone().into());
         c.set_zoom_value(state.zoom);
         c.set_zoom_label(state.zoom_label.clone().into());
+        c.set_zoom_max(state.zoom_max.max(1.0));
+        c.set_zoom_stops(ModelRc::new(VecModel::from(state.zoom_stops.clone())));
+        c.set_notice(state.notice.clone().into());
         c.set_mode_selected(state.mode.min(MODES.len() - 1) as i32);
         c.set_photo_mode(state.photo_mode);
         c.set_controls_enabled(state.controls_enabled);
@@ -725,8 +964,112 @@ impl Chrome {
             .into(),
         );
         c.set_timecode(state.timecode.clone().into());
-        c.set_grid_on(state.grid_on);
+        let overlays = &state.overlays;
+        c.set_grid_thirds(overlays.grid_thirds);
+        c.set_grid_phi(overlays.grid_phi);
+        c.set_grid_diagonal(overlays.grid_diagonal);
+        let guides: Vec<GuideRect> = overlays
+            .guides
+            .iter()
+            .map(|(x, y, w, h)| GuideRect {
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+            })
+            .collect();
+        c.set_guides(ModelRc::new(VecModel::from(guides)));
+        c.set_guide_mask(overlays.guide_mask);
+        let (bx, by, bw, bh) = overlays.guide_box();
+        c.set_guide_box(GuideRect {
+            x: bx,
+            y: by,
+            w: bw,
+            h: bh,
+        });
+        c.set_crosshair(overlays.crosshair);
+        let legend: Vec<SlintLegendChip> = overlays
+            .legend
+            .iter()
+            .map(|band| SlintLegendChip {
+                label: band.label.clone().into(),
+                color: slint::Color::from_rgb_f32(band.rgb[0], band.rgb[1], band.rgb[2]),
+            })
+            .collect();
+        c.set_legend(ModelRc::new(VecModel::from(legend)));
+        match &state.assist_bar {
+            Some(chips) => {
+                let chips: Vec<AssistChipView> = chips
+                    .iter()
+                    .map(|chip| AssistChipView {
+                        label: chip.label.clone().into(),
+                        on: chip.on,
+                        available: chip.available,
+                        group: chip.group as i32,
+                    })
+                    .collect();
+                c.set_assist_chips(ModelRc::new(VecModel::from(chips)));
+                c.set_assist_open(true);
+            }
+            None => {
+                if c.get_assist_open() {
+                    c.set_assist_open(false);
+                    c.set_assist_chips(ModelRc::new(VecModel::from(Vec::<AssistChipView>::new())));
+                }
+            }
+        }
         c.set_move_text(state.move_text.clone().into());
+        c.set_show_exposure(state.parts.exposure);
+        c.set_show_status(state.parts.status);
+        c.set_show_zoom(state.parts.zoom);
+        c.set_show_pad(state.parts.pad);
+        c.set_show_modes(state.parts.modes);
+        let plates: Vec<PlateView> = state
+            .plates
+            .iter()
+            .map(|plate| {
+                let (kind, text, meters) = match &plate.kind {
+                    PlateKind::Image => (0, String::new(), [0.0; 4]),
+                    PlateKind::Text(text) => (1, text.clone(), [0.0; 4]),
+                    PlateKind::Audio {
+                        left,
+                        right,
+                        left_peak,
+                        right_peak,
+                    } => (2, String::new(), [*left, *right, *left_peak, *right_peak]),
+                };
+                let image = self.plates.get(&plate.name).cloned();
+                PlateView {
+                    tool: plate.tool_index as i32,
+                    title: plate.title.clone().into(),
+                    x: plate.x,
+                    y: plate.y,
+                    w: plate.width,
+                    h: plate.height,
+                    has_image: image.is_some(),
+                    image: image.unwrap_or_default(),
+                    kind,
+                    text: text.into(),
+                    left: meters[0],
+                    right: meters[1],
+                    left_peak: meters[2],
+                    right_peak: meters[3],
+                }
+            })
+            .collect();
+        *self.plate_rects.borrow_mut() = state
+            .plates
+            .iter()
+            .map(|plate| {
+                (
+                    f64::from(plate.x),
+                    f64::from(plate.y),
+                    f64::from(plate.width),
+                    f64::from(plate.height),
+                )
+            })
+            .collect();
+        c.set_plates(ModelRc::new(VecModel::from(plates)));
         c.set_screen(state.screen.index());
 
         if let Some(library) = &state.library {
@@ -748,6 +1091,8 @@ impl Chrome {
                         starred: cell.starred,
                         cached: cell.cached,
                         selected: cell.selected,
+                        checked: cell.checked,
+                        burst: cell.burst as i32,
                     }
                 })
                 .collect();
@@ -760,6 +1105,9 @@ impl Chrome {
             c.set_library_sort(library.sort_label.clone().into());
             c.set_library_status(library.status.clone().into());
             c.set_library_has_selection(library.selection.is_some());
+            c.set_library_selecting(library.selecting);
+            c.set_library_checked_count(library.checked_count as i32);
+            c.set_library_batch_armed(library.batch_armed);
             if let Some(selection) = &library.selection {
                 c.set_library_selection(MediaSelection {
                     title: selection.title.clone().into(),
@@ -771,6 +1119,8 @@ impl Chrome {
                     delete_armed: selection.delete_armed,
                     progress: selection.progress.unwrap_or(-1.0),
                     note: selection.note.clone().into(),
+                    burst: selection.burst as i32,
+                    expanded: selection.expanded,
                 });
             }
         } else if state.screen == Screen::Viewfinder && c.get_library_has_selection() {
@@ -792,6 +1142,9 @@ impl Chrome {
                 cached: player.cached,
                 deletable: player.deletable,
                 delete_armed: player.delete_armed,
+                conform_label: player.conform_label.clone().into(),
+                conform_on: player.conform_on,
+                conform_available: player.conform_available,
                 lut_on: player.lut_on,
                 zebra_on: player.zebra_on,
                 peaking_on: player.peaking_on,
@@ -822,6 +1175,7 @@ impl Chrome {
                         options: strings(&row.options),
                         selected: row.selected.map_or(-1, |i| i as i32),
                         enabled: row.enabled,
+                        lit: ModelRc::new(VecModel::from(row.lit.clone())),
                     })
                     .collect();
                 c.set_sheet_rows(ModelRc::new(VecModel::from(rows)));

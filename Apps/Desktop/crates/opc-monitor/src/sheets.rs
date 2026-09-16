@@ -8,8 +8,14 @@
 use opc_camera::{frame_rate_fps, resolution_name, Command, Status};
 use opc_chrome::{SheetRowState, SheetState};
 
+use crate::assists::{
+    sense_label, AssistOptions, AssistTool, FalseColorScale, GridLine, GuideAspect, GuideFamily,
+    PeakingColor, ZebraPaint, ZebraSteps, PEAKING_SENSES, ZEBRA_HIGHLIGHT_STEPS,
+    ZEBRA_MIDTONE_STEPS,
+};
 use crate::luts::{self, LutChoice, LutMenu};
 use crate::moves::{Program, Waypoint};
+use crate::scopes::{NdNotation, ParadeMode, ScopeOptions, WaveMode, LIGHTS_COMPENSATION};
 use crate::shell::{GimbalMode, Toggles};
 
 /// Which sheet is open.
@@ -20,6 +26,8 @@ pub enum SheetKind {
     Settings,
     /// Programmed gimbal moves: A, B, C and their durations.
     Moves,
+    /// One assist tool's options, from a long press on its toolbar chip.
+    Assist(AssistTool),
 }
 
 /// Which programmed point a chip is about.
@@ -30,8 +38,15 @@ pub enum Slot {
     C,
 }
 
-/// The settings tabs, in order.
-pub const SETTINGS_TABS: [&str; 3] = ["CAMERA", "AUDIO", "ASSIST"];
+/// The settings tabs, in order: the camera's own, then the operator's setup.
+pub const SETTINGS_TABS: [&str; 9] = [
+    "CAMERA", "AUDIO", "ASSIST", "LINK", "CONTROLS", "DISPLAY", "STORAGE", "OUTPUT", "SYSTEM",
+];
+/// Which tab is which, for the shell.
+pub const TAB_AUDIO: usize = 1;
+pub const TAB_STORAGE: usize = 6;
+pub const TAB_OUTPUT: usize = 7;
+pub const TAB_SYSTEM: usize = 8;
 
 /// Settings the body does not report back, kept as last commanded, plus the desktop's
 /// own overlays.
@@ -44,12 +59,103 @@ pub struct Prefs {
     pub fov: u8,
     /// `0x02` slow, `0x01` default, `0x00` fast.
     pub gimbal_speed: u8,
-    pub grid: bool,
     pub timecode: bool,
     /// The stick's first-order follow: 0 off, 1 soft, 2 medium.
     pub ramp: u8,
     /// The `T` take countdown, in seconds.
     pub countdown_seconds: u32,
+    /// The phones' joystick sensitivity ticks, 1…5; 4 is the captured throw.
+    pub stick_sensitivity: u8,
+    /// Whether a game controller drives the shell.
+    pub gamepad: bool,
+    /// Which parts of the chrome are drawn (the phones' DISP toggles).
+    pub show_exposure: bool,
+    pub show_status: bool,
+    pub show_zoom: bool,
+    pub show_pad: bool,
+    pub show_modes: bool,
+    /// The viewfinder as a camera for other apps: 0 off, 1 a camera device, 2 the
+    /// loopback MJPEG stream.
+    pub vcam: u8,
+    /// Send the picture without zebra, peaking or false colour on it.
+    pub vcam_clean: bool,
+    /// The stream's port on 127.0.0.1.
+    pub vcam_port: u16,
+}
+
+/// A part of the chrome the Display tab can hide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    Exposure,
+    Status,
+    Zoom,
+    Pad,
+    Modes,
+}
+
+impl Part {
+    pub const ALL: [Self; 5] = [
+        Self::Exposure,
+        Self::Status,
+        Self::Zoom,
+        Self::Pad,
+        Self::Modes,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Exposure => "Exposure plate",
+            Self::Status => "Status plate",
+            Self::Zoom => "Zoom ruler",
+            Self::Pad => "Gimbal pad",
+            Self::Modes => "Mode strip",
+        }
+    }
+}
+
+impl Prefs {
+    pub fn shows(&self, part: Part) -> bool {
+        match part {
+            Part::Exposure => self.show_exposure,
+            Part::Status => self.show_status,
+            Part::Zoom => self.show_zoom,
+            Part::Pad => self.show_pad,
+            Part::Modes => self.show_modes,
+        }
+    }
+
+    pub fn set_shows(&mut self, part: Part, on: bool) {
+        match part {
+            Part::Exposure => self.show_exposure = on,
+            Part::Status => self.show_status = on,
+            Part::Zoom => self.show_zoom = on,
+            Part::Pad => self.show_pad = on,
+            Part::Modes => self.show_modes = on,
+        }
+    }
+}
+
+/// What the setup tabs read about this machine and this link. Filled by the window.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SetupInfo {
+    /// "Wi-Fi datalink · 192.168.2.1:9004".
+    pub link: String,
+    pub phase: String,
+    pub model: String,
+    pub firmware: String,
+    /// What the watchdog last did, or empty.
+    pub recovery: String,
+    /// The connected controller's name, if one is.
+    pub gamepad: Option<String>,
+    /// "123 MB", or empty until counted.
+    pub cache: String,
+    pub renderer: String,
+    /// DISP 1 (chrome shown) or DISP 2 (clean).
+    pub chrome_visible: bool,
+    /// What the virtual camera is doing: "Off", where it writes, or why it cannot.
+    pub vcam: String,
+    /// The platform camera component: installed, not, or being worked on.
+    pub component: opc_vcam::ComponentReport,
 }
 
 impl Prefs {
@@ -70,10 +176,19 @@ impl Default for Prefs {
             vocal_boost: 0x00,
             fov: 0x01,
             gimbal_speed: 0x01,
-            grid: false,
             timecode: false,
             ramp: 0,
             countdown_seconds: 3,
+            stick_sensitivity: 4,
+            gamepad: true,
+            show_exposure: true,
+            show_status: true,
+            show_zoom: true,
+            show_pad: true,
+            show_modes: true,
+            vcam: 0,
+            vcam_clean: true,
+            vcam_port: opc_vcam::DEFAULT_PORT,
         }
     }
 }
@@ -105,6 +220,59 @@ pub enum Pick {
     LegDuration(Slot, f64),
     MoveStart,
     MoveStop,
+    MovePause,
+    MoveResume,
+    /// Smoothness as a percentage, 0 for the exact B.
+    Smoothness(u8),
+    /// Switch an assist tool on or off, as its toolbar chip would.
+    Assist(AssistTool),
+    FalseColorScale(FalseColorScale),
+    FalseColorReference(bool),
+    PeakingColor(PeakingColor),
+    PeakingSense(opc_render::PeakingSense),
+    /// Read zebra thresholds as IRE (true) or 0–255 (false).
+    ZebraUnits(bool),
+    ZebraHighlightOn(bool),
+    ZebraHighlightIre(f32),
+    ZebraHighlightColor(ZebraPaint),
+    ZebraMidtoneOn(bool),
+    ZebraMidtoneIre(f32),
+    ZebraMidtoneColor(ZebraPaint),
+    GridLine(GridLine, bool),
+    GuideFamily(GuideFamily),
+    /// Toggle one frame; several may be on.
+    GuideAspect(GuideAspect),
+    GuideMask(bool),
+    /// Wind noise reduction and directional audio: the body's DSP blob, patched.
+    Wind(bool),
+    Directional(u8),
+    /// The scopes' options.
+    WaveMode(WaveMode),
+    /// Which waveform guide (0 clip, 1 crush, 2 middle) and whether it shows.
+    WaveGuide(usize, bool),
+    ParadeMode(ParadeMode),
+    VectorGain(u32),
+    Brightness(u32),
+    LightsCompensation(u32),
+    NdNotation(NdNotation),
+    /// The setup tabs.
+    Reconnect,
+    StickSensitivity(u8),
+    Gamepad(bool),
+    /// DISP: clean (true) hides the chrome.
+    Disp(bool),
+    ShowPart(Part, bool),
+    ClearCache,
+    Diagnostics,
+    /// The virtual camera: 0 off, 1 device, 2 stream.
+    Vcam(u8),
+    /// The camera carries the clean picture (true) or the assists too.
+    VcamClean(bool),
+    /// Put the platform camera component in, or take it out.
+    ComponentInstall,
+    ComponentRemove,
+    /// Show the stream's page in the browser.
+    OpenStream,
     /// A chip that is shown but does nothing here yet.
     Nothing,
 }
@@ -124,6 +292,12 @@ pub struct Context<'a> {
     /// The body's live pose, if it has reported one.
     pub live_pose: Option<Waypoint>,
     pub move_running: bool,
+    pub move_paused: bool,
+    pub assists: AssistOptions,
+    /// Where the zebra chips land on the feed, so they can read in 0–255.
+    pub zebra_steps: ZebraSteps,
+    pub scopes: ScopeOptions,
+    pub setup: &'a SetupInfo,
 }
 
 /// A built sheet: what to draw, and what each chip means.
@@ -141,7 +315,7 @@ impl Built {
 }
 
 /// ISO index on the wire and the value it means. `0x00` is auto.
-const ISO_INDEX: [(u8, &str); 10] = [
+pub const ISO_INDEX: [(u8, &str); 10] = [
     (0x00, "Auto"),
     (0x03, "100"),
     (0x04, "200"),
@@ -155,7 +329,7 @@ const ISO_INDEX: [(u8, &str); 10] = [
 ];
 
 /// Shutter denominators offered when the body has not sent its own list.
-const SHUTTER_DEFAULT: [i32; 13] = [
+pub const SHUTTER_DEFAULT: [i32; 13] = [
     8000, 4000, 2000, 1000, 500, 250, 200, 120, 100, 60, 50, 30, 25,
 ];
 
@@ -166,6 +340,14 @@ const COLOR_MODES: [(u8, &str); 6] = [
     (0x41, "D-Log2"),
     (0x3D, "Normal 10-bit"),
     (0x00, "D-Log M"),
+];
+
+/// `FocusTrackMode` on the wire and the phones' labels for it.
+const FOCUS_TRACK: [(u8, &str); 4] = [
+    (0x00, "Default"),
+    (0x01, "Product Showcase"),
+    (0x02, "Subject Lock"),
+    (0x03, "Registered Priority"),
 ];
 
 const WHITE_BALANCE: [(i32, &str); 9] = [
@@ -193,9 +375,19 @@ impl RowBuilder {
                 options: Vec::new(),
                 selected: None,
                 enabled: true,
+                lit: Vec::new(),
             },
             picks: Vec::new(),
         }
+    }
+
+    /// A chip in a row where more than one may be lit at once.
+    fn option_lit(mut self, label: impl Into<String>, lit: bool, pick: Pick) -> Self {
+        self.row.lit.resize(self.row.options.len(), false);
+        self.row.lit.push(lit);
+        self.row.options.push(label.into());
+        self.picks.push(pick);
+        self
     }
 
     fn option(mut self, label: impl Into<String>, selected: bool, pick: Pick) -> Self {
@@ -242,7 +434,289 @@ pub fn build(kind: SheetKind, tab: usize, context: Context) -> Built {
         SheetKind::Exposure => exposure(context.status),
         SheetKind::Settings => settings(tab, context),
         SheetKind::Moves => moves(context),
+        SheetKind::Assist(tool) => assist(tool, context),
     }
+}
+
+/// The trace brightness chips the scopes share.
+fn brightness_row(current: u32) -> RowBuilder {
+    let mut row = RowBuilder::new("Brightness");
+    for level in [50, 100, 150, 200] {
+        row = row.option(
+            format!("{level}%"),
+            current == level,
+            Pick::Brightness(level),
+        );
+    }
+    row
+}
+
+/// Whether a tool is on, as its chip and its sheet's first row show it.
+pub fn tool_on(tool: AssistTool, toggles: Toggles) -> bool {
+    match tool {
+        AssistTool::Lut => toggles.grade,
+        AssistTool::Peak => toggles.peaking,
+        AssistTool::False => toggles.false_color,
+        AssistTool::Zebra => toggles.zebra,
+        AssistTool::Guides => toggles.guides,
+        AssistTool::Grid => toggles.grid,
+        AssistTool::Cross => toggles.cross,
+        AssistTool::Mirror => toggles.mirror,
+        AssistTool::Wave => toggles.wave,
+        AssistTool::Parade => toggles.parade,
+        AssistTool::Histo => toggles.histo,
+        AssistTool::Vector => toggles.vector,
+        AssistTool::Lights => toggles.lights,
+        AssistTool::Nd => toggles.nd,
+        AssistTool::Audio => toggles.audio,
+    }
+}
+
+/// One tool's options: the phones' long-press panel as rows of chips.
+fn assist(tool: AssistTool, context: Context) -> Built {
+    let assists = context.assists;
+    let on = tool_on(tool, context.toggles);
+    let mut rows = vec![RowBuilder::new(tool.title())
+        .option(
+            "Off",
+            !on,
+            if on {
+                Pick::Assist(tool)
+            } else {
+                Pick::Nothing
+            },
+        )
+        .option(
+            "On",
+            on,
+            if on {
+                Pick::Nothing
+            } else {
+                Pick::Assist(tool)
+            },
+        )
+        .enabled(tool.available())];
+    let on_off = |title: &str, on: bool, pick: fn(bool) -> Pick| {
+        RowBuilder::new(title)
+            .option("Off", !on, pick(false))
+            .option("On", on, pick(true))
+    };
+    match tool {
+        AssistTool::False => {
+            let mut scale = RowBuilder::new("Scale");
+            for candidate in FalseColorScale::ALL {
+                scale = scale.option(
+                    candidate.label(),
+                    assists.false_color.scale == candidate,
+                    Pick::FalseColorScale(candidate),
+                );
+            }
+            rows.push(scale);
+            rows.push(on_off(
+                "Reference Display",
+                assists.false_color.reference,
+                Pick::FalseColorReference,
+            ));
+        }
+        AssistTool::Peak => {
+            let mut sense = RowBuilder::new("Sensitivity");
+            for candidate in PEAKING_SENSES {
+                sense = sense.option(
+                    sense_label(candidate),
+                    assists.peaking_sense == candidate,
+                    Pick::PeakingSense(candidate),
+                );
+            }
+            rows.push(sense);
+            let mut color = RowBuilder::new("Color");
+            for candidate in PeakingColor::ALL {
+                color = color.option(
+                    candidate.label(),
+                    assists.peaking_color == candidate,
+                    Pick::PeakingColor(candidate),
+                );
+            }
+            rows.push(color);
+        }
+        AssistTool::Zebra => {
+            let zebra = assists.zebra;
+            let steps = context.zebra_steps;
+            rows.push(
+                RowBuilder::new("Units")
+                    .option("0-255", !zebra.ire_units, Pick::ZebraUnits(false))
+                    .option("IRE", zebra.ire_units, Pick::ZebraUnits(true)),
+            );
+            rows.push(on_off(
+                "Highlight",
+                zebra.highlight_on,
+                Pick::ZebraHighlightOn,
+            ));
+            let mut highlight = RowBuilder::new("Highlight level").enabled(zebra.highlight_on);
+            for (ire, native) in ZEBRA_HIGHLIGHT_STEPS.into_iter().zip(steps.highlight) {
+                highlight = highlight.option(
+                    zebra.step_label(ire, native),
+                    (zebra.highlight_ire - ire).abs() < 0.5,
+                    Pick::ZebraHighlightIre(ire),
+                );
+            }
+            rows.push(highlight);
+            let mut highlight_color =
+                RowBuilder::new("Highlight color").enabled(zebra.highlight_on);
+            for paint in ZebraPaint::HIGHLIGHT {
+                highlight_color = highlight_color.option(
+                    paint.label(),
+                    zebra.highlight_color == paint,
+                    Pick::ZebraHighlightColor(paint),
+                );
+            }
+            rows.push(highlight_color);
+            rows.push(on_off("Midtone", zebra.midtone_on, Pick::ZebraMidtoneOn));
+            let mut midtone = RowBuilder::new("Midtone level").enabled(zebra.midtone_on);
+            for (ire, native) in ZEBRA_MIDTONE_STEPS.into_iter().zip(steps.midtone) {
+                midtone = midtone.option(
+                    zebra.step_label(ire, native),
+                    (zebra.midtone_ire - ire).abs() < 0.5,
+                    Pick::ZebraMidtoneIre(ire),
+                );
+            }
+            rows.push(midtone);
+            let mut midtone_color = RowBuilder::new("Midtone color").enabled(zebra.midtone_on);
+            for paint in ZebraPaint::MIDTONE {
+                midtone_color = midtone_color.option(
+                    paint.label(),
+                    zebra.midtone_color == paint,
+                    Pick::ZebraMidtoneColor(paint),
+                );
+            }
+            rows.push(midtone_color);
+        }
+        AssistTool::Grid => {
+            let mut lines = RowBuilder::new("Lines");
+            for line in GridLine::ALL {
+                let lit = assists.grid.get(line);
+                lines = lines.option_lit(line.label(), lit, Pick::GridLine(line, !lit));
+            }
+            rows.push(lines);
+        }
+        AssistTool::Guides => {
+            let guides = assists.guides;
+            let mut family = RowBuilder::new("Family");
+            for candidate in GuideFamily::ALL {
+                family = family.option(
+                    candidate.label(),
+                    guides.family == candidate,
+                    Pick::GuideFamily(candidate),
+                );
+            }
+            rows.push(family);
+            let mut frames = RowBuilder::new("Frames");
+            for aspect in guides.family.aspects() {
+                frames = frames.option_lit(
+                    aspect.label(),
+                    guides.is_selected(*aspect),
+                    Pick::GuideAspect(*aspect),
+                );
+            }
+            rows.push(frames);
+            rows.push(on_off("Mask outside frame", guides.mask, Pick::GuideMask));
+        }
+        AssistTool::Lut => {
+            rows.push(RowBuilder::placeholder(
+                "Cube",
+                "Pick the cube under Settings → ASSIST",
+            ));
+        }
+        AssistTool::Cross | AssistTool::Mirror | AssistTool::Audio => {
+            rows.push(RowBuilder::placeholder("Help", tool.help()));
+        }
+        AssistTool::Wave => {
+            let scopes = context.scopes;
+            rows.push(
+                RowBuilder::new("Mode")
+                    .option(
+                        "Luma",
+                        scopes.wave == WaveMode::Luma,
+                        Pick::WaveMode(WaveMode::Luma),
+                    )
+                    .option(
+                        "RGB",
+                        scopes.wave == WaveMode::Rgb,
+                        Pick::WaveMode(WaveMode::Rgb),
+                    ),
+            );
+            let (clip, crush, middle) = scopes.wave_guides;
+            rows.push(
+                RowBuilder::new("Guides")
+                    .option_lit("Clip", clip, Pick::WaveGuide(0, !clip))
+                    .option_lit("Crush", crush, Pick::WaveGuide(1, !crush))
+                    .option_lit("Middle grey", middle, Pick::WaveGuide(2, !middle)),
+            );
+            rows.push(brightness_row(scopes.brightness));
+        }
+        AssistTool::Parade => {
+            let scopes = context.scopes;
+            rows.push(
+                RowBuilder::new("Mode")
+                    .option(
+                        "RGB",
+                        scopes.parade == ParadeMode::Rgb,
+                        Pick::ParadeMode(ParadeMode::Rgb),
+                    )
+                    .option(
+                        "YRGB",
+                        scopes.parade == ParadeMode::Yrgb,
+                        Pick::ParadeMode(ParadeMode::Yrgb),
+                    ),
+            );
+            rows.push(brightness_row(scopes.brightness));
+        }
+        AssistTool::Vector => {
+            let scopes = context.scopes;
+            let mut zoom = RowBuilder::new("Trace zoom");
+            for gain in [1, 2, 4] {
+                zoom = zoom.option(
+                    format!("{gain}x"),
+                    (scopes.vector_gain - gain as f32).abs() < 0.01,
+                    Pick::VectorGain(gain),
+                );
+            }
+            rows.push(zoom);
+            rows.push(brightness_row(scopes.brightness));
+        }
+        AssistTool::Histo => {
+            rows.push(RowBuilder::placeholder(
+                "Help",
+                "RGB fills and the luma line on the waveform's axis; the clip zone at 95",
+            ));
+        }
+        AssistTool::Lights => {
+            let mut compensation = RowBuilder::new("Crush/Clip compensation");
+            for (index, (stops, label)) in LIGHTS_COMPENSATION.iter().enumerate() {
+                compensation = compensation.option(
+                    *label,
+                    (context.scopes.lights_compensation - stops).abs() < 1e-9,
+                    Pick::LightsCompensation(index as u32),
+                );
+            }
+            rows.push(compensation);
+        }
+        AssistTool::Nd => {
+            let mut units = RowBuilder::new("Units");
+            for notation in NdNotation::ALL {
+                units = units.option(
+                    notation.label(),
+                    context.scopes.nd_notation == notation,
+                    Pick::NdNotation(notation),
+                );
+            }
+            rows.push(units);
+            rows.push(RowBuilder::placeholder(
+                "Help",
+                "Meters the picture against middle grey and suggests a screw-on ND",
+            ));
+        }
+    }
+    assemble(&tool.title().to_uppercase(), &[], 0, rows)
 }
 
 const LEG_DURATIONS: [f64; 8] = [1.0, 2.0, 4.0, 5.0, 8.0, 15.0, 30.0, 60.0];
@@ -283,7 +757,34 @@ fn moves(context: Context) -> Built {
                 Pick::Nothing
             },
         )
+        .option(
+            "Pause",
+            false,
+            if context.move_running && !context.move_paused {
+                Pick::MovePause
+            } else {
+                Pick::Nothing
+            },
+        )
+        .option(
+            "Resume",
+            context.move_paused,
+            if context.move_paused {
+                Pick::MoveResume
+            } else {
+                Pick::Nothing
+            },
+        )
         .option("Stop", context.move_running, Pick::MoveStop);
+    let mut smoothness =
+        RowBuilder::new("Smoothness").enabled(program.c.is_some() && !context.move_running);
+    for percent in [0u8, 25, 50, 75, 100] {
+        smoothness = smoothness.option(
+            format!("{percent}%"),
+            (program.smoothness * 100.0 - f64::from(percent)).abs() < 0.5,
+            Pick::Smoothness(percent),
+        );
+    }
     let live = RowBuilder::placeholder(
         "Live",
         &context
@@ -301,6 +802,7 @@ fn moves(context: Context) -> Built {
             leg("A → B", Slot::A, program.duration_ab),
             leg("B → C", Slot::B, program.duration_bc),
             take,
+            smoothness,
             live,
         ],
     )
@@ -453,8 +955,14 @@ fn settings(tab: usize, context: Context) -> Built {
     let tab = tab.min(SETTINGS_TABS.len() - 1);
     let rows = match tab {
         0 => camera_rows(context),
-        1 => audio_rows(context.prefs),
-        _ => assist_rows(context),
+        1 => audio_rows(context),
+        2 => assist_rows(context),
+        3 => link_rows(context),
+        4 => controls_rows(context),
+        5 => display_rows(context),
+        6 => storage_rows(context),
+        7 => output_rows(context),
+        _ => system_rows(context),
     };
     assemble("SETTINGS", &SETTINGS_TABS, tab, rows)
 }
@@ -476,6 +984,17 @@ fn camera_rows(context: Context) -> Vec<RowBuilder> {
             focus_now == Some(0x02),
             Pick::Send(vec![Command::SetFocusMode(0x02)]),
         );
+
+    // `0x8E` pid `0x003B`: how the body picks its subject.
+    let track_now = status.focus_track;
+    let mut focus_track = RowBuilder::new("Focus track");
+    for (code, label) in FOCUS_TRACK {
+        focus_track = focus_track.option(
+            label,
+            track_now == Some(code),
+            Pick::Send(vec![Command::FocusTrackSet(code)]),
+        );
+    }
 
     let kelvin_now = status.white_balance_kelvin.unwrap_or(0);
     let mut white_balance = RowBuilder::new("White balance");
@@ -549,10 +1068,24 @@ fn camera_rows(context: Context) -> Vec<RowBuilder> {
         .option("Soft", prefs.ramp == 1, Pick::Ramp(1))
         .option("Medium", prefs.ramp == 2, Pick::Ramp(2));
 
-    vec![focus, white_balance, color, fov, follow, speed, ramp]
+    vec![
+        focus,
+        focus_track,
+        white_balance,
+        color,
+        fov,
+        follow,
+        speed,
+        ramp,
+    ]
 }
 
-fn audio_rows(prefs: Prefs) -> Vec<RowBuilder> {
+/// Directional audio `@2` on the wire and the phones' labels.
+const DIRECTIONAL_AUDIO: [(u8, &str); 3] = [(0xDA, "All"), (0x3A, "Front"), (0xBA, "Front+back")];
+
+fn audio_rows(context: Context) -> Vec<RowBuilder> {
+    let prefs = context.prefs;
+    let status = context.status;
     let channel = RowBuilder::new("Channel")
         .option(
             "Stereo",
@@ -572,18 +1105,160 @@ fn audio_rows(prefs: Prefs) -> Vec<RowBuilder> {
     let vocal = RowBuilder::new("Vocal boost")
         .option("Off", prefs.vocal_boost == 0x00, Pick::VocalBoost(0x00))
         .option("On", prefs.vocal_boost == 0x01, Pick::VocalBoost(0x01));
-    // Wind and directional audio share one DSP blob the body must be read for first;
-    // the desktop cannot read it yet, so these are shown for parity and greyed.
+    // Wind and directional audio share one DSP blob (`@2`) the body is read for
+    // first; a write carries that blob back patched. Until the GET has answered the
+    // rows are greyed, and the shell asks for it when this tab opens.
+    let have_blob = status.audio_dsp_blob.is_some();
+    let wind_on = status.wind_nr == Some(0x1A);
     let wind = RowBuilder::new("Wind noise reduction")
-        .option("Off", false, Pick::Nothing)
-        .option("On", false, Pick::Nothing)
-        .enabled(false);
-    let directional = RowBuilder::new("Directional audio")
-        .option("All", false, Pick::Nothing)
-        .option("Front", false, Pick::Nothing)
-        .option("Front + back", false, Pick::Nothing)
-        .enabled(false);
+        .option("Off", have_blob && !wind_on, Pick::Wind(false))
+        .option("On", wind_on, Pick::Wind(true))
+        .enabled(have_blob);
+    let mut directional = RowBuilder::new("Directional audio").enabled(have_blob);
+    for (code, label) in DIRECTIONAL_AUDIO {
+        directional = directional.option(
+            label,
+            status.directional_audio == Some(code),
+            Pick::Directional(code),
+        );
+    }
     vec![channel, vocal, wind, directional]
+}
+
+/// A value the operator reads but does not set.
+fn readout(title: &str, value: &str) -> RowBuilder {
+    RowBuilder::new(title).option(
+        if value.is_empty() { "—" } else { value },
+        false,
+        Pick::Nothing,
+    )
+}
+
+fn link_rows(context: Context) -> Vec<RowBuilder> {
+    let setup = context.setup;
+    vec![
+        readout("Transport", &setup.link),
+        readout("Phase", &setup.phase),
+        readout("Body", &setup.model),
+        readout("Firmware", &setup.firmware),
+        readout("Last recovery", &setup.recovery),
+        RowBuilder::new("Session").option("Reconnect", false, Pick::Reconnect),
+    ]
+}
+
+fn controls_rows(context: Context) -> Vec<RowBuilder> {
+    let prefs = context.prefs;
+    let mut sensitivity = RowBuilder::new("Joystick sensitivity");
+    for tick in 1..=5u8 {
+        sensitivity = sensitivity.option(
+            tick.to_string(),
+            prefs.stick_sensitivity == tick,
+            Pick::StickSensitivity(tick),
+        );
+    }
+    let ramp = RowBuilder::new("Gimbal ramp")
+        .option("Off", prefs.ramp == 0, Pick::Ramp(0))
+        .option("Soft", prefs.ramp == 1, Pick::Ramp(1))
+        .option("Medium", prefs.ramp == 2, Pick::Ramp(2));
+    let gamepad = RowBuilder::new("Game controller")
+        .option("Off", !prefs.gamepad, Pick::Gamepad(false))
+        .option("On", prefs.gamepad, Pick::Gamepad(true));
+    let connected = readout(
+        "Connected",
+        context.setup.gamepad.as_deref().unwrap_or("Not connected"),
+    );
+    vec![
+        sensitivity,
+        ramp,
+        gamepad,
+        connected,
+        RowBuilder::placeholder("Map", crate::pad::MAP_HELP),
+    ]
+}
+
+fn display_rows(context: Context) -> Vec<RowBuilder> {
+    let prefs = context.prefs;
+    let clean = !context.setup.chrome_visible;
+    let mut rows = vec![RowBuilder::new("DISP")
+        .option("1 · Live", !clean, Pick::Disp(false))
+        .option("2 · Clean", clean, Pick::Disp(true))];
+    for part in Part::ALL {
+        let on = prefs.shows(part);
+        rows.push(
+            RowBuilder::new(part.label())
+                .option("Hidden", !on, Pick::ShowPart(part, false))
+                .option("Shown", on, Pick::ShowPart(part, true)),
+        );
+    }
+    rows.push(RowBuilder::placeholder(
+        "Screen flip",
+        "A laptop is not mounted upside down; the phones' flip has no desktop meaning",
+    ));
+    rows
+}
+
+fn storage_rows(context: Context) -> Vec<RowBuilder> {
+    vec![
+        readout("Local media cache", &context.setup.cache),
+        RowBuilder::new("Cache").option("Clear", false, Pick::ClearCache),
+        RowBuilder::placeholder("LUT folder", &context.luts.folder),
+    ]
+}
+
+/// The viewfinder as a camera: the platform component and the camera on it.
+fn output_rows(context: Context) -> Vec<RowBuilder> {
+    use opc_vcam::ComponentState;
+    let prefs = context.prefs;
+    let component = &context.setup.component;
+    let stream = format!("http://127.0.0.1:{}/stream", prefs.vcam_port);
+    let actions = RowBuilder::new("Component")
+        .option("Install", false, Pick::ComponentInstall)
+        .option("Remove", false, Pick::ComponentRemove)
+        .enabled(
+            component.state != ComponentState::Busy
+                && component.state != ComponentState::Unsupported
+                && (component.can_install || component.can_remove),
+        );
+    vec![
+        readout("Platform", &component.platform),
+        readout("Camera component", component.state.label()),
+        readout("Detail", &component.detail),
+        actions,
+        RowBuilder::new("Virtual camera")
+            .option("Off", prefs.vcam == 0, Pick::Vcam(0))
+            .option("Camera device", prefs.vcam == 1, Pick::Vcam(1))
+            .option("Stream", prefs.vcam == 2, Pick::Vcam(2)),
+        RowBuilder::new("Camera picture")
+            .option("As shown", !prefs.vcam_clean, Pick::VcamClean(false))
+            .option("Clean", prefs.vcam_clean, Pick::VcamClean(true)),
+        readout(
+            "Camera output",
+            if context.setup.vcam.is_empty() {
+                "Off"
+            } else {
+                &context.setup.vcam
+            },
+        ),
+        RowBuilder::new("Stream")
+            .option("Open in the browser", false, Pick::OpenStream)
+            .enabled(prefs.vcam == 2),
+        RowBuilder::placeholder("Stream address", &stream),
+        RowBuilder::placeholder(
+            "OBS",
+            "Media Source · Local File off · format mjpeg · then Start Virtual Camera",
+        ),
+    ]
+}
+
+fn system_rows(context: Context) -> Vec<RowBuilder> {
+    vec![
+        readout("App version", env!("CARGO_PKG_VERSION")),
+        readout("Protocol", "OpenPocketViewCore through the desktop facade"),
+        readout("Renderer", &context.setup.renderer),
+        RowBuilder::new("Diagnostics").option("Write a report", false, Pick::Diagnostics),
+        RowBuilder::placeholder("Source", "github.com/fav-devs/OpenPocketCine"),
+        RowBuilder::placeholder("Licenses", "Apache 2.0 · THIRD-PARTY-NOTICES.md"),
+    ]
 }
 
 fn assist_rows(context: Context) -> Vec<RowBuilder> {
@@ -633,8 +1308,8 @@ fn assist_rows(context: Context) -> Vec<RowBuilder> {
 
     vec![
         RowBuilder::new("Grid")
-            .option("Off", !prefs.grid, Pick::Grid(false))
-            .option("Thirds", prefs.grid, Pick::Grid(true)),
+            .option("Off", !toggles.grid, Pick::Grid(false))
+            .option("On", toggles.grid, Pick::Grid(true)),
         toggle("Overexposure alert", toggles.zebra, Pick::Zebra),
         toggle("Focus peaking", toggles.peaking, Pick::Peaking),
         lut,
@@ -676,10 +1351,143 @@ mod tests {
                 native_pitch: -3.0,
             }),
             move_running: false,
+            move_paused: false,
+            assists: AssistOptions::default(),
+            zebra_steps: ZebraSteps::default(),
+            scopes: ScopeOptions::default(),
+            setup: SETUP.get_or_init(SetupInfo::default),
         }
     }
 
+    static SETUP: std::sync::OnceLock<SetupInfo> = std::sync::OnceLock::new();
+
+    #[test]
+    fn the_setup_tabs_read_the_machine_and_offer_their_actions() {
+        let status = Status::default();
+        let titles = |tab: usize| -> Vec<String> {
+            build(SheetKind::Settings, tab, context(&status))
+                .sheet
+                .rows
+                .iter()
+                .map(|r| r.title.clone())
+                .collect()
+        };
+        assert_eq!(SETTINGS_TABS.len(), 9);
+        assert_eq!(
+            titles(3),
+            [
+                "Transport",
+                "Phase",
+                "Body",
+                "Firmware",
+                "Last recovery",
+                "Session"
+            ]
+        );
+        let controls = build(SheetKind::Settings, 4, context(&status));
+        assert_eq!(
+            controls.sheet.rows[0].selected,
+            Some(3),
+            "sensitivity 4 of 1…5"
+        );
+        assert_eq!(controls.pick(0, 1), Some(&Pick::StickSensitivity(2)));
+        let display = build(SheetKind::Settings, 5, context(&status));
+        assert_eq!(display.pick(0, 1), Some(&Pick::Disp(true)));
+        assert_eq!(
+            display.pick(1, 0),
+            Some(&Pick::ShowPart(Part::Exposure, false))
+        );
+        let storage = build(SheetKind::Settings, 6, context(&status));
+        assert_eq!(storage.pick(1, 0), Some(&Pick::ClearCache));
+        let output = build(SheetKind::Settings, TAB_OUTPUT, context(&status));
+        assert_eq!(
+            titles(TAB_OUTPUT),
+            [
+                "Platform",
+                "Camera component",
+                "Detail",
+                "Component",
+                "Virtual camera",
+                "Camera picture",
+                "Camera output",
+                "Stream",
+                "Stream address",
+                "OBS",
+            ]
+        );
+        assert_eq!(
+            output.sheet.rows[1].options[0], "Checking…",
+            "nothing probed yet"
+        );
+        assert!(
+            !output.sheet.rows[3].enabled,
+            "no action before the probe answers"
+        );
+        assert_eq!(output.pick(3, 0), Some(&Pick::ComponentInstall));
+        assert_eq!(output.pick(3, 1), Some(&Pick::ComponentRemove));
+        assert_eq!(output.pick(4, 2), Some(&Pick::Vcam(2)));
+        assert_eq!(output.pick(5, 0), Some(&Pick::VcamClean(false)));
+        assert_eq!(
+            output.sheet.rows[4].selected,
+            Some(0),
+            "the camera is off by default"
+        );
+        assert_eq!(output.sheet.rows[5].selected, Some(1), "and clean when on");
+        assert!(
+            !output.sheet.rows[7].enabled,
+            "the browser link needs the stream on"
+        );
+        assert_eq!(output.pick(7, 0), Some(&Pick::OpenStream));
+        let system = build(SheetKind::Settings, TAB_SYSTEM, context(&status));
+        assert_eq!(system.pick(3, 0), Some(&Pick::Diagnostics));
+    }
+
     static PROGRAM: std::sync::OnceLock<Program> = std::sync::OnceLock::new();
+
+    #[test]
+    fn the_waveform_sheet_offers_the_phones_options() {
+        let status = Status::default();
+        let built = build(SheetKind::Assist(AssistTool::Wave), 0, context(&status));
+        let titles: Vec<&str> = built.sheet.rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, ["Waveform", "Mode", "Guides", "Brightness"]);
+        assert_eq!(built.pick(1, 0), Some(&Pick::WaveMode(WaveMode::Luma)));
+        assert_eq!(built.sheet.rows[2].lit, vec![true, true, true]);
+        assert_eq!(built.pick(2, 1), Some(&Pick::WaveGuide(1, false)));
+        assert_eq!(built.pick(3, 1), Some(&Pick::Brightness(100)));
+        let built = build(SheetKind::Assist(AssistTool::Nd), 0, context(&status));
+        assert_eq!(
+            built.pick(1, 2),
+            Some(&Pick::NdNotation(NdNotation::Density))
+        );
+    }
+
+    #[test]
+    fn wind_and_directional_wait_for_the_dsp_blob_and_then_patch_it() {
+        let mut status = Status::default();
+        let built = build(SheetKind::Settings, 1, context(&status));
+        let titles: Vec<&str> = built.sheet.rows.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            [
+                "Channel",
+                "Vocal boost",
+                "Wind noise reduction",
+                "Directional audio"
+            ]
+        );
+        assert!(!built.sheet.rows[2].enabled, "no blob yet");
+        assert!(!built.sheet.rows[3].enabled);
+
+        status.audio_dsp_blob = Some([7; 26]);
+        status.wind_nr = Some(0x1A);
+        status.directional_audio = Some(0x3A);
+        let built = build(SheetKind::Settings, 1, context(&status));
+        assert!(built.sheet.rows[2].enabled);
+        assert_eq!(built.sheet.rows[2].selected, Some(1), "wind on");
+        assert_eq!(built.sheet.rows[3].selected, Some(1), "front");
+        assert_eq!(built.pick(2, 0), Some(&Pick::Wind(false)));
+        assert_eq!(built.pick(3, 2), Some(&Pick::Directional(0xBA)));
+    }
 
     #[test]
     fn the_moves_sheet_offers_points_legs_and_a_take() {
@@ -688,7 +1496,16 @@ mod tests {
         let titles: Vec<&str> = built.sheet.rows.iter().map(|r| r.title.as_str()).collect();
         assert_eq!(
             titles,
-            ["Point A", "Point B", "Point C", "A → B", "B → C", "Take", "Live"]
+            [
+                "Point A",
+                "Point B",
+                "Point C",
+                "A → B",
+                "B → C",
+                "Take",
+                "Smoothness",
+                "Live"
+            ]
         );
         assert_eq!(built.pick(0, 0), Some(&Pick::SetPoint(Slot::A)));
         assert_eq!(built.pick(2, 1), Some(&Pick::ClearPoint(Slot::C)));
@@ -703,7 +1520,7 @@ mod tests {
             Some(&Pick::Nothing),
             "no A and B yet: Start is inert"
         );
-        assert!(built.sheet.rows[6].options[0].contains("pan +12.0°"));
+        assert!(built.sheet.rows[7].options[0].contains("pan +12.0°"));
     }
 
     #[test]

@@ -3,8 +3,8 @@
 use std::time::Instant;
 
 use opc_chrome::{
-    CellState, Chrome, ChromeState, LibraryState, PlayerState, Screen, SelectionState,
-    SheetRowState, SheetState,
+    AssistChip, CellState, Chrome, ChromeState, LegendBand, LibraryState, Overlays, PlateKind,
+    PlateState, PlayerState, Screen, SelectionState, SheetRowState, SheetState,
 };
 use opc_ui::hud::Phase;
 
@@ -32,6 +32,20 @@ fn main() {
             thumb[i + 3] = 255;
         }
     }
+    // A synthetic waveform plate: a dark panel with a bright band across it.
+    let (pw, ph) = (250u32, 153u32);
+    let mut plate = vec![0u8; (pw * ph * 4) as usize];
+    for y in 0..ph {
+        for x in 0..pw {
+            let i = ((y * pw + x) * 4) as usize;
+            let band = (60..70).contains(&y) || (y > 100 && y < 104 && x % 2 == 0);
+            plate[i] = if band { 200 } else { 6 };
+            plate[i + 1] = if band { 230 } else { 9 };
+            plate[i + 2] = if band { 210 } else { 8 };
+            plate[i + 3] = if band { 255 } else { 184 };
+        }
+    }
+    chrome.set_plate("wave", pw, ph, &plate);
     for n in 0..5 {
         chrome.set_thumb(
             &format!("DCIM/DJI_001/DJI_2026081412525{n}_003{n}_D.MP4"),
@@ -66,6 +80,8 @@ fn main() {
         ("wide", Phase::Live, false, (1600, 720)),
         ("sheet", Phase::Live, false, (1280, 720)),
         ("settings", Phase::Live, false, (1280, 720)),
+        ("output", Phase::Live, false, (1280, 720)),
+        ("assists", Phase::Live, false, (1280, 720)),
         ("library", Phase::Live, false, (1280, 720)),
         ("player", Phase::Live, false, (1280, 720)),
     ];
@@ -93,6 +109,13 @@ fn main() {
             storage_text: "5:36:07".into(),
             zoom: 1.0,
             zoom_label: "1.0×".into(),
+            zoom_max: 12.0,
+            zoom_stops: vec![1.0, 3.0, 6.0, 12.0],
+            notice: if name == "failed" {
+                "NO ANSWER FROM THE CAMERA".into()
+            } else {
+                String::new()
+            },
             mode: 3,
             photo_mode: false,
             controls_enabled: matches!(phase, Phase::Live),
@@ -100,7 +123,117 @@ fn main() {
             countdown: (name == "live").then_some(3),
             fps_shown: 30,
             timecode: "01:02:03:04".into(),
-            grid_on: name == "sheet",
+            overlays: if name == "assists" {
+                let feed = (fit.0 as f32, fit.1 as f32, fit.2 as f32, fit.3 as f32);
+                let frame = |ratio: f32| {
+                    let (fx, fy, fw, fh) = feed;
+                    let (w, h) = if fw / fh > ratio {
+                        (fh * ratio, fh)
+                    } else {
+                        (fw, fw / ratio)
+                    };
+                    (fx + (fw - w) / 2.0, fy + (fh - h) / 2.0, w, h)
+                };
+                Overlays {
+                    grid_thirds: true,
+                    grid_phi: false,
+                    grid_diagonal: true,
+                    guides: vec![frame(2.39), frame(1.0)],
+                    guide_mask: true,
+                    crosshair: true,
+                    legend: [
+                        ("0–4", [0.35, 0.0, 0.5]),
+                        ("5", [0.2, 0.2, 0.9]),
+                        ("10–12", [0.3, 0.5, 1.0]),
+                        ("41–48", [0.2, 0.8, 0.3]),
+                        ("61–70", [0.95, 0.5, 0.75]),
+                        ("92–93", [1.0, 0.85, 0.2]),
+                        ("94–95", [1.0, 0.6, 0.1]),
+                        ("96–98", [1.0, 0.3, 0.1]),
+                        ("99–100", [1.0, 0.0, 0.0]),
+                    ]
+                    .into_iter()
+                    .map(|(label, rgb)| LegendBand {
+                        label: label.into(),
+                        rgb,
+                    })
+                    .collect(),
+                }
+            } else {
+                Overlays {
+                    grid_thirds: name == "sheet",
+                    ..Overlays::default()
+                }
+            },
+            parts: opc_chrome::ChromeParts::default(),
+            plates: if name == "assists" {
+                vec![
+                    PlateState {
+                        tool_index: 4,
+                        name: "wave".into(),
+                        title: "WAVE".into(),
+                        x: fit.0 as f32 + 12.0,
+                        y: (fit.1 + fit.3) as f32 - 152.0 - 153.0 - 12.0,
+                        width: 250.0,
+                        height: 153.0,
+                        kind: PlateKind::Image,
+                    },
+                    PlateState {
+                        tool_index: 9,
+                        name: "nd".into(),
+                        title: "ND".into(),
+                        x: fit.0 as f32 + 12.0,
+                        y: 148.0,
+                        width: 84.0,
+                        height: 30.0,
+                        kind: PlateKind::Text("ND32".into()),
+                    },
+                    PlateState {
+                        tool_index: 14,
+                        name: "audio".into(),
+                        title: "AUDIO".into(),
+                        x: fit.0 as f32 + 12.0,
+                        y: 190.0,
+                        width: 28.0,
+                        height: 168.0,
+                        kind: PlateKind::Audio {
+                            left: 0.72,
+                            right: 0.55,
+                            left_peak: 0.9,
+                            right_peak: 0.7,
+                        },
+                    },
+                ]
+            } else {
+                Vec::new()
+            },
+            assist_bar: (name == "assists").then(|| {
+                [
+                    ("LUT", true, true, 0),
+                    ("PEAK", false, true, 0),
+                    ("FALSE", true, true, 0),
+                    ("ZEBRA", false, true, 1),
+                    ("WAVE", true, true, 1),
+                    ("PARADE", false, true, 1),
+                    ("HISTO", false, true, 2),
+                    ("VECTOR", false, true, 2),
+                    ("LIGHTS", false, true, 2),
+                    ("ND", false, true, 2),
+                    ("GUIDES", true, true, 3),
+                    ("GRID", true, true, 3),
+                    ("CROSS", true, true, 3),
+                    ("MIRROR", false, true, 4),
+                    ("AUDIO", false, true, 5),
+                ]
+                .into_iter()
+                .map(|(label, on, available, group)| AssistChip {
+                    label: label.into(),
+                    on,
+                    available,
+                    group,
+                })
+                .collect()
+            }),
             move_text: if name == "recording" {
                 "MOVE · A→B 3.2 / 8.0 s".into()
             } else {
@@ -129,6 +262,8 @@ fn main() {
                         starred: false,
                         cached: false,
                         selected: false,
+                        checked: false,
+                        burst: 0,
                     });
                     y += 44.0 + gap;
                     for n in 0..count {
@@ -152,6 +287,8 @@ fn main() {
                             starred: index == 3,
                             cached: index == 2,
                             selected: index == 2,
+                            checked: index == 2 || index == 5,
+                            burst: if index == 4 { 5 } else { 0 },
                         });
                     }
                     y += count.div_ceil(columns) as f32 * (cell_h + gap);
@@ -175,7 +312,12 @@ fn main() {
                         delete_armed: false,
                         progress: Some(0.62),
                         note: "Proxy on disk".into(),
+                        burst: 0,
+                        expanded: false,
                     }),
+                    selecting: true,
+                    checked_count: 2,
+                    batch_armed: false,
                 }
             }),
             player: (name == "player").then(|| PlayerState {
@@ -196,20 +338,72 @@ fn main() {
                 zebra_on: false,
                 peaking_on: false,
                 is_photo: false,
+                conform_label: "120 → 24".into(),
+                conform_on: true,
+                conform_available: true,
             }),
-            sheet: (name == "sheet" || name == "settings").then(|| {
+            sheet: (name == "sheet" || name == "settings" || name == "output").then(|| {
                 let row = |title: &str, options: &[&str], selected: Option<usize>, enabled| {
                     SheetRowState {
                         title: title.into(),
                         options: options.iter().map(|o| o.to_string()).collect(),
                         selected,
                         enabled,
+                        lit: Vec::new(),
                     }
                 };
+                let tabs = || {
+                    [
+                        "CAMERA", "AUDIO", "ASSIST", "LINK", "CONTROLS", "DISPLAY", "STORAGE",
+                        "OUTPUT", "SYSTEM",
+                    ]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+                };
+                if name == "output" {
+                    return SheetState {
+                        title: "SETTINGS".into(),
+                        tabs: tabs(),
+                        tab: 7,
+                        rows: vec![
+                            row("Platform", &["Linux · v4l2loopback"], None, true),
+                            row("Camera component", &["Installed"], None, true),
+                            row("Detail", &["/dev/video10 · module loaded"], None, true),
+                            row("Component", &["Install", "Remove"], None, true),
+                            row(
+                                "Virtual camera",
+                                &["Off", "Camera device", "Stream"],
+                                Some(1),
+                                true,
+                            ),
+                            row("Camera picture", &["As shown", "Clean"], Some(1), true),
+                            row(
+                                "Camera output",
+                                &["Camera · /dev/video10 · 1280×720 · 412 frames"],
+                                None,
+                                true,
+                            ),
+                            row("Stream", &["Open in the browser"], None, false),
+                            row(
+                                "Stream address",
+                                &["http://127.0.0.1:8890/stream"],
+                                None,
+                                false,
+                            ),
+                            row(
+                                "OBS",
+                                &["Media Source · Local File off · format mjpeg · then Start Virtual Camera"],
+                                None,
+                                false,
+                            ),
+                        ],
+                    };
+                }
                 if name == "settings" {
                     return SheetState {
                         title: "SETTINGS".into(),
-                        tabs: vec!["CAMERA".into(), "AUDIO".into(), "ASSIST".into()],
+                        tabs: tabs(),
                         tab: 0,
                         rows: vec![
                             row("Focus", &["Single", "Continuous"], Some(1), true),

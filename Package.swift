@@ -9,14 +9,9 @@ import PackageDescription
 // (`just android-core`) — keep this module UI-free and platform-agnostic.
 let package = Package(
     name: "OpenPocketViewCore",
-    platforms: [.iOS(.v17), .macOS(.v12), .watchOS(.v10)],
+    platforms: [.macOS(.v12)],
     products: [
         .library(name: "OpenPocketViewCore", targets: ["OpenPocketViewCore"]),
-        // JNI facade consumed by the Android app (`just android-core`). The JNI
-        // shims are `#if os(Android)`-gated; on Darwin only the wire helpers
-        // compile, so iOS/macOS behavior is unchanged.
-        .library(
-            name: "OpenPocketCineAndroid", type: .dynamic, targets: ["OpenPocketCineAndroidFacade"]),
         // C-ABI facade consumed by the desktop shell (`Apps/Desktop/`, `just desktop-core`).
         // Pure Foundation and `@_cdecl`, so it builds on every platform the toolchain
         // supports; the Rust host links this instead of reimplementing the relay.
@@ -29,16 +24,6 @@ let package = Package(
             name: "OpenPocketViewCoreTests",
             dependencies: ["OpenPocketViewCore"],
             exclude: ["Fixtures"]
-        ),
-        // Header-only shim exposing the NDK's <jni.h> to Swift; empty on Darwin.
-        .target(name: "CJNI"),
-        .target(
-            name: "OpenPocketCineAndroidFacade",
-            dependencies: ["OpenPocketViewCore", "CJNI"]
-        ),
-        .testTarget(
-            name: "OpenPocketCineAndroidFacadeTests",
-            dependencies: ["OpenPocketCineAndroidFacade", "OpenPocketViewCore"]
         ),
         // Fixed-layout C records shared with the Rust host. Types only — the `@_cdecl`
         // prototypes live on the Rust side so Swift never redeclares its own exports.

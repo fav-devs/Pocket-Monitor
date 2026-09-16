@@ -147,6 +147,21 @@ func opc_status_read(
             status.availableColorModes.map { Int($0.rawValue) },
             into: UnsafeMutableRawPointer($0), capacity: cap)
     }
+    out.pointee.wind_nr = status.windNR.map { Int32($0.rawValue) } ?? -1
+    out.pointee.directional_audio = status.directionalAudio.map { Int32($0.rawValue) } ?? -1
+    let blob = withUnsafeMutablePointer(to: &out.pointee.audio_dsp_blob) {
+        DesktopFacade.writeInts(
+            (status.audioDspBlob ?? []).map { Int($0) },
+            into: UnsafeMutableRawPointer($0), capacity: cap)
+    }
+    out.pointee.audio_dsp_blob_count = blob
+    let meters = status.audioMeters
+    let silent = meters == .silent
+    out.pointee.audio_meters_count = silent ? 0 : 1
+    out.pointee.audio_left_tenth_db = Int32((meters.left.levelDB * 10).rounded())
+    out.pointee.audio_right_tenth_db = Int32((meters.right.levelDB * 10).rounded())
+    out.pointee.audio_left_peak_tenth_db = Int32((meters.left.peakDB * 10).rounded())
+    out.pointee.audio_right_peak_tenth_db = Int32((meters.right.peakDB * 10).rounded())
     out.pointee.available_shutter_count = shutters
     out.pointee.available_iso_count = isos
     out.pointee.available_format_count = resolutions
