@@ -144,6 +144,8 @@ Contributions are welcome, especially Windows GPU coverage, camera/firmware comp
 
 ### Attribution and original research material
 
+Pocket Monitor began as a desktop-focused continuation of [OpenPocketCine](https://github.com/erik-sutton95/OpenPocketCine). Thank you to its original creator, [Erik Sutton](https://github.com/erik-sutton95), and to every contributor to that project for the foundation, research, and open-source work that made this direction possible.
+
 The initial understanding of the Osmo Bluetooth pairing and camera Wi-Fi connection path was informed by [Osmosis](https://github.com/KonradIT/osmosis), the open Android client by Konrad Iturbe. Pocket Monitor is an independent implementation; Osmosis is acknowledged as research and inspiration, not copied source code.
 
 Camera behavior is also validated against real hardware and captured protocol observations. Please preserve this attribution in derivative protocol documentation, link to the relevant public source or reproducible observation, and do not add proprietary DJI materials, camera passwords, or redistributable vendor assets to this repository.
