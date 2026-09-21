@@ -1,10 +1,10 @@
-# OpenPocketCine
+# Pocket Monitor
 
-OpenPocketCine is a Windows-first, open-source field monitor and control surface for DJI Osmo Pocket cameras. It pairs a laptop with the camera, reconnects through the saved camera Wi-Fi profile, and turns the laptop into a live viewfinder with camera controls, monitoring tools, media access, and virtual-camera output.
+Pocket Monitor is a Windows-first, open-source field monitor and control surface for DJI Osmo Pocket cameras. It pairs a laptop with the camera, reconnects through the saved camera Wi-Fi profile, and turns the laptop into a live viewfinder with camera controls, monitoring tools, media access, and virtual-camera output.
 
 It is designed for operators who want a larger, keyboard- and controller-friendly monitor without depending on a phone once the camera has been paired.
 
-> **Independent project.** OpenPocketCine is not made by, affiliated with, or endorsed by DJI. It talks to the camera through independently implemented protocol code; it does not bundle a DJI SDK.
+> **Independent project.** Pocket Monitor is not made by, affiliated with, or endorsed by DJI. It talks to the camera through independently implemented protocol code; it does not bundle a DJI SDK.
 
 ## What works today
 
@@ -39,9 +39,9 @@ The desktop app is actively being tested against an Osmo Pocket 3. Features mark
 
 ## DJI Mimo comparison
 
-DJI Mimo remains DJI's official mobile companion and is the right choice for firmware updates, activation, and the broadest supported camera workflow. OpenPocketCine is not a replacement claim or a certification statement. The table describes our intended operator experience relative to Mimo, not official feature parity.
+DJI Mimo remains DJI's official mobile companion and is the right choice for firmware updates, activation, and the broadest supported camera workflow. Pocket Monitor is not a replacement claim or a certification statement. The table describes our intended operator experience relative to Mimo, not official feature parity.
 
-| Workflow | OpenPocketCine desktop | DJI Mimo comparison |
+| Workflow | Pocket Monitor desktop | DJI Mimo comparison |
 | --- | --- | --- |
 | Connect and live view | Laptop-first: saved Wi-Fi reconnect and a dedicated connection screen | Similar core purpose; Mimo is the official supported app |
 | Framing and motion | Keyboard, controller, mouse/touch tracking, large display | Adds desktop-oriented controls beyond a phone interface |
@@ -56,7 +56,7 @@ DJI Mimo remains DJI's official mobile companion and is the right choice for fir
 - A real laptop viewfinder: more screen space, keyboard shortcuts, controller input, and a production-oriented HUD.
 - Local-first operation: after first pairing, Windows can reconnect directly to the camera's saved Wi-Fi profile.
 - Virtual-camera integration for compatible desktop video tools.
-- No subscription, ads, or account requirement from OpenPocketCine itself.
+- No subscription, ads, or account requirement from Pocket Monitor itself.
 
 ### Trade-offs and limitations
 
@@ -144,10 +144,12 @@ Contributions are welcome, especially Windows GPU coverage, camera/firmware comp
 
 ### Attribution and original research material
 
-The initial understanding of the Osmo Bluetooth pairing and camera Wi-Fi connection path was informed by [Osmosis](https://github.com/KonradIT/osmosis), the open Android client by Konrad Iturbe. OpenPocketCine is an independent implementation; Osmosis is acknowledged as research and inspiration, not copied source code.
+Pocket Monitor began as a desktop-focused continuation of [OpenPocketCine](https://github.com/erik-sutton95/OpenPocketCine). Thank you to its original creator, [Erik Sutton](https://github.com/erik-sutton95), and to every contributor to that project for the foundation, research, and open-source work that made this direction possible.
+
+The initial understanding of the Osmo Bluetooth pairing and camera Wi-Fi connection path was informed by [Osmosis](https://github.com/KonradIT/osmosis), the open Android client by Konrad Iturbe. Pocket Monitor is an independent implementation; Osmosis is acknowledged as research and inspiration, not copied source code.
 
 Camera behavior is also validated against real hardware and captured protocol observations. Please preserve this attribution in derivative protocol documentation, link to the relevant public source or reproducible observation, and do not add proprietary DJI materials, camera passwords, or redistributable vendor assets to this repository.
 
 ## License and trademarks
 
-OpenPocketCine is licensed under [Apache-2.0](LICENSE). “DJI,” “Osmo,” “Osmo Pocket,” and “Mimo” are trademarks of SZ DJI Technology Co., Ltd.; they are used only to identify compatible products and comparison workflows.
+Pocket Monitor is licensed under [Apache-2.0](LICENSE). “DJI,” “Osmo,” “Osmo Pocket,” and “Mimo” are trademarks of SZ DJI Technology Co., Ltd.; they are used only to identify compatible products and comparison workflows.
