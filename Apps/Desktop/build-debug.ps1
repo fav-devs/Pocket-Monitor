@@ -49,6 +49,21 @@ $env:LIB = "$($msvcRoot.FullName)\lib\x64;$($kitVersion.FullName)\ucrt\x64;$($ki
 $env:SDKROOT = $sdkRoot
 $env:FFMPEG_DIR = $ffmpeg.FullName
 
+
+# Everything the executable loads at start has to sit beside it: the Swift facade and
+# runtime, the allocator the Swift toolchain links, FFmpeg, and the virtual camera
+# source the Output tab registers. The script's PATH does not follow the exe out of
+# this window.
+function Stage-Runtime([string]$outputDir) {
+    Copy-Item (Join-Path $env:OPC_CORE_LIB_DIR 'OpenPocketCineDesktop.dll') (Join-Path $outputDir 'OpenPocketCineDesktop.dll') -Force
+    Get-ChildItem (Join-Path $runtimeBin '*.dll') | Copy-Item -Destination $outputDir -Force
+    foreach ($name in 'mimalloc.dll', 'mimalloc-redirect.dll') {
+        $candidate = Join-Path $swiftBin $name
+        if (Test-Path $candidate) { Copy-Item $candidate $outputDir -Force }
+    }
+    Get-ChildItem (Join-Path $ffmpeg.FullName 'bin\*.dll') | Copy-Item -Destination $outputDir -Force
+}
+
 Push-Location $repo
 try {
     swift build --product OpenPocketCineDesktop --configuration debug
@@ -56,9 +71,9 @@ try {
     $env:OPC_CORE_LIB_DIR = Join-Path $repo '.build\x86_64-unknown-windows-msvc\debug'
     Push-Location $desktop
     try {
-        cargo build --profile debug-camera -p opc-monitor
+        cargo build --profile debug-camera -p opc-monitor -p opc-vcam-win
         if ($LASTEXITCODE -ne 0) { throw 'Rust desktop build failed.' }
-        Copy-Item (Join-Path $env:OPC_CORE_LIB_DIR 'OpenPocketCineDesktop.dll') '.\target\debug-camera\OpenPocketCineDesktop.dll' -Force
+        Stage-Runtime (Join-Path $desktop 'target\debug-camera')
     } finally { Pop-Location }
 } finally { Pop-Location }
 
