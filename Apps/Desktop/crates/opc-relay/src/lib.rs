@@ -17,4 +17,4 @@ pub mod transport;
 pub use ffi::{
     Command, ControlToken, FrameMeta, Hello, JoinDenied, ProtocolInfo, RelayError, State,
 };
-pub use session::{JoinTarget, Status, WatcherObserver, WatcherSession};
+pub use session::{JoinTarget, Outgoing, Status, WatcherObserver, WatcherSession};

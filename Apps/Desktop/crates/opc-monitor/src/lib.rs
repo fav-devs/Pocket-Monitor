@@ -10,6 +10,7 @@ pub mod library;
 pub mod luts;
 pub mod moves;
 pub mod pad;
+pub mod phone;
 pub mod prefs;
 pub mod scopes;
 pub mod sheets;

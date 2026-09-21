@@ -3901,6 +3901,7 @@ dependencies = [
  "opc-core-sys",
  "opc-decode",
  "opc-media",
+ "opc-relay",
  "opc-render",
  "opc-ui",
  "opc-vcam",

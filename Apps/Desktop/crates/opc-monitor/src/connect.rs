@@ -57,6 +57,13 @@ pub enum ConnectOutcome {
         model_id: Option<i32>,
     },
     Skip,
+    /// Watch the feed a phone is sharing rather than link the camera.
+    Phone {
+        name: String,
+        addresses: Vec<std::net::IpAddr>,
+        port: u16,
+        passcode: String,
+    },
 }
 
 // ── screens ──────────────────────────────────────────────────────────────────
@@ -64,6 +71,12 @@ pub enum ConnectOutcome {
 enum Screen {
     Scanning,
     Choose(Vec<Discovered>),
+    /// Phones sharing a feed on this Wi-Fi, found as the browser runs.
+    Phones {
+        hosts: Vec<opc_relay::discovery::DiscoveredHost>,
+        passcode: String,
+        note: String,
+    },
     Pairing {
         label: String,
         camera: String,
@@ -92,6 +105,10 @@ struct ConnectApp {
     camera_name: String,
     model_id: Option<i32>,
     outcome: Arc<Mutex<Option<ConnectOutcome>>>,
+    /// The Bonjour browser's findings, while the phone screen is up.
+    phones_rx: Option<mpsc::Receiver<Result<Vec<opc_relay::discovery::DiscoveredHost>, String>>>,
+    phones_stop: Arc<std::sync::atomic::AtomicBool>,
+    want_phones: bool,
 }
 
 impl ConnectApp {
@@ -100,8 +117,9 @@ impl ConnectApp {
         rx: mpsc::Receiver<BleEvent>,
         ble_available: bool,
         outcome: Arc<Mutex<Option<ConnectOutcome>>>,
+        start_on_phones: bool,
     ) -> Self {
-        if ble_available {
+        if ble_available && !start_on_phones {
             let _ = tx.send(BleCmd::Scan);
         }
         Self {
@@ -112,13 +130,66 @@ impl ConnectApp {
             camera_name: String::new(),
             model_id: None,
             outcome,
+            phones_rx: None,
+            phones_stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            want_phones: start_on_phones,
         }
     }
 
     fn finish(&self, ctx: &egui::Context, o: ConnectOutcome) {
         *self.outcome.lock().unwrap() = Some(o);
         let _ = self.tx.send(BleCmd::Cancel);
+        self.phones_stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// Starts looking for phones sharing a feed and shows what turns up.
+    fn browse_phones(&mut self) {
+        use std::sync::atomic::Ordering;
+        let _ = self.tx.send(BleCmd::Cancel);
+        self.phones_stop.store(true, Ordering::Relaxed);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.phones_stop = Arc::clone(&stop);
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let info = match opc_relay::ProtocolInfo::load() {
+                Ok(info) => info,
+                Err(error) => {
+                    let _ = tx.send(Err(format!("this build cannot browse: {error}")));
+                    return;
+                }
+            };
+            let mut browser = match opc_relay::discovery::Browser::start(&info) {
+                Ok(browser) => browser,
+                Err(error) => {
+                    let _ = tx.send(Err(format!("could not look for phones: {error}")));
+                    return;
+                }
+            };
+            while !stop.load(Ordering::Relaxed) {
+                let hosts = browser.poll(Duration::from_millis(500));
+                if tx.send(Ok(hosts)).is_err() {
+                    return;
+                }
+            }
+        });
+        self.phones_rx = Some(rx);
+        self.screen = Screen::Phones {
+            hosts: Vec::new(),
+            passcode: String::new(),
+            note: String::new(),
+        };
+    }
+
+    /// The links under a screen: go on without pairing, or watch a phone instead.
+    fn secondary_buttons(&mut self, ui: &mut egui::Ui) -> Option<ConnectOutcome> {
+        if ghost_button(ui, "Watch a phone's shared feed  \u{2192}").clicked() {
+            self.want_phones = true;
+            return None;
+        }
+        ui.add_space(4.0);
+        skip_button(ui)
     }
 
     fn draw_screen(&mut self, ui: &mut egui::Ui) -> Option<ConnectOutcome> {
@@ -132,7 +203,90 @@ impl ConnectApp {
                 ui.add_space(16.0);
                 ui.add(egui::Spinner::new().size(32.0).color(ACCENT));
                 ui.add_space(32.0);
-                skip_button(ui)
+                self.secondary_buttons(ui)
+            }
+
+            Screen::Phones {
+                hosts,
+                passcode,
+                note,
+            } => {
+                ui.label(
+                    RichText::new("Watch a phone's shared feed")
+                        .color(TEXT)
+                        .font(FontId::proportional(16.0)),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "Join the camera's Wi-Fi on this PC. On the phone: Operator Setup \u{203a} \
+                         Sharing \u{203a} Share this feed.",
+                    )
+                    .color(DIM)
+                    .font(FontId::proportional(13.0)),
+                );
+                ui.add_space(16.0);
+                let mut chosen = None;
+                if hosts.is_empty() {
+                    ui.add(egui::Spinner::new().size(24.0).color(ACCENT));
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Looking for phones\u{2026}")
+                            .color(DIM)
+                            .font(FontId::proportional(13.0)),
+                    );
+                } else {
+                    for host in hosts.iter() {
+                        let camera = if host.camera.is_empty() {
+                            "Sharing".to_string()
+                        } else {
+                            host.camera.clone()
+                        };
+                        if camera_card(ui, &host.name, &camera).clicked() {
+                            chosen = Some(host.clone());
+                        }
+                    }
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Passcode")
+                            .color(DIM)
+                            .font(FontId::proportional(13.0)),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(passcode)
+                            .password(true)
+                            .hint_text("if the phone set one")
+                            .desired_width(180.0),
+                    );
+                });
+                if !note.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(note.clone())
+                            .color(ERR)
+                            .font(FontId::proportional(13.0)),
+                    );
+                }
+                let passcode = passcode.clone();
+                if let Some(host) = chosen {
+                    return Some(ConnectOutcome::Phone {
+                        name: host.name,
+                        addresses: host.addresses,
+                        port: host.port,
+                        passcode,
+                    });
+                }
+                ui.add_space(16.0);
+                if ghost_button(ui, "\u{2190}  Back to cameras").clicked() {
+                    self.phones_stop
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    self.phones_rx = None;
+                    let _ = self.tx.send(BleCmd::Scan);
+                    self.screen = Screen::Scanning;
+                }
+                None
             }
 
             Screen::Choose(cameras) => {
@@ -179,7 +333,7 @@ impl ConnectApp {
                     return None;
                 }
                 ui.add_space(8.0);
-                skip_button(ui)
+                self.secondary_buttons(ui)
             }
 
             Screen::Pairing { label, camera } => {
@@ -307,7 +461,7 @@ impl ConnectApp {
                     }
                     ui.add_space(8.0);
                 }
-                skip_button(ui)
+                self.secondary_buttons(ui)
             }
         }
     }
@@ -315,8 +469,32 @@ impl ConnectApp {
 
 impl eframe::App for ConnectApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Drain events from the worker.
+        if self.want_phones {
+            self.want_phones = false;
+            self.browse_phones();
+        }
+        // What the phone browser found.
+        if let Some(rx) = self.phones_rx.as_ref() {
+            let mut latest = None;
+            while let Ok(found) = rx.try_recv() {
+                latest = Some(found);
+            }
+            if let (Some(found), Screen::Phones { hosts, note, .. }) = (latest, &mut self.screen) {
+                match found {
+                    Ok(list) => *hosts = list,
+                    Err(error) => *note = error,
+                }
+            }
+        }
+        if matches!(self.screen, Screen::Phones { .. }) {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        // Drain events from the worker. A scan that finishes after the operator went to
+        // the phone screen must not pull them back.
         while let Ok(ev) = self.rx.try_recv() {
+            if matches!(self.screen, Screen::Phones { .. }) {
+                continue;
+            }
             match ev {
                 BleEvent::Scanning => {
                     self.screen = Screen::Scanning;
@@ -813,6 +991,17 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
 /// Opens the connection screen and returns when the user connects, skips, or quits.
 #[cfg(opc_core_linked)]
 pub fn run() -> ConnectOutcome {
+    run_with(false)
+}
+
+/// The connection screen opened straight on the phones sharing a feed.
+#[cfg(opc_core_linked)]
+pub fn run_on_phones() -> ConnectOutcome {
+    run_with(true)
+}
+
+#[cfg(opc_core_linked)]
+fn run_with(start_on_phones: bool) -> ConnectOutcome {
     let gatt = GattMap::from_core();
     let ble_available = gatt.is_some();
 
@@ -823,7 +1012,7 @@ pub fn run() -> ConnectOutcome {
 
     thread::spawn(move || ble_worker(gatt, cmd_rx, evt_tx));
 
-    let app = ConnectApp::new(cmd_tx, evt_rx, ble_available, arc2);
+    let app = ConnectApp::new(cmd_tx, evt_rx, ble_available, arc2, start_on_phones);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

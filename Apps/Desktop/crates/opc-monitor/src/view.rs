@@ -7,9 +7,12 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use opc_camera::Command;
 use opc_camera::Recovery;
 use opc_chrome::Screen;
 use opc_decode::{Codec, Decoder, OwnedPicture};
+use opc_monitor::phone::{self, FromPhone, PhoneLink, PhoneTarget, Proxy};
+use opc_monitor::sheets::PhoneControl;
 use opc_render::{write_png, FeedRenderer, Lut, Presented};
 use opc_vcam::{ComponentReport, VirtualCamera};
 
@@ -40,6 +43,14 @@ pub struct Options {
     /// Which body this is, so the status decoder reads its own encodings.
     pub model_id: Option<i32>,
     pub still: PathBuf,
+    /// A phone to watch instead of a camera to link.
+    pub phone: Option<PhoneTarget>,
+}
+
+/// Where the picture comes from: the camera's own datalink, or a phone sharing its.
+enum Feed {
+    Camera(Link),
+    Phone(PhoneLink),
 }
 
 struct Unit {
@@ -53,7 +64,7 @@ struct View {
     renderer: Option<FeedRenderer>,
     window: Option<Window>,
     shell: Shell,
-    link: Link,
+    link: Feed,
     decoder: Option<Decoder>,
     pending: Vec<Unit>,
     latest: Option<OwnedPicture>,
@@ -79,6 +90,8 @@ struct View {
     last_pad_at: f64,
     /// Where the camera is, for a reconnect.
     remote: Option<std::net::SocketAddr>,
+    /// The phone, for a reconnect, when the feed is a phone's.
+    phone: Option<PhoneTarget>,
     model_id: Option<i32>,
     media: MediaDriver,
     /// A name for the cache folder: the body's model id, or "camera".
@@ -101,7 +114,7 @@ impl View {
     fn carry_out(&mut self, intents: Vec<Intent>, event_loop: &ActiveEventLoop) {
         for intent in intents {
             match intent {
-                Intent::Send(command) => self.link.send(command),
+                Intent::Send(command) => self.send(command),
                 Intent::Still => self.take_still = true,
                 Intent::Quit => event_loop.exit(),
                 Intent::ToggleFullscreen => {
@@ -114,7 +127,7 @@ impl View {
                     let now = self.now();
                     let camera_id = self.camera_id.clone();
                     for command in self.media.action(&mut self.shell, action, &camera_id, now) {
-                        self.link.send(command);
+                        self.send(command);
                     }
                 }
                 Intent::Reconnect => self.reconnect(),
@@ -122,6 +135,7 @@ impl View {
                 Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
                 Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
                 Intent::OpenUrl(url) => self.open_url(&url),
+                Intent::PhoneControl(want) => self.phone_control(want),
             }
         }
         while let Some(request) = self.shell.take_lut_change() {
@@ -195,11 +209,76 @@ impl View {
 
     /// Tears the datalink down and opens a fresh one, as the Link tab asks.
     fn reconnect(&mut self) {
-        let (session_id, base_seq) = fresh_session();
-        self.link = Link::open(self.remote, session_id, base_seq, self.model_id);
+        self.link = match self.phone.clone() {
+            Some(target) => Feed::Phone(PhoneLink::open(target)),
+            None => {
+                let (session_id, base_seq) = fresh_session();
+                Feed::Camera(Link::open(self.remote, session_id, base_seq, self.model_id))
+            }
+        };
         self.latest = None;
         self.shell.set_phase(Phase::Waiting);
         self.shell.say("RECONNECTING");
+    }
+
+    /// Puts a command on whichever link this is. On a phone, only what the relay wire
+    /// carries goes out, and only once the phone has granted control; the first ask
+    /// without it is the request.
+    fn send(&mut self, command: Command) {
+        match &self.link {
+            Feed::Camera(link) => link.send(command),
+            Feed::Phone(link) => {
+                let recording = self.shell.status().is_recording;
+                match phone::proxy(&command, recording) {
+                    Proxy::Quiet => {}
+                    Proxy::Unavailable(label) => {
+                        self.shell.say(&phone::unavailable_notice(label));
+                    }
+                    Proxy::Send(relay) => match self.shell.phone_control() {
+                        Some(PhoneControl::Held) => link.send(relay),
+                        Some(PhoneControl::Available) => {
+                            link.control(true);
+                            self.shell.say("CONTROL REQUESTED · GRANT IT ON THE PHONE");
+                        }
+                        Some(PhoneControl::Requested) => {
+                            self.shell.say("WAITING FOR THE PHONE TO GRANT CONTROL");
+                        }
+                        Some(PhoneControl::HeldBy(name)) => {
+                            let name = name.clone();
+                            self.shell
+                                .say(&format!("{} HOLDS CONTROL", name.to_uppercase()));
+                        }
+                        Some(PhoneControl::NotOffered) | None => {
+                            self.shell.say("THE PHONE IS NOT OFFERING CONTROL");
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+    /// The Link tab's Request / Release, on a phone feed.
+    fn phone_control(&mut self, want: bool) {
+        if let Feed::Phone(link) = &self.link {
+            link.control(want);
+            self.shell.say(if want {
+                "CONTROL REQUESTED · GRANT IT ON THE PHONE"
+            } else {
+                "CONTROL RELEASED"
+            });
+        }
+    }
+
+    fn note_presented(&self) {
+        if let Feed::Camera(link) = &self.link {
+            link.note_presented();
+        }
+    }
+
+    fn note_decoder_failed(&self, failed: bool) {
+        if let Feed::Camera(link) = &self.link {
+            link.note_decoder_failed(failed);
+        }
     }
 
     /// Writes everything a bug report needs next to the LUT folder.
@@ -234,11 +313,11 @@ impl View {
     fn carry_out_quietly(&mut self, intents: Vec<Intent>, now: f64) {
         for intent in intents {
             match intent {
-                Intent::Send(command) => self.link.send(command),
+                Intent::Send(command) => self.send(command),
                 Intent::Media(action) => {
                     let camera_id = self.camera_id.clone();
                     for command in self.media.action(&mut self.shell, action, &camera_id, now) {
-                        self.link.send(command);
+                        self.send(command);
                     }
                 }
                 Intent::Reconnect => self.reconnect(),
@@ -246,6 +325,7 @@ impl View {
                 Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
                 Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
                 Intent::OpenUrl(url) => self.open_url(&url),
+                Intent::PhoneControl(want) => self.phone_control(want),
                 Intent::Still | Intent::Quit | Intent::ToggleFullscreen => {}
             }
         }
@@ -293,9 +373,54 @@ impl View {
         }
     }
 
+    /// Takes everything the phone thread has posted.
+    fn pump_phone(&mut self, events: Vec<FromPhone>) {
+        for event in events {
+            match event {
+                FromPhone::Waiting(text) => {
+                    self.shell.set_phase(Phase::Waiting);
+                    self.shell.note_recovery(&text);
+                }
+                FromPhone::Joined(info) => {
+                    self.shell
+                        .set_link_info(&format!("Phone relay · {}", info.host));
+                    self.shell.set_phone(Some(info));
+                    self.shell.set_phase(Phase::Waiting);
+                }
+                FromPhone::Info(info) => {
+                    let granted = info.control == PhoneControl::Held
+                        && self.shell.phone_control() != Some(&PhoneControl::Held);
+                    self.shell.set_phone(Some(info));
+                    if granted {
+                        self.shell.say("THE PHONE GRANTED CONTROL");
+                    }
+                }
+                FromPhone::Picture(bytes) => {
+                    let keyframe = is_keyframe(&bytes);
+                    self.pending.push(Unit { keyframe, bytes });
+                }
+                FromPhone::Status(status) => {
+                    self.shell.set_status(*status);
+                    if matches!(self.shell.phase(), Phase::Waiting) && self.latest.is_some() {
+                        self.shell.set_phase(Phase::Live);
+                    }
+                }
+                FromPhone::Lost(reason) => self.shell.set_phase(Phase::Failed(reason)),
+            }
+        }
+    }
+
     /// Takes everything the camera thread has posted.
     fn pump_camera(&mut self) {
-        for event in self.link.drain() {
+        let events = match &self.link {
+            Feed::Camera(link) => link.drain(),
+            Feed::Phone(link) => {
+                let events = link.drain();
+                self.pump_phone(events);
+                return;
+            }
+        };
+        for event in events {
             match event {
                 FromCamera::Opened => {
                     self.shell.set_phase(Phase::Waiting);
@@ -353,7 +478,7 @@ impl View {
         match Decoder::new(codec) {
             Ok(decoder) => {
                 self.decoder = Some(decoder);
-                self.link.note_decoder_failed(false);
+                self.note_decoder_failed(false);
                 // Everything queued was for the old decoder's state.
                 self.pending.clear();
                 self.latest = None;
@@ -362,7 +487,7 @@ impl View {
             Err(error) => {
                 eprintln!("could not rebuild the decoder: {error}");
                 self.decoder = None;
-                self.link.note_decoder_failed(true);
+                self.note_decoder_failed(true);
                 self.shell
                     .set_phase(Phase::Failed(format!("decoder unavailable: {error}")));
                 self.placeholder_presented = false;
@@ -373,7 +498,7 @@ impl View {
     fn note_decode_failure(&mut self, error: impl std::fmt::Display) {
         eprintln!("decoder failed: {error}");
         diagnostic(format_args!("decoder failed: {error}"));
-        self.link.note_decoder_failed(true);
+        self.note_decoder_failed(true);
         self.shell
             .set_phase(Phase::Failed(format!("decoder failed: {error}")));
         self.placeholder_presented = false;
@@ -522,7 +647,7 @@ impl View {
         self.last_pad_at = now;
         for intent in intents {
             if let Intent::Send(command) = intent {
-                self.link.send(command);
+                self.send(command);
             }
         }
     }
@@ -606,7 +731,7 @@ impl View {
         let intents = self.shell.tick(now);
         self.carry_out_quietly(intents, now);
         for command in self.media.tick(&mut self.shell, now) {
-            self.link.send(command);
+            self.send(command);
         }
 
         // A screen other than the viewfinder presents its own picture: black under the
@@ -674,7 +799,7 @@ impl View {
                     self.media.note_presented(now);
                 } else if !showing_placeholder {
                     self.shell.note_presented(now);
-                    self.link.note_presented();
+                    self.note_presented();
                 }
             }
             Ok(Presented::Rebuilt) => self.placeholder_presented = false,
@@ -963,8 +1088,18 @@ impl ApplicationHandler for View {
 
 /// Opens the camera link and a window on it, and runs until the window closes.
 pub fn run(options: Options) -> Result<(), String> {
-    let (session_id, base_seq) = fresh_session();
-    let link = Link::open(options.remote, session_id, base_seq, options.model_id);
+    let link = match options.phone.clone() {
+        Some(target) => Feed::Phone(PhoneLink::open(target)),
+        None => {
+            let (session_id, base_seq) = fresh_session();
+            Feed::Camera(Link::open(
+                options.remote,
+                session_id,
+                base_seq,
+                options.model_id,
+            ))
+        }
+    };
     let graded = options.lut.is_some();
 
     let mut view = View {
@@ -985,6 +1120,7 @@ pub fn run(options: Options) -> Result<(), String> {
             .ok(),
         last_pad_at: f64::NEG_INFINITY,
         remote: options.remote,
+        phone: options.phone.clone(),
         model_id: options.model_id,
         camera_id: options
             .model_id
@@ -1010,12 +1146,22 @@ pub fn run(options: Options) -> Result<(), String> {
         component_job: None,
     };
     view.start_component_job(opc_vcam::install::probe);
-    view.shell.set_link_info(&format!(
-        "Wi-Fi datalink · {}",
-        options
-            .remote
-            .map_or_else(|| "camera default".to_string(), |addr| addr.to_string())
-    ));
+    match &options.phone {
+        Some(target) => {
+            view.shell
+                .set_link_info(&format!("Phone relay · {}", target.name));
+            view.shell.set_phone(Some(opc_monitor::sheets::PhoneInfo {
+                host: target.name.clone(),
+                ..Default::default()
+            }));
+        }
+        None => view.shell.set_link_info(&format!(
+            "Wi-Fi datalink · {}",
+            options
+                .remote
+                .map_or_else(|| "camera default".to_string(), |addr| addr.to_string())
+        )),
+    }
     if let Some(pad) = view.pad.as_ref() {
         if let Some((_, gamepad)) = pad.gamepads().next() {
             view.shell.set_gamepad(Some(gamepad.name().to_string()));

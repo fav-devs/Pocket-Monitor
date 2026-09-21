@@ -72,10 +72,9 @@ pixels it produces.
 Cube at the feed raster, *then* stretch. Cubing after the upsample blotched D-Log2 on
 Android ([`../ANDROID.md`](../ANDROID.md)) and would here too.
 
-Only the first pass is new. Passes 2 and 3 are
-`Apps/Android/app/src/main/cpp/shaders/`, compiled from where they live rather than
-copied, so the grade a PC shows cannot drift from the grade a phone shows. Android
-converts with a `VkSamplerYcbcrConversion` over the decoder's AHardwareBuffer; software
+Only the first pass is new. Passes 2 and 3 are the feed, blit and peaking programs that
+came over from the retired Android shell, now in `crates/opc-render/shaders/`. Android
+converted with a `VkSamplerYcbcrConversion` over the decoder's AHardwareBuffer; software
 decode hands over three separate planes, so that conversion is written out in
 `crates/opc-render/shaders/ycbcr.frag` using the same BT.709 limited-range matrix.
 

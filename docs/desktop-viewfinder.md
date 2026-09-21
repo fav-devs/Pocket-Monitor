@@ -1,12 +1,15 @@
 # The desktop viewfinder
 
-`opc-monitor` is the laptop as a viewfinder: a window on the camera itself, not on a
-phone's shared feed. That is the difference between it and `opc-watcher`, and it is the
-whole reason the crate exists.
+`opc-monitor` is the laptop as a viewfinder: a window on the camera itself, with every
+control the camera has. It can also sit on the feed an iPhone is sharing (see [Watching
+a phone](#watching-a-phone)), which is what the older `opc-watcher` did with a bare
+window; here the same picture gets the assists, the scopes, the LUTs and the virtual
+camera.
 
 ```
 opc-monitor view [--camera HOST:PORT] [--look NAME | --lut FILE] [--model ID]
                  [--still PATH]
+opc-monitor view --phone NAME [--phone-at IP:PORT] [--passcode P]
 opc-monitor keys
 ```
 
@@ -295,6 +298,39 @@ path is pinned to the kernel header, the Windows source is type-checked against 
 real bindings on the Windows target, and the macOS extension and facade are written to
 Apple's camera-extension pattern but not compiled. Each needs one run on its machine.
 
+## Watching a phone
+
+An iPhone running OpenPocketCine can share its camera session: Operator Setup › Sharing
+› **Share this feed**. The phone keeps the camera link, decodes once, re-encodes, and
+serves watchers on the camera's Wi-Fi. The viewfinder can be one of them, so the phone
+does the pairing and the laptop does the monitoring, and both see the picture at once.
+
+Join the camera's Wi-Fi on the PC first; hosts are only advertised there. The connection
+screen's **Watch a phone's shared feed** lists the phones it finds, takes the passcode if
+the phone set one, and opens the viewfinder on the one you pick. From a shell,
+`--phone NAME` finds the phone by its advertised name, `--phone-at IP:PORT` skips the
+search, and the passcode comes from `--passcode` or `OPC_PHONE_PASSCODE`.
+
+What changes on a phone's feed:
+
+- The picture is the phone's re-encode of the identity raster: after extra-mirror,
+  before its own LUT and assists. Every assist, scope and cube here works on it, and so
+  does the virtual camera. There is no audio on the wire, so the meters stay dark.
+- The readouts come from the phone's state message: record, battery, ISO, shutter, the
+  format label, the zoom. The FORMAT chip shows the phone's label rather than the
+  camera's codes.
+- Control is a lease the phone grants. The first proxied control you touch asks for it
+  and the phone's operator sees Grant / Deny; the Link tab shows who holds it and has
+  **Request** / **Release**. With the lease, record, tap to focus, ISO, shutter, white
+  balance, colour and zoom go through. The gimbal, the format, tracking, motion control,
+  audio and the library need the camera's own link, and say so on the top bar when
+  asked.
+- **Reconnect** on the Link tab joins the phone again. The core's retry ladder runs first
+  on a drop, and the phone can revoke the lease at any time.
+
+None of this has met a real phone yet; the wire is the same core code the phone encodes
+with, so a mismatch is a bug, not a design gap.
+
 ## Keys
 
 | | | | |
@@ -375,6 +411,7 @@ to something nobody asked for.
 ```
 opc-monitor (bin)
 ├── link.rs   the datalink on its own thread
+├── phone.rs  (in the library) a phone's shared feed on its own thread, via opc-relay
 ├── view.rs   winit: events in, intents out
 └── shell.rs  (in the library) every decision
 ```
