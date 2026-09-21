@@ -24,6 +24,12 @@ Steps 1 and 3 are the parts a PC does differently from a phone. Everything after
 the same protocol the phones speak, and the desktop shell reaches it through the same
 core.
 
+Step 3 has an alternative: the camera joins the operator's network instead (station
+mode, provisioned over Bluetooth with the core's `MulticamCommands`), and step 4 sends
+to the address the LAN search finds it at, verified by its Wi-Fi identity. The PC then
+never leaves its own Wi-Fi. See [the camera on your
+Wi-Fi](desktop-viewfinder.md#the-camera-on-your-wi-fi).
+
 ## What the core owns, and what the shell owns
 
 | The core decides | The shell does |

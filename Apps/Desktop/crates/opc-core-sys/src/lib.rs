@@ -807,6 +807,29 @@ extern "C" {
     ) -> i64;
     pub fn opc_join_frequency_hint(out: *mut u8, capacity: usize) -> i64;
 
+    // Station Wi-Fi: the camera on a network of the operator's, not its own.
+    pub fn opc_station_wifi_work_mode(seq: u16, out: *mut u8, capacity: usize) -> i64;
+    pub fn opc_station_mode(enabled: i32, seq: u16, out: *mut u8, capacity: usize) -> i64;
+    pub fn opc_station_join(
+        ssid: *const c_char,
+        password: *const c_char,
+        seq: u16,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
+    pub fn opc_station_video_mode(seq: u16, out: *mut u8, capacity: usize) -> i64;
+    /// 0 already station, 1 access point, 2 no getter on this body, 3 unsupported reply.
+    pub fn opc_station_role_decision(reply: *const u8, count: usize, allow_missing: i32) -> i32;
+    pub fn opc_station_setter_accepts(reply: *const u8, count: usize, missing_query: i32) -> i32;
+    /// 0 joined, 1 try again, 2 refused.
+    pub fn opc_station_join_decision(reply: *const u8, count: usize, attempt: i32) -> i32;
+    pub fn opc_station_join_policy(
+        attempts: *mut i32,
+        settle: *mut i32,
+        reply_timeout: *mut f64,
+        retry_delay: *mut i32,
+    );
+
     pub fn opc_watchdog_create() -> *mut c_void;
     pub fn opc_watchdog_destroy(handle: *mut c_void);
     pub fn opc_watchdog_tick(handle: *mut c_void, snapshot: *const OpcWatchdogSnapshot) -> i32;

@@ -12,7 +12,7 @@ The desktop app is actively being tested against an Osmo Pocket 3. Features mark
 
 | Area | Desktop capability | Status |
 | --- | --- | --- |
-| Connection | First-pair Bluetooth flow, camera Wi-Fi credential handoff, saved Windows Wi-Fi reconnect | In validation |
+| Connection | First-pair Bluetooth flow, camera Wi-Fi credential handoff, saved Windows Wi-Fi reconnect; or the camera on your own Wi-Fi, found there at every launch | In validation |
 | Live view | Direct camera feed, AVC/H.264 decode, GPU presentation, feed watchdog and recovery diagnostics | In validation |
 | Record controls | Start/stop, 3-second countdown, still capture, record-state feedback | Available |
 | Gimbal and lens | Pan/tilt, diagonal motion, recenter, selfie flip, zoom, gimbal-mode switching | Available |

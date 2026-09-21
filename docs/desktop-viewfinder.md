@@ -298,6 +298,48 @@ path is pinned to the kernel header, the Windows source is type-checked against 
 real bindings on the Windows target, and the macOS extension and facade are written to
 Apple's camera-extension pattern but not compiled. Each needs one run on its machine.
 
+## The camera on your Wi-Fi
+
+The camera normally hosts its own network and the PC has to join it, which costs the PC
+its internet. The Pocket can instead join a network you name — station mode, the same
+role the phone apps use for their multi-camera stage — and then the viewfinder finds it
+on your own Wi-Fi and links it there directly, with every control, while the PC stays
+online.
+
+Pair as usual. On the **Pairing complete** screen pick **Put the camera on my Wi-Fi
+instead**, type the network's name (the PC's own is filled in) and its password, and
+press **Join Wi-Fi**. Over Bluetooth the app then reads the camera's identity, asks its
+Wi-Fi role, switches it to station mode and reads the role back until the radio has
+turned, gives the radio ten seconds, and sends the join, up to three times as the core's
+policy allows. The password goes to the camera and is not kept on the PC. Then the app
+looks for the camera: every address on the PC's network is asked for the camera's poke
+port, and each that answers is opened as a datalink and asked for its Wi-Fi identity,
+which has to match what the camera said over Bluetooth. Only that match makes an
+address the camera's.
+
+Once found, the network name, the identity and the address are remembered beside the
+saved-camera file, and every later launch looks there first, last address before the
+subnet, with no Wi-Fi change and no Bluetooth. If the camera is not on the network the
+launch falls through to the saved camera Wi-Fi and then the pairing screen. **Return
+the camera to its own Wi-Fi**, on the same screen, puts it back in access-point mode
+and forgets the network.
+
+What to know:
+
+- Use a 2.4 GHz network, or one that offers 2.4 GHz alongside 5 GHz; the cameras' radios
+  do not all take every 5 GHz channel. WPA2-Personal is what has been seen to work.
+- Routers with client isolation (a guest network, usually) let the camera join but keep
+  the PC from reaching it. The search then fails with a note saying so.
+- The search walks at most a /22. A bigger subnet is refused rather than scanned.
+- Pocket 3 and Nano may answer the role query with "no such getter"; the app switches
+  them without a readback, as the phone apps do. The Pocket 4 family is asked to select
+  video mode first. Other bodies are treated strictly.
+- The join reply sometimes never comes over Bluetooth. The app then searches anyway,
+  since a lost reply is not a failed join.
+
+The order and every reply reading come from the core's station commands and policies,
+observed on hardware by the upstream project; none of it has been run from this PC yet.
+
 ## Watching a phone
 
 An iPhone running OpenPocketCine can share its camera session: Operator Setup › Sharing
