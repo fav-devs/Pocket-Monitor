@@ -441,7 +441,8 @@ impl Presenter {
             .image_indices(&indices);
         // Safety: same.
         let outcome = unsafe { self.loader.queue_present(gpu.queue, &present) };
-        self.frame = (self.frame + 1) % FRAMES_IN_FLIGHT;
+        // One frame in flight today; the rotation stays for the day that changes.
+        self.frame = (self.frame + 1).checked_rem(FRAMES_IN_FLIGHT).unwrap_or(0);
         match outcome {
             Ok(false) => Ok(Presented::Shown),
             Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {

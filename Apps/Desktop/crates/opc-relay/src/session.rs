@@ -57,6 +57,14 @@ impl Default for WatcherOptions {
     }
 }
 
+/// Something the shell wants on the wire while the session runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outgoing {
+    Command(ffi::Command),
+    RequestControl,
+    ReleaseControl,
+}
+
 /// What the shell is told as a join progresses. Every method has a default so a caller
 /// can implement only the parts it draws.
 pub trait WatcherObserver {
@@ -69,6 +77,11 @@ pub trait WatcherObserver {
     /// Returns false to leave the feed.
     fn should_continue(&mut self) -> bool {
         true
+    }
+    /// The next thing to send, if any. Asked repeatedly each turn of the loop; whatever
+    /// is handed over while the join is not live is dropped, not queued.
+    fn outgoing(&mut self) -> Option<Outgoing> {
+        None
     }
 }
 
@@ -166,9 +179,10 @@ impl WatcherSession {
             match incoming {
                 Ok(Some(message)) => {
                     self.handle(message.kind, &message.payload, observer)?;
+                    self.flush_outgoing(observer);
                     continue;
                 }
-                Ok(None) => {}
+                Ok(None) => self.flush_outgoing(observer),
                 Err(error) => self.connection_lost(&error.to_string(), observer),
             }
 
@@ -185,6 +199,24 @@ impl WatcherSession {
                         self.begin_reconnect(observer);
                     }
                 }
+            }
+        }
+    }
+
+    /// Sends what the observer has queued, while the join is live.
+    fn flush_outgoing(&mut self, observer: &mut dyn WatcherObserver) {
+        while let Some(outgoing) = observer.outgoing() {
+            if self.status != Status::Live {
+                continue;
+            }
+            let sent = match outgoing {
+                Outgoing::Command(command) => self.send_command(command),
+                Outgoing::RequestControl => self.request_control(),
+                Outgoing::ReleaseControl => self.release_control(),
+            };
+            if let Err(error) = sent {
+                self.connection_lost(&error.to_string(), observer);
+                return;
             }
         }
     }

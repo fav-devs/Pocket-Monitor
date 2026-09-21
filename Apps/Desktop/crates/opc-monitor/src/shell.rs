@@ -80,6 +80,8 @@ pub enum Intent {
     ComponentRemove,
     /// Show a page in the operator's browser.
     OpenUrl(String),
+    /// Ask the phone hosting the feed for camera control (true), or give it back.
+    PhoneControl(bool),
 }
 
 /// The gimbal's live mode, as commanded. The body's GET cannot tell FPV from Tilt
@@ -726,8 +728,12 @@ impl Shell {
         }
     }
 
-    /// The FORMAT chip: the pinned label while a SET is out, else what the body says.
+    /// The FORMAT chip: the pinned label while a SET is out, else what the body says —
+    /// or what the phone says, since its state message carries the label, not the codes.
     pub fn format_label(&self, now: f64) -> String {
+        if let Some(phone) = self.setup.phone.as_ref().filter(|p| !p.format.is_empty()) {
+            return phone.format.clone();
+        }
         match &self.format_pin {
             Some((_, _, label, deadline)) if now < *deadline => label.clone(),
             _ => self.hud.status.format_label(),
@@ -1015,6 +1021,24 @@ impl Shell {
         self.setup.renderer = name.to_string();
     }
 
+    /// The phone hosting this feed, or none when the camera is linked directly.
+    pub fn set_phone(&mut self, phone: Option<sheets::PhoneInfo>) {
+        if self.setup.phone != phone {
+            self.setup.phone = phone;
+            self.chrome_stale = true;
+        }
+    }
+
+    /// Whether the picture comes through a phone rather than the camera's own link.
+    pub fn via_phone(&self) -> bool {
+        self.setup.phone.is_some()
+    }
+
+    /// Whether the phone has granted this viewfinder camera control.
+    pub fn phone_control(&self) -> Option<&sheets::PhoneControl> {
+        self.setup.phone.as_ref().map(|phone| &phone.control)
+    }
+
     /// What the window found out about the platform camera component.
     pub fn set_component(&mut self, report: opc_vcam::ComponentReport) {
         if self.setup.component != report {
@@ -1080,7 +1104,7 @@ impl Shell {
         let status = &self.hud.status;
         let toggles = self.toggles;
         format!(
-            "OpenPocketCine desktop {}\nuptime {now:.1} s\n{link}\nphase {phase}\nbody {model} (id {id})\nfirmware {fw}\nrenderer {renderer}\nrecovery {recovery}\nwindow {w}x{h}\nsource {src:?}\nformat {format}\ncolour mode {color:?} iso {iso:?}\nzoom {zoom:?} stops {stops:?}\nrecording {rec}\ntoggles {toggles:?}\nprefs {prefs:?}\nassists {assists:?}\nscopes {scopes:?}\ncamera component {component:?}\nvirtual camera {vcam}\n",
+            "OpenPocketCine desktop {}\nuptime {now:.1} s\n{link}\nphase {phase}\nbody {model} (id {id})\nfirmware {fw}\nrenderer {renderer}\nrecovery {recovery}\nwindow {w}x{h}\nsource {src:?}\nformat {format}\ncolour mode {color:?} iso {iso:?}\nzoom {zoom:?} stops {stops:?}\nrecording {rec}\ntoggles {toggles:?}\nprefs {prefs:?}\nassists {assists:?}\nscopes {scopes:?}\ncamera component {component:?}\nvirtual camera {vcam}\nphone {phone:?}\n",
             env!("CARGO_PKG_VERSION"),
             link = self.setup.link,
             phase = self.setup.phase,
@@ -1103,6 +1127,7 @@ impl Shell {
             scopes = self.scope_options,
             component = self.setup.component,
             vcam = self.setup.vcam,
+            phone = self.setup.phone,
         )
     }
 
@@ -1289,6 +1314,11 @@ impl Shell {
     /// The desktop-side settings, as the sheets show them.
     pub fn prefs(&self) -> Prefs {
         self.prefs
+    }
+
+    /// The sheet context, for tests that build a tab the way the shell does.
+    pub fn sheet_context_for_test(&self) -> sheets::Context<'_> {
+        self.sheet_context()
     }
 
     fn sheet_context(&self) -> sheets::Context<'_> {
@@ -1702,6 +1732,7 @@ impl Shell {
                 "http://127.0.0.1:{}/",
                 self.prefs.vcam_port
             ))],
+            Pick::PhoneControl(want) => vec![Intent::PhoneControl(want)],
             Pick::VcamClean(clean) => {
                 self.prefs.vcam_clean = clean;
                 Vec::new()
@@ -2514,6 +2545,12 @@ impl Shell {
     /// The gallery button, or `G`: the library comes up over the picture.
     pub fn open_library(&mut self) -> Vec<Intent> {
         if self.screen == Screen::Library {
+            return Vec::new();
+        }
+        // The catalogue comes over the camera's own datalink, which a phone does not
+        // share.
+        if self.setup.phone.is_some() {
+            self.set_notice(&crate::phone::unavailable_notice("THE LIBRARY"));
             return Vec::new();
         }
         self.close_sheet();

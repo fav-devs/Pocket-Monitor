@@ -156,6 +156,48 @@ pub struct SetupInfo {
     pub vcam: String,
     /// The platform camera component: installed, not, or being worked on.
     pub component: opc_vcam::ComponentReport,
+    /// The phone whose shared feed this is, when the source is a phone.
+    pub phone: Option<PhoneInfo>,
+}
+
+/// Who holds camera control on a phone's shared feed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PhoneControl {
+    /// The phone does not take control requests.
+    #[default]
+    NotOffered,
+    /// Nobody holds it; a request would put the Grant sheet on the phone.
+    Available,
+    /// Asked; waiting for the phone's operator.
+    Requested,
+    /// This viewfinder holds it.
+    Held,
+    /// Another watcher holds it.
+    HeldBy(String),
+}
+
+impl PhoneControl {
+    pub fn label(&self) -> String {
+        match self {
+            Self::NotOffered => "Not offered by the phone".to_string(),
+            Self::Available => "Not requested".to_string(),
+            Self::Requested => "Requested · grant it on the phone".to_string(),
+            Self::Held => "Held by this viewfinder".to_string(),
+            Self::HeldBy(name) => format!("Held by {name}"),
+        }
+    }
+}
+
+/// The phone hosting the shared feed, as its hello and state messages describe it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PhoneInfo {
+    pub host: String,
+    pub camera: String,
+    /// The format label the phone shows, e.g. "4K/60".
+    pub format: String,
+    pub color: String,
+    pub live_fps: String,
+    pub control: PhoneControl,
 }
 
 impl Prefs {
@@ -273,6 +315,8 @@ pub enum Pick {
     ComponentRemove,
     /// Show the stream's page in the browser.
     OpenStream,
+    /// Ask the phone for camera control (true) or give it back.
+    PhoneControl(bool),
     /// A chip that is shown but does nothing here yet.
     Nothing,
 }
@@ -1136,6 +1180,28 @@ fn readout(title: &str, value: &str) -> RowBuilder {
 
 fn link_rows(context: Context) -> Vec<RowBuilder> {
     let setup = context.setup;
+    if let Some(phone) = &setup.phone {
+        let can_ask = matches!(
+            phone.control,
+            PhoneControl::Available | PhoneControl::Requested | PhoneControl::Held
+        );
+        return vec![
+            readout("Transport", &setup.link),
+            readout("Phase", &setup.phase),
+            readout("Phone", &phone.host),
+            readout("Camera", &phone.camera),
+            readout("Control", &phone.control.label()),
+            RowBuilder::new("Camera control")
+                .option("Request", false, Pick::PhoneControl(true))
+                .option("Release", false, Pick::PhoneControl(false))
+                .enabled(can_ask),
+            RowBuilder::placeholder(
+                "Via the phone",
+                "Record, tap to focus, ISO, shutter, white balance, colour and zoom. The gimbal, format, tracking and the library need a direct link.",
+            ),
+            RowBuilder::new("Session").option("Reconnect", false, Pick::Reconnect),
+        ];
+    }
     vec![
         readout("Transport", &setup.link),
         readout("Phase", &setup.phase),

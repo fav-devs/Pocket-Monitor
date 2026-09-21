@@ -1,6 +1,9 @@
 // A release operator build is a normal Windows app, not a terminal program. Startup,
 // connection and crash diagnostics still go to `opc-monitor.log` beside the executable.
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 //! The viewfinder.
 //!
@@ -53,6 +56,7 @@ OpenPocketCine desktop viewfinder
 USAGE:
     opc-monitor view [--camera HOST:PORT] [--look NAME | --lut FILE] [--model ID]
                      [--still PATH]
+    opc-monitor watch [NAME] [--phone-at IP:PORT] [--passcode P] [--look NAME | --lut FILE]
     opc-monitor demo
     opc-monitor keys
     opc-monitor version
@@ -60,6 +64,10 @@ USAGE:
 Join the camera's Wi-Fi first; the viewfinder talks to it directly.
 `--camera` points the link somewhere other than the camera's usual address, which is
 how a capture or a fake camera is driven.
+`watch` takes the feed an iPhone running OpenPocketCine is sharing (Operator Setup ›
+Sharing › Share this feed) instead of linking the camera; both must be on the camera's
+Wi-Fi. Without a NAME it opens the list of phones sharing. `view --phone NAME` is the
+same thing. The passcode may also come from OPC_PHONE_PASSCODE.
 `demo` opens the UI with a synthetic frame and no camera required.";
 
 const KEYS: &str = "\
@@ -83,7 +91,7 @@ rests the moment it comes up.";
 
 /// A saved-profile reconnect is the fast path, not a reason to make an operator stare
 /// at a blank desktop while Windows waits through its full WLAN timeout.
-#[cfg(opc_core_linked)]
+#[cfg(all(opc_core_linked, target_os = "windows"))]
 const SAVED_WIFI_FAST_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 fn main() -> ExitCode {
@@ -134,6 +142,10 @@ fn main() -> ExitCode {
             log!("opening viewfinder");
             view_camera(&[])
         }
+        Some("watch") => {
+            log!("opening viewfinder on a phone");
+            watch_phone(&args[1..])
+        }
         Some("keys") => {
             println!("{KEYS}");
             Ok(())
@@ -176,6 +188,34 @@ fn view_camera(_args: &[String]) -> Result<(), String> {
     Err(NO_CORE.to_string())
 }
 
+#[cfg(not(opc_core_linked))]
+fn watch_phone(_args: &[String]) -> Result<(), String> {
+    Err(NO_CORE.to_string())
+}
+
+/// `watch NAME` is `view --phone NAME`; bare `watch` opens the connection screen on the
+/// list of phones sharing, which a saved camera would otherwise skip past.
+#[cfg(opc_core_linked)]
+fn watch_phone(args: &[String]) -> Result<(), String> {
+    use connect::ConnectOutcome;
+
+    let name = args.first().filter(|word| !word.starts_with("--")).cloned();
+    if let Some(name) = name {
+        let mut forwarded = vec!["--phone".to_string(), name];
+        forwarded.extend(args[1..].iter().cloned());
+        return view_camera(&forwarded);
+    }
+    match connect::run_on_phones() {
+        ConnectOutcome::Phone {
+            name,
+            addresses,
+            port,
+            passcode,
+        } => relaunch_phone_viewfinder(args, &name, &addresses, port, &passcode),
+        ConnectOutcome::Quit | ConnectOutcome::Skip | ConnectOutcome::Connected { .. } => Ok(()),
+    }
+}
+
 #[cfg(opc_core_linked)]
 fn view_camera(args: &[String]) -> Result<(), String> {
     use connect::ConnectOutcome;
@@ -185,6 +225,35 @@ fn view_camera(args: &[String]) -> Result<(), String> {
     let still = flag(args, "still")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("opc-still.png"));
+
+    // A phone named on the command line is watched straight away, no screen.
+    if let Some(name) = flag(args, "phone") {
+        let (addresses, port) = match flag(args, "phone-at") {
+            Some(text) => {
+                let at: std::net::SocketAddr = text
+                    .parse()
+                    .map_err(|_| format!("`{text}` is not an ip:port"))?;
+                (vec![at.ip()], at.port())
+            }
+            None => (Vec::new(), 0),
+        };
+        let passcode = flag(args, "passcode")
+            .map(str::to_string)
+            .or_else(|| std::env::var("OPC_PHONE_PASSCODE").ok())
+            .unwrap_or_default();
+        return view::run(view::Options {
+            remote: None,
+            lut,
+            model_id: None,
+            still,
+            phone: Some(opc_monitor::phone::PhoneTarget {
+                name: name.to_string(),
+                addresses,
+                port,
+                passcode,
+            }),
+        });
+    }
 
     // If the caller gave --camera, skip the connection screen and go straight to the feed.
     let remote_str = flag(args, "camera");
@@ -224,6 +293,15 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         let paired_model = match connect::run() {
             ConnectOutcome::Quit => return Ok(()),
             ConnectOutcome::Skip => None,
+            ConnectOutcome::Phone {
+                name,
+                addresses,
+                port,
+                passcode,
+            } => {
+                relaunch_phone_viewfinder(args, &name, &addresses, port, &passcode)?;
+                return Ok(());
+            }
             ConnectOutcome::Connected {
                 ssid,
                 password,
@@ -249,6 +327,7 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         lut,
         model_id,
         still,
+        phone: None,
     })
 }
 
@@ -324,6 +403,40 @@ fn log_connection(message: &str) {
             }
         }
     }
+}
+
+/// The viewfinder on a phone's feed, in a fresh process after the screen closes. The
+/// passcode travels in the child's environment, not on its command line.
+#[cfg(opc_core_linked)]
+fn relaunch_phone_viewfinder(
+    args: &[String],
+    name: &str,
+    addresses: &[std::net::IpAddr],
+    port: u16,
+    passcode: &str,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let mut child_args = vec!["view".to_string(), "--phone".to_string(), name.to_string()];
+    if let Some(address) = addresses.first() {
+        child_args.push("--phone-at".to_string());
+        child_args.push(std::net::SocketAddr::new(*address, port).to_string());
+    }
+    for flag_name in ["look", "lut", "still"] {
+        if let Some(value) = flag(args, flag_name) {
+            child_args.push(format!("--{flag_name}"));
+            child_args.push(value.to_string());
+        }
+    }
+    let mut child = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    child.args(&child_args);
+    if !passcode.is_empty() {
+        child.env("OPC_PHONE_PASSCODE", passcode);
+    }
+    child
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not launch viewfinder: {error}"))
 }
 
 #[cfg(opc_core_linked)]
@@ -436,8 +549,7 @@ fn join_saved_camera_wifi(ssid: &str) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(500));
     }
     log_connection("timed out waiting for a camera DHCP address");
-    Err("Windows did not receive an address from the saved camera Wi-Fi within 12 seconds."
-        .into())
+    Err("Windows did not receive an address from the saved camera Wi-Fi within 12 seconds.".into())
 }
 
 /// A GUI process otherwise makes Windows flash a console for every `netsh` and

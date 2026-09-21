@@ -58,8 +58,8 @@ discovery.
 
 No relay decision is made in Rust, and no `.cube` is parsed here. Framing, payload
 limits, join rules, the retry ladder, the delivery-delay guard, every JSON shape, and
-the colour cube come from `OpenPocketViewCore`. The grade runs the Android shell's own
-shaders, compiled from where they live.
+the colour cube come from `OpenPocketViewCore`. The grade runs the shaders that came
+over from the retired Android shell, in `crates/opc-render/shaders/`.
 
 ## Status
 

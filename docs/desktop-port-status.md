@@ -32,9 +32,15 @@ bottom says what the body is set to, and the keyboard drives it.
 The chrome is a Slint Mimo replica with every button live (`opc-chrome`); the media
 library and player are `opc-media` (paging, HTTP, cache) driven by `opc-monitor/media.rs`.
 
+The viewfinder can also take its picture from a phone sharing its session
+(`--phone`, or the connection screen's **Watch a phone's shared feed**): the relayed
+HEVC goes down the same decoder, assists, scopes and virtual camera, the phone's state
+message fills the readouts, and the controls the relay wire carries go out once the phone
+grants the lease. The rest greys with a note (`opc-monitor/phone.rs`, `opc-relay`).
+
 `opc-watcher` is the other program and the older one: a PC second screen for a feed an
-iPhone is already hosting. It shares the decoder, the renderer and the core facade, and
-nothing else.
+iPhone is already hosting, with a bare window. It shares the decoder, the renderer and
+the core facade, and nothing else.
 
 ## The shape
 

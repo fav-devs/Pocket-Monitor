@@ -3,8 +3,8 @@
 //! This is the Android shell's Vulkan path with one pass replaced. Android imports the
 //! decoder's AHardwareBuffer and converts it with a `VkSamplerYcbcrConversion`; software
 //! decode on a PC produces three planes instead, so only that first pass differs. The
-//! grade, the cube sampling, and the stretch run the Android shell's own shaders,
-//! compiled from where they live so the two cannot drift.
+//! grade, the cube sampling, and the stretch run the programs that came over from the
+//! retired Android shell, in `shaders/` beside the desktop-only ones.
 //!
 //! Order matters and is the same as the phones': convert to RGB at the source raster,
 //! cube at that raster, and only then stretch. Cubing after the upsample blotched D-Log2

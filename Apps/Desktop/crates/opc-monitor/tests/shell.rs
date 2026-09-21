@@ -1636,3 +1636,62 @@ fn the_output_tab_installs_the_component_and_says_when_the_camera_needs_it() {
     );
     assert!(shell.diagnostics_text(1.0).contains("camera component"));
 }
+
+#[test]
+fn a_phone_feed_shows_the_phone_labels_and_refuses_what_the_wire_lacks() {
+    use opc_monitor::sheets::{build, PhoneControl, PhoneInfo, Pick, SheetKind};
+    let mut shell = framed();
+    shell.set_phase(Phase::Live);
+    shell.set_link_info("Phone relay · Studio iPhone");
+    shell.set_phone(Some(PhoneInfo {
+        host: "Studio iPhone".into(),
+        camera: "Osmo Pocket 3".into(),
+        format: "4K/60".into(),
+        color: "D-Log M".into(),
+        live_fps: "30".into(),
+        control: PhoneControl::Available,
+    }));
+    assert!(shell.via_phone());
+    // The FORMAT chip reads the phone's label, since no status codes come over the wire.
+    assert_eq!(shell.format_label(0.0), "4K/60");
+    // The library needs the camera's own datalink, so it does not open.
+    assert!(shell.open_library().is_empty());
+    assert!(shell.notice(0.0).contains("LIBRARY"));
+    // The Link tab carries the phone and a way to ask for control.
+    assert_eq!(
+        shell.pick_for_test(Pick::PhoneControl(true)),
+        [Intent::PhoneControl(true)]
+    );
+    let link = build(SheetKind::Settings, 3, shell.sheet_context_for_test());
+    let titles: Vec<&str> = link.sheet.rows.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "Transport",
+            "Phase",
+            "Phone",
+            "Camera",
+            "Control",
+            "Camera control",
+            "Via the phone",
+            "Session"
+        ]
+    );
+    assert_eq!(link.sheet.rows[4].options[0], "Not requested");
+    assert!(link.sheet.rows[5].enabled);
+    assert_eq!(link.pick(5, 1), Some(&Pick::PhoneControl(false)));
+    // Once the phone stops offering control, the row greys.
+    shell.set_phone(Some(PhoneInfo {
+        control: PhoneControl::NotOffered,
+        ..shell.setup().phone.clone().unwrap()
+    }));
+    let link = build(SheetKind::Settings, 3, shell.sheet_context_for_test());
+    assert!(!link.sheet.rows[5].enabled);
+    assert_eq!(shell.phone_control(), Some(&PhoneControl::NotOffered));
+    assert!(shell.diagnostics_text(1.0).contains("Studio iPhone"));
+    // Back on a direct link the Link tab is the camera's again.
+    shell.set_phone(None);
+    assert!(!shell.via_phone());
+    let link = build(SheetKind::Settings, 3, shell.sheet_context_for_test());
+    assert_eq!(link.sheet.rows.len(), 6);
+}

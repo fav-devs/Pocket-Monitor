@@ -182,7 +182,8 @@ impl Demo {
                 | Intent::Diagnostics
                 | Intent::ComponentInstall
                 | Intent::ComponentRemove
-                | Intent::OpenUrl(_) => {}
+                | Intent::OpenUrl(_)
+                | Intent::PhoneControl(_) => {}
             }
         }
     }

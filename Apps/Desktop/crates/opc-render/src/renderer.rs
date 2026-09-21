@@ -8,7 +8,8 @@
 //!    swapchain. The chrome never goes through the cube, so a HUD reads true.
 //!
 //! The order is the phones' order and is not an accident: cubing after the upsample
-//! blotched D-Log2 on Android. Every pass but the first is the Android shell's own shader.
+//! blotched D-Log2 on Android. Every pass but the first is a program that came over from
+//! the Android shell unchanged.
 
 use std::io::Cursor;
 
