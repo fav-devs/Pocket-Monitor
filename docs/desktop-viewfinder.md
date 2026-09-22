@@ -198,6 +198,15 @@ path, so it is graded too. Playback is from the file on disk, never streamed fro
 `/v2`: the camera parks `moov` at the end and serves no extension, which no player
 copes with.
 
+**Sound.** The clip's audio track plays through the machine's default output. The
+reader decodes it beside the pictures, resampled to the device's rate as interleaved
+stereo, and the player hands it to the device a little ahead of the frame on screen —
+80 ms, enough to ride out a late frame — dropping anything already behind the clock
+after a scrub. Pause holds the device; a seek clears it; any speed but the clip's own
+(the conform preview) plays silent. A clip without an audio track, or a machine with no
+output device, plays as before. Live view has no sound to play: the datalink carries
+pictures and the camera's own meter readings, not audio.
+
 **Conform preview.** A high-frame-rate take offers the core's `ConformPreview` targets
 (the rates below its capture rate, from `opc_conform_targets`); the chip cycles
 `Conform → 120 → 24 → 120 → 60 → Conform`, and the player's clock runs at the core's

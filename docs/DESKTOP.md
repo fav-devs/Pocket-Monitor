@@ -120,7 +120,7 @@ GLSL compiler (`glslc` from the Vulkan SDK, or `glslangValidator` from glslang).
 
 ```sh
 # Debian or Ubuntu
-sudo apt install libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev glslang-tools
+sudo apt install libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libasound2-dev libvulkan-dev glslang-tools
 
 just desktop-core     # build the Swift core as a shared library
 just desktop-build    # build the Rust host against it

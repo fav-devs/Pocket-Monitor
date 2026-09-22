@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-const LIBRARIES: [&str; 4] = ["avcodec", "avformat", "avutil", "swscale"];
+const LIBRARIES: [&str; 5] = ["avcodec", "avformat", "avutil", "swscale", "swresample"];
 
 fn from_ffmpeg_dir() -> Option<Vec<PathBuf>> {
     let root = PathBuf::from(std::env::var("FFMPEG_DIR").ok()?);

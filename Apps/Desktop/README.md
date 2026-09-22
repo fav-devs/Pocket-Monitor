@@ -15,7 +15,7 @@ Needs a Swift toolchain, FFmpeg development libraries, a Vulkan loader, and a GL
 compiler:
 
 ```sh
-sudo apt install libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev glslang-tools
+sudo apt install libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libasound2-dev libvulkan-dev glslang-tools
 ```
 
 ```sh

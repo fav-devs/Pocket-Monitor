@@ -36,6 +36,8 @@ fn show_error(message: &str) {
 mod demo;
 
 #[cfg(opc_core_linked)]
+mod audio;
+#[cfg(opc_core_linked)]
 mod ble_impl;
 #[cfg(opc_core_linked)]
 mod connect;
