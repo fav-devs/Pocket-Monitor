@@ -99,6 +99,8 @@ pub enum GimbalMode {
     Follow,
     TiltLocked,
     Fpv,
+    /// The picture holds its heading while the body turns.
+    DirectionLock,
 }
 
 impl GimbalMode {
@@ -108,6 +110,7 @@ impl GimbalMode {
             Self::Follow => vec![Command::GimbalFollow, Command::GimbalTiltLock(0)],
             Self::TiltLocked => vec![Command::GimbalFollow, Command::GimbalTiltLock(1)],
             Self::Fpv => vec![Command::GimbalFpv],
+            Self::DirectionLock => vec![Command::GimbalDirectionLock],
         }
     }
 
@@ -116,7 +119,7 @@ impl GimbalMode {
         match self {
             Self::Follow => Self::TiltLocked,
             Self::TiltLocked => Self::Fpv,
-            Self::Fpv => Self::Follow,
+            Self::Fpv | Self::DirectionLock => Self::Follow,
         }
     }
 }
@@ -287,6 +290,10 @@ pub struct Shell {
     setup: SetupInfo,
     /// Where the prefs are saved, once the window has said so.
     prefs_path: Option<std::path::PathBuf>,
+    /// Whether the operator's field of view and gimbal speed have gone to this link's
+    /// body yet: a body power-cycled to its defaults would otherwise disagree with
+    /// the chips until they were set again.
+    prefs_sent_to_body: bool,
     /// The controller's left stick, so a release can rest it.
     controller_held: bool,
     /// A box sent to the body and the polling that follows it.
@@ -412,6 +419,7 @@ impl Shell {
                 ..SetupInfo::default()
             },
             prefs_path: None,
+            prefs_sent_to_body: false,
             controller_held: false,
             stick_sent_at: f64::NEG_INFINITY,
             presented: VecDeque::new(),
@@ -566,6 +574,10 @@ impl Shell {
 
     /// A toolbar chip tapped: the tool flips, and whatever it paints follows.
     fn tap_tool(&mut self, tool: AssistTool) -> Vec<Intent> {
+        self.remembering(|shell| shell.tap_tool_inner(tool))
+    }
+
+    fn tap_tool_inner(&mut self, tool: AssistTool) -> Vec<Intent> {
         self.chrome_stale = true;
         match tool {
             AssistTool::Lut => return self.act(Action::ToggleGrade, 0.0),
@@ -692,6 +704,21 @@ impl Shell {
             self.pending_tap = None;
             self.chrome_stale = true;
         }
+        if matches!(
+            phase,
+            Phase::Finding | Phase::Pairing { .. } | Phase::Joining | Phase::Failed(_)
+        ) {
+            self.prefs_sent_to_body = false;
+        }
+        if phase == Phase::Live && !self.prefs_sent_to_body && !self.via_phone() {
+            // The body does not report its field of view or gimbal speed, so the
+            // operator's picks go out once per link rather than being assumed.
+            self.prefs_sent_to_body = true;
+            self.chrome_pending_intents
+                .push(Intent::Send(Command::SetFov(self.prefs.fov)));
+            self.chrome_pending_intents
+                .push(Intent::Send(Command::GimbalSpeed(self.prefs.gimbal_speed)));
+        }
         if self.hud.phase != phase {
             self.hud.phase = phase;
             self.setup.phase = self.hud.connection_chip().to_string();
@@ -718,10 +745,18 @@ impl Shell {
         // the chip: a stale push right after a SET must not undo what was just asked.
         if status.gimbal_mode_family != self.hud.status.gimbal_mode_family {
             match status.gimbal_mode_family {
+                Some(0) if self.gimbal_mode != GimbalMode::DirectionLock => {
+                    self.gimbal_mode = GimbalMode::DirectionLock;
+                }
                 Some(1) if self.gimbal_mode != GimbalMode::Fpv => {
                     self.gimbal_mode = GimbalMode::Fpv;
                 }
-                Some(2) if self.gimbal_mode == GimbalMode::Fpv => {
+                Some(2)
+                    if matches!(
+                        self.gimbal_mode,
+                        GimbalMode::Fpv | GimbalMode::DirectionLock
+                    ) =>
+                {
                     self.gimbal_mode = GimbalMode::Follow;
                 }
                 _ => {}
@@ -1031,22 +1066,69 @@ impl Shell {
         self.setup.model = model_name(self.model_id);
     }
 
-    /// Reads the operator's saved settings and keeps saving them from here on.
+    /// Reads the operator's saved settings and keeps saving them from here on: the
+    /// setup prefs, which assists and scopes are on and how they are set, the cube.
     pub fn with_saved_prefs(mut self) -> Self {
         let path = prefs::path();
         if let Some(saved) = prefs::load(&path) {
-            self.prefs = saved;
+            self.prefs = saved.prefs;
+            self.toggles = saved.toggles;
+            self.assists = saved.assists;
+            self.scope_options = saved.scopes;
+            self.lut_choice = saved.lut;
+            self.toggles.grade = self.lut_choice != LutChoice::Off;
+            if self.toggles.grade {
+                self.lut_pending
+                    .push_back(LutRequest::Load(self.lut_choice.clone()));
+            }
+            self.refresh_assists();
+            self.sync_false_color();
         }
         self.prefs_path = Some(path);
         self
     }
 
+    /// Reads and keeps saving at `path` rather than the operator's real file.
+    pub fn with_prefs_path_for_test(mut self, path: std::path::PathBuf) -> Self {
+        if let Some(saved) = prefs::load(&path) {
+            self.prefs = saved.prefs;
+            self.toggles = saved.toggles;
+            self.assists = saved.assists;
+            self.scope_options = saved.scopes;
+            self.lut_choice = saved.lut;
+            self.refresh_assists();
+        }
+        self.prefs_path = Some(path);
+        self
+    }
+
+    /// Everything that is remembered between runs, as it stands now.
+    fn saved(&self) -> prefs::Saved {
+        prefs::Saved {
+            prefs: self.prefs,
+            toggles: self.toggles,
+            assists: self.assists,
+            scopes: self.scope_options,
+            lut: self.lut_choice.clone(),
+        }
+    }
+
     fn persist_prefs(&self) {
         if let Some(path) = &self.prefs_path {
-            if let Err(error) = prefs::save(path, &self.prefs) {
+            if let Err(error) = prefs::save(path, &self.saved()) {
                 eprintln!("could not save the settings: {error}");
             }
         }
+    }
+
+    /// Runs `change` and saves the settings if it moved anything that is remembered.
+    fn remembering<T>(&mut self, change: impl FnOnce(&mut Self) -> T) -> T {
+        let before = self.saved();
+        let out = change(self);
+        if self.saved() != before {
+            self.persist_prefs();
+        }
+        out
     }
 
     /// What the Link tab reads: how this machine reaches the body.
@@ -1387,6 +1469,7 @@ impl Shell {
             toggles: self.toggles,
             gimbal_mode: self.gimbal_mode,
             model_id: self.model_id,
+            supports_focus: opc_camera::supports_focus_mode(self.model_id),
             luts: &self.lut_menu,
             lut_choice: &self.lut_choice,
             program: &self.program,
@@ -1628,12 +1711,7 @@ impl Shell {
 
     /// Carries out a chip tap on the open sheet, and saves the settings it changed.
     fn apply_pick(&mut self, pick: Pick) -> Vec<Intent> {
-        let before = self.prefs;
-        let intents = self.apply_pick_inner(pick);
-        if self.prefs != before {
-            self.persist_prefs();
-        }
-        intents
+        self.remembering(|shell| shell.apply_pick_inner(pick))
     }
 
     fn apply_pick_inner(&mut self, pick: Pick) -> Vec<Intent> {
@@ -1674,6 +1752,10 @@ impl Shell {
             }
             Pick::ZebraUnits(ire) => {
                 self.assists.zebra.ire_units = ire;
+                Vec::new()
+            }
+            Pick::ShutterUnits(angle) => {
+                self.prefs.shutter_angle = angle;
                 Vec::new()
             }
             Pick::ZebraHighlightOn(on) => {
@@ -2028,6 +2110,10 @@ impl Shell {
     }
 
     fn act(&mut self, action: Action, now: f64) -> Vec<Intent> {
+        self.remembering(|shell| shell.act_inner(action, now))
+    }
+
+    fn act_inner(&mut self, action: Action, now: f64) -> Vec<Intent> {
         self.chrome_stale = true;
         match action {
             Action::Send(command) => {

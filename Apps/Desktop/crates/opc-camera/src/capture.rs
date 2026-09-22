@@ -498,6 +498,94 @@ pub fn shutter_wheel(available: &[i32], current: Option<i32>) -> Vec<i32> {
     ladder
 }
 
+/// The shutter-angle stops the phones offer, in degrees.
+#[cfg(opc_core_linked)]
+pub fn shutter_angles() -> Vec<f64> {
+    // Safety: a probe with a null destination only reports the count.
+    let needed = unsafe { opc_core_sys::opc_shutter_angles(std::ptr::null_mut(), 0) };
+    if needed <= 0 {
+        return Vec::new();
+    }
+    let mut out = vec![0.0f64; needed as usize];
+    // Safety: `out` has exactly the capacity the core asked for.
+    let written = unsafe { opc_core_sys::opc_shutter_angles(out.as_mut_ptr(), out.len()) };
+    if written != needed {
+        return Vec::new();
+    }
+    out
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn shutter_angles() -> Vec<f64> {
+    vec![
+        5.6, 11.2, 22.5, 45.0, 72.0, 86.4, 90.0, 108.0, 144.0, 172.0, 180.0, 216.0, 288.0, 346.0,
+        360.0,
+    ]
+}
+
+/// The 1/N that gives `degrees` at `fps`, snapped to the body's published list when it
+/// sent one. An unknown rate counts as 24, as on the phones.
+#[cfg(opc_core_linked)]
+pub fn shutter_angle_denom(degrees: f64, fps: i32, available: &[i32]) -> i32 {
+    // Safety: `available` outlives the call.
+    unsafe {
+        opc_core_sys::opc_shutter_angle_denom(degrees, fps, available.as_ptr(), available.len())
+    }
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn shutter_angle_denom(degrees: f64, fps: i32, available: &[i32]) -> i32 {
+    let rate = f64::from(effective_fps(fps));
+    let ideal = ((360.0 * rate / degrees.max(0.1)).round() as i32).clamp(1, 16_000);
+    available
+        .iter()
+        .copied()
+        .min_by_key(|denom| (denom - ideal).abs())
+        .unwrap_or(ideal)
+}
+
+/// The angle a 1/N reads as at `fps`, snapped to the phones' stops: `180°`.
+#[cfg(opc_core_linked)]
+pub fn shutter_angle_label(denom: i32, fps: i32) -> String {
+    text(|out, capacity| {
+        // Safety: the core writes at most `capacity` bytes into `out`.
+        unsafe { opc_core_sys::opc_shutter_angle_label(denom, fps, out, capacity) }
+    })
+    .unwrap_or_default()
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn shutter_angle_label(denom: i32, fps: i32) -> String {
+    let degrees = if denom > 0 {
+        360.0 * f64::from(effective_fps(fps)) / f64::from(denom)
+    } else {
+        180.0
+    };
+    let nearest = shutter_angles()
+        .into_iter()
+        .min_by(|a, b| (a - degrees).abs().total_cmp(&(b - degrees).abs()))
+        .unwrap_or(180.0);
+    angle_label(nearest)
+}
+
+#[cfg(not(opc_core_linked))]
+fn effective_fps(fps: i32) -> i32 {
+    if (8..=240).contains(&fps) {
+        fps
+    } else {
+        24
+    }
+}
+
+/// `180°`, or `86.4°` when the stop is not whole.
+pub fn angle_label(degrees: f64) -> String {
+    if (degrees - degrees.round()).abs() < 0.05 {
+        format!("{}°", degrees.round() as i32)
+    } else {
+        format!("{degrees:.1}°")
+    }
+}
+
 /// EV as the operator reads it: `0.0`, `+1.0`, `−1.3` (a proper minus sign).
 #[cfg(opc_core_linked)]
 pub fn ev_label(thirds: i32) -> String {
@@ -725,6 +813,21 @@ mod tests {
         let at = wheel.iter().position(|d| *d == 90).expect("merged in");
         assert!(wheel[at - 1] > 90 && wheel[at + 1] < 90, "in camera order");
         assert_eq!(shutter_wheel(&[50, 100], Some(90)), [50, 100]);
+    }
+
+    #[test]
+    fn shutter_angles_convert_at_the_rate_and_snap_to_the_body_s_list() {
+        assert_eq!(shutter_angles().len(), 15);
+        assert_eq!(shutter_angle_denom(180.0, 25, &[]), 50);
+        assert_eq!(shutter_angle_denom(180.0, 0, &[]), 48, "unknown rate is 24");
+        assert_eq!(
+            shutter_angle_denom(180.0, 25, &[48, 60]),
+            48,
+            "nearest published"
+        );
+        assert_eq!(shutter_angle_label(50, 25), "180°");
+        assert_eq!(shutter_angle_label(100, 25), "90°");
+        assert_eq!(angle_label(86.4), "86.4°");
     }
 
     #[test]

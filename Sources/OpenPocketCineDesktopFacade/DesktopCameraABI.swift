@@ -116,6 +116,8 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
         return Commands.gimbalFlip(seq: seq)
     case OPC_CAM_GIMBAL_FOLLOW:
         return Commands.gimbalFollowFamily(seq: seq)
+    case OPC_CAM_GIMBAL_DIRECTION_LOCK:
+        return Commands.gimbalDirectionLock(seq: seq)
     case OPC_CAM_GIMBAL_FPV:
         return Commands.gimbalFpv(seq: seq)
     case OPC_CAM_GIMBAL_STICK:

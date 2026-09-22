@@ -263,6 +263,8 @@ pub const OPC_CAM_TAP_FOCUS_COMMIT: i32 = 77;
 pub const OPC_CAM_AUDIO_DSP_GET: i32 = 78;
 pub const OPC_CAM_AUDIO_WIND: i32 = 79;
 pub const OPC_CAM_AUDIO_DIRECTIONAL: i32 = 80;
+/// Gimbal direction lock: the third family beside follow and FPV.
+pub const OPC_CAM_GIMBAL_DIRECTION_LOCK: i32 = 81;
 /// A `0x02/0xA5` tracking poll reply, as `opc_tracking_poll` reads it.
 pub const OPC_TRACKING_UNKNOWN: i32 = -1;
 pub const OPC_TRACKING_IDLE: i32 = 0;
@@ -626,6 +628,7 @@ extern "C" {
     pub fn opc_tracking_subject_stand_in(search: *const f32, out: *mut f32) -> i32;
     pub fn opc_tracking_rules(out: *mut OpcTrackingRules) -> i32;
     pub fn opc_model_supports_tap_focus(model_id: i32) -> i32;
+    pub fn opc_model_supports_focus_mode(model_id: i32) -> i32;
 
     /// Capture settings: shooting modes, formats, exposure ladders and colour wheels.
     pub fn opc_shooting_mode_wire_byte(raw: i32, model_id: i32) -> i32;
@@ -683,6 +686,16 @@ extern "C" {
         capacity: usize,
     ) -> i32;
     pub fn opc_ev_label(thirds: i32, out: *mut u8, capacity: usize) -> i64;
+    /// Shutter angle: the phones' stops in degrees, the 1/N for an angle at a rate, and
+    /// the angle a 1/N reads as.
+    pub fn opc_shutter_angles(out: *mut f64, capacity: usize) -> i32;
+    pub fn opc_shutter_angle_denom(
+        degrees: f64,
+        fps: i32,
+        available: *const i32,
+        available_count: usize,
+    ) -> i32;
+    pub fn opc_shutter_angle_label(denom: i32, fps: i32, out: *mut u8, capacity: usize) -> i64;
     pub fn opc_color_modes(
         model_id: i32,
         available: *const i32,

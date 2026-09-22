@@ -368,6 +368,7 @@ fn opening_the_audio_tab_reads_the_dsp_blob_once() {
     use opc_monitor::sheets::SheetKind;
     let mut shell = framed();
     shell.set_phase(opc_ui::Phase::Live);
+    shell.tick(0.0); // the field of view and gimbal speed go out once on connect
     shell.toggle_sheet(SheetKind::Settings);
     assert!(
         shell.tick(0.0).is_empty(),
@@ -1232,6 +1233,48 @@ fn e_opens_the_exposure_sheet_and_a_second_press_closes_it() {
 }
 
 #[test]
+fn the_operator_s_field_of_view_and_gimbal_speed_go_to_the_body_once_per_link() {
+    use opc_monitor::sheets::Pick;
+    let mut shell = framed();
+    shell.pick_for_test(Pick::Fov(0x05));
+    shell.pick_for_test(Pick::GimbalSpeed(0x02));
+    shell.set_phase(opc_ui::Phase::Live);
+    assert_eq!(
+        sent(&shell.tick(0.0)),
+        [Command::SetFov(0x05), Command::GimbalSpeed(0x02)]
+    );
+    shell.set_phase(opc_ui::Phase::Recovering);
+    shell.set_phase(opc_ui::Phase::Live);
+    assert!(shell.tick(0.1).is_empty(), "a recovery is the same link");
+    shell.set_phase(opc_ui::Phase::Finding);
+    shell.set_phase(opc_ui::Phase::Live);
+    assert_eq!(
+        sent(&shell.tick(0.2)).len(),
+        2,
+        "a new link gets them again"
+    );
+}
+
+#[test]
+fn settings_and_assists_are_remembered_between_runs() {
+    use opc_monitor::sheets::Pick;
+    let dir = std::env::temp_dir().join(format!("opc-shell-prefs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("desktop-prefs.txt");
+    let mut shell = framed().with_prefs_path_for_test(path.clone());
+    shell.press(Key::Char('z'), 0.0);
+    shell.pick_for_test(Pick::ZebraHighlightIre(95.0));
+    shell.pick_for_test(Pick::ShutterUnits(true));
+    let saved = opc_monitor::prefs::load(&path).expect("written on change");
+    assert!(saved.toggles.zebra);
+    assert_eq!(saved.assists.zebra.highlight_ire, 95.0);
+    assert!(saved.prefs.shutter_angle);
+    let again = framed().with_prefs_path_for_test(path);
+    assert!(again.toggles().zebra, "zebra is back on at the next start");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn an_open_sheet_owns_the_whole_window() {
     let mut shell = framed();
     shell.set_phase(opc_ui::Phase::Live);
@@ -1302,6 +1345,7 @@ fn a_listed_clip_can_be_selected_played_and_starred() {
     use opc_monitor::MediaAction;
     let mut shell = framed();
     shell.set_phase(opc_ui::Phase::Live);
+    shell.tick(0.0); // the field of view and gimbal speed go out once on connect
     shell.press(Key::Char('g'), 0.0);
     let clip = MediaFile {
         path: "DCIM/DJI_001/DJI_20260814125250_0034_D.MP4".to_string(),

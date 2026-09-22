@@ -231,6 +231,39 @@ func opc_shutter_wheel(
         CamCapShutter.wheelDenoms(available: published, current: Int(current)), out, capacity)
 }
 
+/// The shutter-angle stops the phones offer, in degrees.
+@_cdecl("opc_shutter_angles")
+func opc_shutter_angles(_ out: UnsafeMutablePointer<Double>?, _ capacity: Int) -> Int32 {
+    let degrees = ShutterAngle.degrees
+    if let out, capacity >= degrees.count {
+        for (index, value) in degrees.enumerated() {
+            out[index] = value
+        }
+    }
+    return Int32(degrees.count)
+}
+
+/// The 1/N that gives `degrees` at `fps`, snapped to the body's published list when it
+/// sent one. Unknown or out-of-range fps counts as 24, as on the phones.
+@_cdecl("opc_shutter_angle_denom")
+func opc_shutter_angle_denom(
+    _ degrees: Double, _ fps: Int32, _ available: UnsafePointer<Int32>?, _ availableCount: Int
+) -> Int32 {
+    let published = (0..<max(0, availableCount)).compactMap { index -> Int? in
+        guard let available else { return nil }
+        return available[index] > 0 ? Int(available[index]) : nil
+    }
+    return Int32(ShutterAngle.denom(degrees: degrees, fps: Int(fps), available: published))
+}
+
+/// The angle a 1/N reads as at `fps`, snapped to the phones' stops (`180°`).
+@_cdecl("opc_shutter_angle_label")
+func opc_shutter_angle_label(
+    _ denom: Int32, _ fps: Int32, _ out: UnsafeMutablePointer<UInt8>?, _ capacity: Int
+) -> Int64 {
+    text(ShutterAngle.nearestLabel(denom: Int(denom), fps: Int(fps)), out, capacity)
+}
+
 /// EV as the operator reads it: `0.0`, `+1.0`, `−1.3`.
 @_cdecl("opc_ev_label")
 func opc_ev_label(_ thirds: Int32, _ out: UnsafeMutablePointer<UInt8>?, _ capacity: Int)

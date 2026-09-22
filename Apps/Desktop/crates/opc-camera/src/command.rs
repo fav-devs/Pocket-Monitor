@@ -63,6 +63,8 @@ pub enum Command {
     GimbalFlip,
     GimbalFollow,
     GimbalFpv,
+    /// The third family: the picture holds its heading while the body turns.
+    GimbalDirectionLock,
     /// Notify, not a round trip. Rides the ACK queue at 25 Hz while held.
     GimbalStick {
         axis0: u16,
@@ -223,6 +225,7 @@ impl Command {
             Self::GimbalFlip => (sys::OPC_CAM_GIMBAL_FLIP, vec![], vec![]),
             Self::GimbalFollow => (sys::OPC_CAM_GIMBAL_FOLLOW, vec![], vec![]),
             Self::GimbalFpv => (sys::OPC_CAM_GIMBAL_FPV, vec![], vec![]),
+            Self::GimbalDirectionLock => (sys::OPC_CAM_GIMBAL_DIRECTION_LOCK, vec![], vec![]),
             Self::GimbalStick { axis0, axis1 } => (
                 sys::OPC_CAM_GIMBAL_STICK,
                 ints(&[i32::from(axis0), i32::from(axis1)]),

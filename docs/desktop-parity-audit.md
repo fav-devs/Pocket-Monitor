@@ -60,9 +60,9 @@ the desktop needs a number the phones use, it asks the core rather than copying 
 | 6 | White-balance presets zeroed the tint the operator had set. | Fixed, pass 1 |
 | 7 | Colour row was a hard-coded three-mode list; the wheel is now the body's own via `CamCapColorMode.wheel`, and refused while rolling. | Fixed, pass 1 |
 | 8 | Unknown readouts showed `0%`, `0 GB`, `AUTO`; the phones show `—`. | Fixed, pass 1 |
-| 9 | No shutter angle mode. | Open |
+| 9 | No shutter angle mode. | Fixed, settings pass 2 (the core's stops, at the current rate) |
 | 10 | ISO / shutter stepping (`[` `]` and the wheel keys) should follow `IsoIndex.stepped` / `CamCapShutter.steppedDenom` rules exactly; they use the same ladders now but their own index walk. | Open |
-| 11 | Kelvin drum and tint slider for white balance; the desktop offers presets only. | Open |
+| 11 | Kelvin drum and tint slider for white balance; the desktop offers presets only. | Fixed, settings pass 2 (Kelvin and Tint rows) |
 | 12 | Exposure SETs should coalesce (100 ms) instead of retransmitting each tick. | Open |
 | 13 | D-Log ISO hop on a zoom, value pins after a SET, "—" expo chip: partially covered; the pin logic is only on FORMAT. | Open |
 
@@ -71,7 +71,7 @@ the desktop needs a number the phones use, it asks the core rather than copying 
 | # | Finding | State |
 |---|---------|-------|
 | 1 | Arrow keys bypassed `stick_axes` when the ramp was off (axes swapped, fixed ±400 throw). They go through the core mapping now. | Fixed, pass 1 |
-| 2 | FOLLOW chip only shows ON/OFF and disagrees with the `V` cycle (Follow / Tilt locked / FPV); Direction Lock is missing. The chip now at least follows the body's reported family (FPV / follow). | Partly fixed, settings pass |
+| 2 | FOLLOW chip only shows ON/OFF and disagrees with the `V` cycle (Follow / Tilt locked / FPV). The chip follows the body's reported family, and Direction Lock is on the Gimbal mode row. | Partly fixed (chip wording still ON/OFF) |
 | 3 | Picture-relative pan and the extra-mirror term while mirrored. | Open |
 | 4 | Recenter and flip should rest the stick and cancel a programmed move first. | Open |
 | 5 | Record confirmation (Mimo's stop confirmation) is absent. | Open |
@@ -83,7 +83,7 @@ the desktop needs a number the phones use, it asks the core rather than copying 
 
 | # | Finding | State |
 |---|---------|-------|
-| 1 | Nothing about assists, scopes or the LUT choice persists between runs (`prefs.rs` holds only link and control prefs). | Open |
+| 1 | Nothing about assists, scopes or the LUT choice persists between runs (`prefs.rs` holds only link and control prefs). | Fixed, settings pass 2 |
 | 2 | The vectorscope reads the ungraded log picture; the phones read the graded one. | Open |
 | 3 | Guides and overlays are not mapped to the recorded picture rect. | Open |
 | 4 | Zebra slider (the phones let the operator set the threshold). | Open |
@@ -100,8 +100,9 @@ the desktop needs a number the phones use, it asks the core rather than copying 
 | 2 | Audio channel and vocal boost rows showed the last pick, not the camera: the body was never asked and the status record did not carry them. | Fixed, settings pass |
 | 3 | The gimbal mode chip never learned a mode set on the body. | Fixed, settings pass (family only) |
 | 4 | DISP `2 · Clean` hid the sheet the operator was using to set it. | Fixed, settings pass |
-| 5 | Field of view, gimbal speed and audio picks are not re-applied on connect, so a body power-cycled to its defaults disagrees with the FOV chip until it is set again. | Open |
-| 6 | The Nano has no focus mode or tap focus; the Camera tab still offers the Focus rows on one. | Open |
+| 5 | Field of view, gimbal speed and audio picks are not re-applied on connect, so a body power-cycled to its defaults disagrees with the FOV chip until it is set again. | Fixed, settings pass 2 (FOV and speed go out once per link; audio is read from the body) |
+| 6 | The Nano has no focus mode or tap focus; the Camera tab still offers the Focus rows on one. | Fixed, settings pass 2 |
+| 7 | No installer: the viewfinder ran from the build folder and the camera component had to be registered from the Output tab. | Fixed, settings pass 2 (`build-installer.ps1`, Inno Setup) |
 
 ## Media and connection
 

@@ -283,6 +283,12 @@ func opc_tracking_rules(_ out: UnsafeMutablePointer<OpcTrackingRules>?) -> Int32
     return OPC_RELAY_OK
 }
 
+/// Whether this body has AF-S / AF-C and a focus-track mode (the Nano has neither).
+@_cdecl("opc_model_supports_focus_mode")
+func opc_model_supports_focus_mode(_ modelId: Int32) -> Int32 {
+    CameraModel.resolve(modelId: Int(modelId), name: nil).supportsFocusMode ? 1 : 0
+}
+
 /// Whether this body takes Mimo's tap-to-focus burst (the Nano does not).
 @_cdecl("opc_model_supports_tap_focus")
 func opc_model_supports_tap_focus(_ modelId: Int32) -> Int32 {

@@ -70,7 +70,10 @@ Three sheets open over the picture and close on `Esc`, the `×`, or a tap outsid
   nothing else. Picking a size keeps the rate when that size offers it.
 - **Exposure** (`AUTO`/`M` chip, or `E`) — `Auto`/`Manual`, then ISO and shutter for
   manual, ISO max and EV for auto. The rows the mode does not use are drawn greyed, the
-  way Mimo shows them.
+  way Mimo shows them. **Shutter units** reads the shutter as a **Speed** (1/N) or an
+  **Angle**: the phones' stops from 5.6° to 360°, converted at the current frame rate
+  (an unknown rate counts as 24) and snapped to the body's published list, so 180° at
+  25p is 1/50.
 - **Settings** (`⋮`, or `Tab`) — nine tabs. A sheet taller than the window scrolls
   with the wheel, and a row with more chips than fit (ISO, shutter, EV, a Pocket 3's
   formats) slides sideways under the wheel too, since a mouse cannot drag a strip the
@@ -78,7 +81,12 @@ Three sheets open over the picture and close on `Esc`, the `×`, or a tap outsid
   tab's own `Clean` chip cannot take the menu away with it. **Camera:** focus mode, focus-track mode (Default / Product Showcase / Subject Lock / Registered Priority), white balance
   presets, colour profile (from the body's own list), field of view, gimbal mode,
   speed and **ramp** (Off / Soft / Medium, the phones' first-order ease on the stick,
-  applied to the arrow keys and the on-screen pad alike). The gimbal mode chip follows
+  applied to the arrow keys and the on-screen pad alike). White balance has the
+  presets, then a **Kelvin** row over the whole custom range (2000–10000 K) and a
+  **Tint** row (−100…+100), each keeping the other's value. Gimbal mode offers Follow,
+  Tilt locked, FPV and **Direction lock**. On a Nano, which has no focus mode, the
+  Focus rows are not shown. The field of view and gimbal speed go to the body once when
+  a link comes up, since the body does not report them. The gimbal mode chip follows
   the body's own heartbeat when it says the family changed (FPV or follow), so a mode
   set on the body reads right here. **Audio:** channel and vocal boost (both read
   from the body on connect, so the chips show what the camera is set to rather than
@@ -291,7 +299,9 @@ on.
     30 frames a second, black while nothing is coming. **Install** registers the DLL
     that sits beside the viewfinder through an elevated `regsvr32` (the administrator
     prompt is the consent); the tab reads the registration back from the machine hive
-    and says when the DLL is missing beside the executable. Nothing is signed and
+    and says when the DLL is missing beside the executable. The Windows installer
+    (`build-installer.ps1`, see `docs/DESKTOP.md`) registers it during setup, so a
+    viewfinder installed that way shows the component as installed from the first run. Nothing is signed and
     nothing runs in the kernel. On Windows 10 the tab reports the component as not
     available; use the stream there.
   - **macOS 13 or later** writes into the sink stream of the OpenPocketCine camera
@@ -393,6 +403,15 @@ What changes on a phone's feed:
 
 None of this has met a real phone yet; the wire is the same core code the phone encodes
 with, so a mismatch is a bug, not a design gap.
+
+## What is remembered
+
+Everything the operator sets up is saved beside the LUT folder (`desktop-prefs.txt`)
+the moment it changes and comes back at the next start: the setup tabs, which assists
+and scopes are on, how each is set (zebra thresholds and colours, peaking colour and
+sensitivity, the false-colour scale, grid lines, guide frames and mask, waveform mode
+and guides, parade mode, vectorscope gain, brightness, the ND notation), and the cube
+in use. Nothing the camera reports is remembered; the camera is asked again.
 
 ## Keys
 

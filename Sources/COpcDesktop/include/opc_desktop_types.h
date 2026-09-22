@@ -224,6 +224,8 @@ typedef struct {
 #define OPC_CAM_AUDIO_DSP_GET 78
 #define OPC_CAM_AUDIO_WIND 79
 #define OPC_CAM_AUDIO_DIRECTIONAL 80
+/* Gimbal direction lock: the third family beside follow and FPV. */
+#define OPC_CAM_GIMBAL_DIRECTION_LOCK 81
 
 /* False-colour scales for opc_false_color_cube / opc_false_color_legend. */
 #define OPC_FALSE_COLOR_STOPS 0

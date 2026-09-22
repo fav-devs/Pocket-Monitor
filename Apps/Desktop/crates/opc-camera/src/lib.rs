@@ -38,8 +38,8 @@ pub use sequence::{Outgoing, Phase, Sequencer, ACK_INTERVAL, HANDSHAKE_DEADLINE,
 pub use session::{CameraSession, SessionError, SessionEvent};
 pub use status::{AudioMeters, Status, StatusDecoder, AUDIO_DSP_BLOB};
 pub use tracking::{
-    supports_tap_focus, tracking_blend, tracking_live_push, tracking_poll, tracking_rules,
-    tracking_subject_stand_in, Box4, TrackingPoll, TrackingRules,
+    supports_focus_mode, supports_tap_focus, tracking_blend, tracking_live_push, tracking_poll,
+    tracking_rules, tracking_subject_stand_in, Box4, TrackingPoll, TrackingRules,
 };
 pub use transport::{
     encode_frame, handshake, is_handshake, pair_approval_ack, pair_set_pin, pair_wake_access_point,

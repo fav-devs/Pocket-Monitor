@@ -179,6 +179,19 @@ pub fn supports_tap_focus(_model_id: i32) -> bool {
     true
 }
 
+/// Whether this body has AF-S / AF-C and a focus-track mode. Every Pocket does; the
+/// Nano has neither. Without the core linked, the Nano's id is the one exception.
+#[cfg(opc_core_linked)]
+pub fn supports_focus_mode(model_id: i32) -> bool {
+    // Safety: a plain value in.
+    unsafe { opc_core_sys::opc_model_supports_focus_mode(model_id) != 0 }
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn supports_focus_mode(model_id: i32) -> bool {
+    model_id != 0x0019
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
