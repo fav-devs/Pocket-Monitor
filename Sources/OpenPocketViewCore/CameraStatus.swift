@@ -105,6 +105,8 @@ public struct CameraStatus: Equatable, Sendable {
     /// Gimbal 180 wire: `0x04/0x27` `@2` bit `0x40`. Stick triple-tap `FE 09`
     /// XORs this bit. Not Control Center Selfie Flip.
     public var gimbalFace: GimbalFace?
+    /// Mode family from the 50-byte `0x04/0x05` Pocket attitude push.
+    public var gimbalModeFamily: GimbalModeFamily?
     /// Last `0x04/0x50` GET reply. Cannot tell FPV from Tilt Locked.
     public var gimbalParams: GimbalParamState?
     /// Mechanical iris readout. Pocket has none; `cam_blur_aperture` is beauty blur, not f-stop.
@@ -122,16 +124,35 @@ public struct CameraStatus: Equatable, Sendable {
     }
 
     public var shootingModeLabel: String {
-        switch shootingMode {
-        case 0x00: "SlowMo"
-        case 0x01: "Video"
-        case 0x02: "TimeLapse"
-        case 0x05, 0x17: "Photo"
-        case 0x0A: "HyperLapse"
-        case 0x28: "SuperNight"
-        case -1: inPlayback ? "Playback" : "Capture"
-        default: String(format: "0x%02X", shootingMode)
+        if let mode = ShootingMode.fromStatus(shootingMode) {
+            return mode.label
         }
+        switch shootingMode {
+        case -1: return inPlayback ? "Playback" : "Capture"
+        default: return String(format: "0x%02X", shootingMode)
+        }
+    }
+
+    /// Stills only. Pocket 3 / Nano Photo `0x05` counts; SuperNight / Low-Light does not.
+    public var isPhoto: Bool {
+        ShootingMode.fromStatus(shootingMode)?.isPhoto == true
+    }
+
+    /// Drop mode-specific camcap wheels when `0x02/0xE1` actually changes.
+    /// First report (`-1` → a mode) keeps already-subscribed tables.
+    public mutating func applyShootingMode(_ mode: Int) {
+        if shootingMode >= 0, shootingMode != mode {
+            clearModeDependentCapabilities()
+        }
+        shootingMode = mode
+    }
+
+    /// Local HUD only — no live-enable, subscribe, or watchdog traffic.
+    public mutating func clearModeDependentCapabilities() {
+        availableVideoFormats = []
+        availableShutterDenoms = []
+        availableIsoIndices = []
+        availableColorModes = []
     }
 }
 
@@ -159,7 +180,7 @@ public enum CameraStatusDecoder {
             if p.count >= 31 {
                 status.recordElapsedSec = Int(u16(p, 29))
             }
-            if p.count >= 58 { status.shootingMode = Int(p[57]) }
+            if p.count >= 58 { status.applyShootingMode(Int(p[57])) }
             return true
 
         case (0x02, 0xDC) where p.count >= 22:
@@ -194,7 +215,8 @@ public enum CameraStatusDecoder {
             return true
 
         case (0x04, 0x05):
-            return true  // gimbal position heartbeat — swallow, it is not a running-state signal
+            if p.count == 50 { status.gimbalModeFamily = GimbalModeFamily.parse(p) }
+            return true  // position/mode heartbeat, not a recording-state signal
 
         case (0x04, 0x27):
             if let face = GimbalFace.parse(p) { status.gimbalFace = face }

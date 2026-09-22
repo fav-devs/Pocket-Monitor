@@ -126,17 +126,6 @@ import Testing
         #expect(Commands.enterPlayback(seq: 0).payload == [0x01, 0x01, 0x00, 0x01])
     }
 
-    @Test func pocket3PlaybackEntryMatchesOsmosis() {
-        let first = Commands.pocket3PlaybackEntry(step: 1)
-        #expect(first.cmdSet == 0x01)
-        #expect(first.cmdId == 0x01)
-        #expect(first.flags == Duml.flagNotify)
-        #expect(first.payload == [0x03, 0, 0, 0, 0, 0x04, 0, 0, 0, 0x07, 0x01])
-        #expect(
-            Commands.pocket3PlaybackEntry(step: 2).payload
-                == [0x00, 0, 0, 0, 0, 0x04, 0, 0, 0, 0x04, 0x01])
-    }
-
     @Test func deleteAndFavoritePayloadsMatchCapture() {
         // Osmosis: handle 0x40104480, first delete of a session (counter 1).
         let del = Commands.deleteMedia(handle: 0x4010_4480, counter: 1)
@@ -201,6 +190,21 @@ import Testing
         #expect(photos.isEmpty)
         let oldest = MediaLibraryQuery.sorted(files, by: .oldest)
         #expect(oldest.first?.filename.contains("20260404") == true)
+        let august = MediaLibraryQuery.filtered(files, tab: .all, dateStart: "20260801")
+        #expect(august.allSatisfy { $0.dateKey >= "20260801" })
+        let april = MediaLibraryQuery.filtered(files, tab: .all, dateEnd: "20260430")
+        #expect(april.allSatisfy { $0.dateKey <= "20260430" })
+        #expect(
+            MediaLibraryQuery.filtered(
+                files, tab: .all, colors: [0x41],
+                shotColors: [files[0].path: UInt8(0x41)]
+            ).map(\.path) == [files[0].path])
+        #expect(MediaLibraryQuery.dateKey(from: MediaLibraryQuery.date(fromKey: "20260814")!) == "20260814")
+        var buddhist = Calendar(identifier: .buddhist)
+        buddhist.timeZone = .current
+        let civil = MediaLibraryQuery.date(fromKey: "20260814")!
+        #expect(MediaLibraryQuery.dateKey(from: civil) == "20260814")
+        #expect(MediaLibraryQuery.dateKey(from: civil, calendar: buddhist) != "20260814")
         #expect(MediaClipFormatting.durationLabel(seconds: 209) == "3:29")
     }
 
@@ -213,5 +217,16 @@ import Testing
         // Action-family length must not count as starred.
         let files = MediaManifest.decode(bytes)
         #expect(files.isEmpty)
+    }
+
+    @Test func pocket3PlaybackEntryMatchesOsmosis() {
+        let first = Commands.pocket3PlaybackEntry(step: 1)
+        #expect(first.cmdSet == 0x01)
+        #expect(first.cmdId == 0x01)
+        #expect(first.flags == Duml.flagNotify)
+        #expect(first.payload == [0x03, 0, 0, 0, 0, 0x04, 0, 0, 0, 0x07, 0x01])
+        #expect(
+            Commands.pocket3PlaybackEntry(step: 2).payload
+                == [0x00, 0, 0, 0, 0, 0x04, 0, 0, 0, 0x04, 0x01])
     }
 }

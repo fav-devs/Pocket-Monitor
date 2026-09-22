@@ -29,10 +29,33 @@ public enum CamCapShutter {
         return out
     }
 
-    /// Wheel options: camera list only. Until a cap push lands, show the live value.
+    /// Pocket 3 rejects `camcap_shutter`. Until a table lands, offer the
+    /// documented video ladder so Speed/Angle are not stuck on the live 1/N.
+    /// 1/8000, 1/3200, 1/200, 1/100 and 1/50 were accepted or shown in the
+    /// Pocket 3 survey; remaining cine stops use the same `0x02/0x28` form.
+    public static let emptyCapVideoDenoms: [Int] = [
+        8000, 6400, 4000, 3200, 2000, 1600, 1000, 800, 500, 400, 250, 200,
+        125, 120, 100, 60, 50, 48, 40, 30, 25, 24,
+    ]
+
+    /// Wheel options: camera list when published. Empty-cap uses the documented
+    /// video ladder and keeps an unpublished live value visible.
     public static func wheelDenoms(available: [Int], current: Int) -> [Int] {
         if !available.isEmpty { return available }
-        return (1...16_000).contains(current) ? [current] : []
+        return mergeCurrent(current, into: emptyCapVideoDenoms)
+    }
+
+    private static func mergeCurrent(_ current: Int, into ladder: [Int]) -> [Int] {
+        guard (1...16_000).contains(current), !ladder.contains(current) else {
+            return ladder
+        }
+        var out = ladder
+        if let idx = out.firstIndex(where: { $0 < current }) {
+            out.insert(current, at: idx)
+        } else {
+            out.append(current)
+        }
+        return out
     }
 
     public static func nearestDenom(_ current: Int, in denoms: [Int]) -> Int? {
@@ -237,24 +260,64 @@ public enum CamCapColorMode {
 public enum CamCapVideoFormat {
     public static let subscribeKey = "camcap_video_format"
 
-    /// Pocket 3 rejects camcap subscriptions. Its documented normal-Video formats
-    /// remain available in the picker; reported capabilities always take precedence.
-    /// This fallback is not used for unknown modes, SlowMo or livestream.
+    /// Pocket 3 rejects camcap subscriptions. Documented mode tables fill the picker
+    /// only when the body reported nothing. Reported capabilities always win.
+    /// Pocket 4 / 4 Pro / Nano get no invented tables. TimeLapse / HyperLapse
+    /// format menus were UI-only in the Pocket 3 survey — no accepted `0x02/0x18`
+    /// pairs — so they stay empty until camcap or a later accepted capture.
+    /// Pocket 3 Video 9:16 is body Lock Portrait; the survey never accepted a
+    /// portrait `0x02/0x18` SET, so the fallback does not offer 9:16.
     public static func pickerFormats(
         available: [VideoFormat], model: CameraModel?, shootingMode: Int
     ) -> [VideoFormat] {
-        guard available.isEmpty, model?.isPocket3 == true,
-            shootingMode == Int(ShootingMode.video.rawValue)
-        else { return available }
-        return pocket3VideoFormats
+        if !available.isEmpty { return available }
+        guard model?.isPocket3 == true else { return available }
+        switch ShootingMode.fromStatus(shootingMode) {
+        case .video: return pocket3VideoFormats
+        case .slowMo: return pocket3SlowMoFormats
+        case .superNight: return pocket3LowLightFormats
+        default: return available
+        }
     }
 
+    /// Operator FORMAT SET. Empty tables are read-only (current pair only).
+    /// Documented Pocket 3 fallbacks fill `pickerFormats`; Pocket 4 / 4 Pro never invent.
+    public static func allowsOperatorSet(
+        _ format: VideoFormat,
+        available: [VideoFormat],
+        model: CameraModel?,
+        shootingMode: Int
+    ) -> Bool {
+        let legal = pickerFormats(
+            available: available, model: model, shootingMode: shootingMode)
+        return !legal.isEmpty && legal.contains(format)
+    }
+
+    /// Accepted Pocket 3 Video `0x02/0x18` pairs: landscape 1080/2.7K/4K and
+    /// square 1080/2160/3K. Catalog 9:16 bytes were not an accepted SET.
     private static let pocket3VideoFormats: [VideoFormat] = [
         VideoResolution.p1080, .p2_7K, .p4K,
         .p1080_1x1, .p2160_1x1, .p3K_1x1,
-        .p1080_9x16, .p2_7K_9x16, .p3K_9x16,
     ].flatMap { resolution in
         VideoFrameRate.labeledVideo.map { VideoFormat(resolution: resolution, frameRate: $0) }
+    }
+
+    /// Accepted Pocket 3 SlowMo `0x02/0x18` pairs (4K 100/120, 2.7K 120, 1080 120/240).
+    private static let pocket3SlowMoFormats: [VideoFormat] = [
+        VideoFormat(resolution: .p4K, frameRate: .fps100),
+        VideoFormat(resolution: .p4K, frameRate: .fps120),
+        VideoFormat(resolution: .p2_7K, frameRate: .fps120),
+        VideoFormat(resolution: .p1080, frameRate: .fps120),
+        VideoFormat(resolution: .p1080, frameRate: .fps240),
+    ]
+
+    /// Accepted Pocket 3 Low-Light pairs: 1080 / 4K at 24 / 25 / 30. No 2.7K or square.
+    private static let pocket3LowLightFormats: [VideoFormat] = [
+        VideoResolution.p1080, .p4K,
+    ].flatMap { resolution in
+        [VideoFrameRate.fps24, .fps25, .fps30].map {
+            VideoFormat(resolution: resolution, frameRate: $0)
+        }
     }
 
     public static func parse(_ value: [UInt8]) -> [VideoFormat] {
@@ -289,12 +352,10 @@ public enum CamCapVideoFormat {
         available: [VideoFormat], aspect: VideoAspect?, current: VideoResolution?
     ) -> [VideoResolution] {
         if available.isEmpty {
-            // Status can arrive before the model/mode enables its picker fallback.
-            // Keep a reported portrait, square or unknown size instead of selecting
-            // the first landscape tab and sending that size on an fps change.
-            let fallback = VideoResolution.labeledVideo
-            let resolutions = current.map { fallback.contains($0) ? fallback : [$0] } ?? fallback
-            return resolutions.filter { aspect == nil || $0.aspect == aspect }
+            // Read-only current pair. Do not offer 1080/4K tabs that would SET
+            // a different resolution at the live fps (1080 240 → 4K 240).
+            guard let current, aspect == nil || current.aspect == aspect else { return [] }
+            return [current]
         }
         var seen = Set<VideoResolution>()
         var out: [VideoResolution] = []
@@ -314,7 +375,7 @@ public enum CamCapVideoFormat {
         available: [VideoFormat], current: VideoAspect?
     ) -> [VideoAspect] {
         if available.isEmpty {
-            return current.map { [$0] } ?? [.sixteenNine]
+            return current.map { [$0] } ?? []
         }
         var seen = Set<VideoAspect>()
         var out: [VideoAspect] = []
@@ -333,12 +394,9 @@ public enum CamCapVideoFormat {
     ) -> [VideoFrameRate] {
         let rates = available.filter { $0.resolution == resolution }.map(\.frameRate)
         if rates.isEmpty {
-            // SlowMo 100/120/240 is not a labeled Video SET. Until camcap
-            // republishes that mode, keep the live rate rather than offering 24–60.
-            if let current, !VideoFrameRate.labeledVideo.contains(current) {
-                return [current]
-            }
-            return VideoFrameRate.labeledVideo
+            // Read-only live rate. Do not offer 24–60 (or any other size) until
+            // camcap or a documented Pocket 3 fallback fills the table.
+            return current.map { [$0] } ?? []
         }
         return rates
     }
