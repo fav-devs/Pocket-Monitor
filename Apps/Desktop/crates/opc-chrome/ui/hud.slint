@@ -10,7 +10,7 @@
 //  │  EV -0.3                                                     ⛶            │
 //  ├ BottomBar ───────────────────────────────────────────────────────────────┤
 //  │ ▣ ⇅ ⟲  (joystick)              (● REC)              ⊙CTR ⟳  ⛶ 📷        │
-//  │        TIMELAPSE  SLOWMOTION  LOW-LIGHT  VIDEO  PHOTO  PANO  LIVESTREAM   │
+//  │        TIMELAPSE  SLOWMOTION  LOW-LIGHT  VIDEO  PHOTO  HYPERLAPSE          │
 //  └──────────────────────────────────────────────────────────────────────────┘
 //
 // Every cluster is its own component with an explicit x/y so a later edit mode
@@ -1981,9 +1981,9 @@ export component HudOverlay inherits Window {
     /// A line for the operator in the top bar (a refused zoom, a SET nobody answered).
     in property <string>    notice: "";
 
-    // Modes. Pano and Livestream are shown but unavailable.
-    in property <[string]> modes: ["TIMELAPSE", "SLOWMOTION", "LOW-LIGHT", "VIDEO", "PHOTO", "PANO", "LIVESTREAM"];
-    in property <[bool]> modes-available: [true, true, true, true, true, false, false];
+    // Modes the body takes. Pano and Livestream have no SET the phones send either.
+    in property <[string]> modes: ["TIMELAPSE", "SLOWMOTION", "LOW-LIGHT", "VIDEO", "PHOTO", "HYPERLAPSE"];
+    in property <[bool]> modes-available: [true, true, true, true, true, true];
     in property <int> mode-selected: 3;
     in property <bool> photo-mode: false;
 

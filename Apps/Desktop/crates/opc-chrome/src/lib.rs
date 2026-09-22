@@ -460,14 +460,13 @@ pub struct SheetState {
 }
 
 /// The mode strip, in Mimo's order. Indices are what [`ChromeIntent::ModeSelected`] carries.
-pub const MODES: [&str; 7] = [
+pub const MODES: [&str; 6] = [
     "TIMELAPSE",
     "SLOWMOTION",
     "LOW-LIGHT",
     "VIDEO",
     "PHOTO",
-    "PANO",
-    "LIVESTREAM",
+    "HYPERLAPSE",
 ];
 
 // ── State passed by the shell each frame ─────────────────────────────────────

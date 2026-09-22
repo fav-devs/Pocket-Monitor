@@ -30,7 +30,8 @@ The chrome is a DJI Mimo replica laid out for a landscape laptop, rendered by Sl
 (`opc-chrome`, Outfit type, Tabler icons) into a transparent overlay the shell composites
 over the picture:
 
-- **Top bar** — menu, gimbal follow `ON`/`OFF`, the format chip (`1080P·60`), the
+- **Top bar** — menu, gimbal follow `ON`/`OFF`, the format chip (`1080p · 60p`, the
+  phones' shape, with the aspect when it is not 16:9), the
   exposure mode chip (`AUTO`/`M`), the link state in the middle with a red `REC` badge
   and running time while the body is rolling, and exit at the far right.
 - **Zoom ruler** — a dotted ruler under the top bar that slides beneath a fixed ring;
@@ -48,8 +49,12 @@ over the picture:
 - **Bottom bar** — gallery, flip and orientation next to the joystick on the left; the
   record button in the middle (a red disc, a red square while rolling, white in photo
   mode); `CTR`, `FOLLOW`, `STILL` and fullscreen on the right; and the mode strip
-  (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · PANO · LIVESTREAM`) with the
-  active mode in Mimo yellow and Pano / Livestream greyed out.
+  (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · HYPERLAPSE`) with the active
+  mode in Mimo yellow. Pano and Livestream have no SET the phones send, so the strip
+  does not show them. Photo goes out as the body's own byte (`0x05` on a Pocket 3 or
+  Nano, `0x17` on a Pocket 4), Live Photo reads as PHOTO, and the strip refuses a
+  change while the body is rolling. In a stills mode the record button takes the
+  picture.
 
 `V` cycles the gimbal's Follow, Tilt Locked and FPV modes without opening Settings;
 the Settings → Camera tab remains the place to set gimbal speed and ramp.
@@ -417,19 +422,31 @@ disabled while the link is recovering or failed.
 
 A finger drags a tracking box on the unobstructed fitted image, exactly as the mouse
 does. A press that starts in a control stays a control — it can never become tracking.
-The box is labelled **ACQUIRING SUBJECT** until the Pocket confirms its lock, then
-**TRACKING SUBJECT**. The camera supplies a subject box and lock state, not a person’s
-name or identity.
+The box is drawn as Mimo's corner brackets: white while the Pocket is still searching,
+green once it has the subject. There are no words on the picture; the camera supplies
+a subject box and lock state, not a person’s name or identity.
 Keyboard shortcuts remain available.
 
 A click (or a tap) that is not a drag is **tap-to-focus**: Mimo's four-write burst
 (`0x22` spot, `0x30` region, `0x68` hint, `0x32` commit) at that point on the sensor,
 mirroring undone, with a bracketed reticle and the AE spot marked at its corner for
-1.5 s. A body already following something is told to stop first. The Nano takes no
-tap focus, so a click on one sends nothing. A drag's box is then **polled** on the
-phones' cadence (`0x02/0xA5` every 0.5 s): the box stays as long as the body says it
-has the subject, moves to the subject's rectangle when the body sends one, and comes
-off at the first idle after a lock or after six idle answers with no lock. The AF-C
+1.5 s. As on the phones the spot and the region go first and the hint and commit wait
+for the region's ACK (or 0.4 s, if the body never answers). A body already following
+something is told to stop first. The Nano takes no tap focus, so a click on one sends
+nothing.
+
+A drag's box goes to the body as **centre and size** (`0x02/0xA6`), which is what
+Mimo sends; a box with a side under 9 % of the picture is refused with `FRAME TOO
+SMALL`, since that is where the official app stops sending too. The box is then
+**polled** on the phones' cadence (`0x02/0xA5` every 0.5 s) and, once the body has
+locked, driven by its own `0x02/0x89` pushes (~15 Hz): the painted box eases toward
+each push with the core's constants (centre fast, size slow), a lock the body started
+on its own screen becomes a box here, and 0.35 s without a push means the body let
+go. `X` clears only when a box is out, and a push still in flight for 0.28 s after
+the clear is ignored rather than resurrecting the box. Losing the link drops the box.
+The box is drawn where it is on the sensor, so a mirrored picture shows it mirrored
+too. Without pushes the poll decides: the box comes off at the first idle after a
+lock, or after six idle answers with no lock. The AF-C
 face bracket is not here: the phones detect faces on-device, and the desktop has no
 detector yet.
 

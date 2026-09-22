@@ -214,6 +214,75 @@ func opc_tracking_poll(
     }
 }
 
+private func box(_ values: UnsafePointer<Float>?) -> TrackingBox? {
+    guard let values else { return nil }
+    let box = TrackingBox(
+        x: Double(values[0]), y: Double(values[1]), width: Double(values[2]),
+        height: Double(values[3]))
+    guard box.x.isFinite, box.y.isFinite, box.width.isFinite, box.height.isFinite else {
+        return nil
+    }
+    return box
+}
+
+private func write(_ box: TrackingBox, to out: UnsafeMutablePointer<Float>?) {
+    guard let out else { return }
+    out[0] = Float(box.x)
+    out[1] = Float(box.y)
+    out[2] = Float(box.width)
+    out[3] = Float(box.height)
+}
+
+/// Reads a `0x02/0x89` live push: the subject box the body is following, ~15 Hz while
+/// locked. Writes the box as top-left `x, y, width, height` and returns 1; 0 for a
+/// payload that is not a push.
+@_cdecl("opc_tracking_live_push")
+func opc_tracking_live_push(
+    _ payload: UnsafePointer<UInt8>?, _ count: Int, _ outBox: UnsafeMutablePointer<Float>?
+) -> Int32 {
+    guard let payload, count >= 0 else { return 0 }
+    let bytes = [UInt8](UnsafeBufferPointer(start: payload, count: count))
+    guard let box = TrackingBox.parseLivePush(bytes) else { return 0 }
+    write(box, to: outBox)
+    return 1
+}
+
+/// Eases the painted box toward the latest push with the phones' time constants:
+/// centre fast, size slow. `from` may be null for the first push.
+@_cdecl("opc_tracking_blend")
+func opc_tracking_blend(
+    _ from: UnsafePointer<Float>?, _ toward: UnsafePointer<Float>?, _ dt: Double,
+    _ out: UnsafeMutablePointer<Float>?
+) -> Int32 {
+    guard let toward = box(toward) else { return OPC_RELAY_ERR_NULL }
+    write(TrackingBoxSmoothing.blend(from: box(from), toward: toward, dt: dt), to: out)
+    return OPC_RELAY_OK
+}
+
+/// The tighter box drawn at a search rect's centre until the body sends a subject.
+@_cdecl("opc_tracking_subject_stand_in")
+func opc_tracking_subject_stand_in(
+    _ search: UnsafePointer<Float>?, _ out: UnsafeMutablePointer<Float>?
+) -> Int32 {
+    guard let search = box(search) else { return OPC_RELAY_ERR_NULL }
+    write(TrackingBox.subject(from: search), to: out)
+    return OPC_RELAY_OK
+}
+
+/// The tracking rules in one record: the shortest side Mimo still SETs, the beat an
+/// operator clear ignores leftover pushes for, and the silence that means the body
+/// dropped the lock.
+@_cdecl("opc_tracking_rules")
+func opc_tracking_rules(_ out: UnsafeMutablePointer<OpcTrackingRules>?) -> Int32 {
+    guard let out else { return OPC_RELAY_ERR_NULL }
+    out.pointee.minimum_side = TrackingBox.mimoMinimumSide
+    out.pointee.clear_ignore_seconds = TrackingClearPolicy.leftoverIgnore
+    out.pointee.push_silence_seconds = TrackingClearPolicy.pushSilence
+    out.pointee.position_time_constant = TrackingBoxSmoothing.positionTimeConstant
+    out.pointee.size_time_constant = TrackingBoxSmoothing.sizeTimeConstant
+    return OPC_RELAY_OK
+}
+
 /// Whether this body takes Mimo's tap-to-focus burst (the Nano does not).
 @_cdecl("opc_model_supports_tap_focus")
 func opc_model_supports_tap_focus(_ modelId: Int32) -> Int32 {

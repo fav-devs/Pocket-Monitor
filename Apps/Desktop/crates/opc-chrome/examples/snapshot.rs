@@ -102,7 +102,7 @@ fn main() {
             is_recording: rec,
             rec_elapsed: "00:12:34".into(),
             follow_on: true,
-            format_label: "1080P·60".into(),
+            format_label: "1080p · 60p".into(),
             expo_label: "AUTO".into(),
             battery_text: "15%".into(),
             battery_percent: 15,

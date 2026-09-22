@@ -103,20 +103,29 @@ impl Drag {
         width >= MINIMUM_SIDE && height >= MINIMUM_SIDE
     }
 
-    /// The command this drag became, or `None` for a click.
+    /// The box on the sensor, top-left and size in picture fractions.
     ///
     /// Mirroring is undone here: the operator points at what they see, and the camera is
     /// told where that is on its own sensor.
+    pub fn sensor_rectangle(&self) -> (f64, f64, f64, f64) {
+        let (x, y, width, height) = self.rectangle();
+        let x = if self.mirrored { 1.0 - x - width } else { x };
+        (x, y, width, height)
+    }
+
+    /// The command this drag became, or `None` for a click.
+    ///
+    /// The wire is **centre** and size, as Mimo sends it: the phones found that sending
+    /// the top-left put the corner of the box on the face.
     pub fn command(&self, id: u16) -> Option<Command> {
         if !self.is_box() {
             return None;
         }
-        let (x, y, width, height) = self.rectangle();
-        let x = if self.mirrored { 1.0 - x - width } else { x };
+        let (x, y, width, height) = self.sensor_rectangle();
         Some(Command::TrackSet {
             id,
-            x: x as f32,
-            y: y as f32,
+            x: (x + width / 2.0) as f32,
+            y: (y + height / 2.0) as f32,
             width: width as f32,
             height: height as f32,
         })
@@ -206,8 +215,9 @@ mod tests {
                 height,
             }) => {
                 assert_eq!(id, 7);
-                assert!((x - 0.25).abs() < 1e-6);
-                assert!((y - 0.25).abs() < 1e-6);
+                // The wire carries the centre, not the corner.
+                assert!((x - 0.5).abs() < 1e-6);
+                assert!((y - 0.5).abs() < 1e-6);
                 assert!((width - 0.5).abs() < 1e-6);
                 assert!((height - 0.5).abs() < 1e-6);
             }
@@ -224,7 +234,10 @@ mod tests {
         match drag.command(1) {
             Some(Command::TrackSet { x, width, .. }) => {
                 assert!((width - 0.3).abs() < 1e-6);
-                assert!((x - 0.7).abs() < 1e-6, "mirrored x should be 1 - x - width");
+                assert!(
+                    (x - 0.85).abs() < 1e-6,
+                    "the sensor box is 0.7…1.0, and the wire carries its centre"
+                );
             }
             other => panic!("expected a tracking box, got {other:?}"),
         }
@@ -235,7 +248,7 @@ mod tests {
         let mut drag = Drag::start((0.0, 0.4), false);
         drag.extend((0.3, 0.6));
         match drag.command(1) {
-            Some(Command::TrackSet { x, .. }) => assert!(x.abs() < 1e-6),
+            Some(Command::TrackSet { x, .. }) => assert!((x - 0.15).abs() < 1e-6),
             other => panic!("expected a tracking box, got {other:?}"),
         }
     }

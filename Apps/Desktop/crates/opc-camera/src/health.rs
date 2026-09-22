@@ -28,6 +28,8 @@ pub struct FeedHealth {
     decoder_failed: bool,
     path_ready: bool,
     flow_healthy: bool,
+    tcp_poke_ready: bool,
+    repair_blocked: bool,
 }
 
 impl FeedHealth {
@@ -88,6 +90,21 @@ impl FeedHealth {
         self.path_ready = ready;
     }
 
+    /// Whether the body answers the TCP poke, so the ladder may lean on it.
+    pub fn set_tcp_poke_ready(&mut self, ready: bool) {
+        self.tcp_poke_ready = ready;
+    }
+
+    /// The operator is somewhere a repair would tear down: the library, a playback.
+    /// The ladder waits until they come back to the live picture.
+    pub fn set_repair_blocked(&mut self, blocked: bool) {
+        self.repair_blocked = blocked;
+    }
+
+    pub fn repair_blocked(&self) -> bool {
+        self.repair_blocked
+    }
+
     pub fn set_flow_healthy(&mut self, healthy: bool) {
         self.flow_healthy = healthy;
     }
@@ -138,10 +155,10 @@ impl FeedHealth {
             decoder_failed: i32::from(self.decoder_failed),
             live: i32::from(live),
             saw_picture: i32::from(self.saw_picture),
-            tcp_poke_ready: 0,
+            tcp_poke_ready: i32::from(self.tcp_poke_ready),
             displayed_image_removed: 0,
             had_video: i32::from(self.saw_picture),
-            reserved: 0,
+            repair_blocked: i32::from(self.repair_blocked),
         }
     }
 }

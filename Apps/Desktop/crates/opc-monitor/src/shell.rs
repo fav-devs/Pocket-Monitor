@@ -8,12 +8,14 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use opc_camera::{Command, Status, TrackingPoll};
+use opc_camera::{Box4, Command, Status, TrackingPoll, TrackingRules};
 use opc_chrome::{
     AssistChip, Chrome, ChromeIntent, ChromeParts, ChromeState, Overlays, PlateKind, PlateState,
     Screen,
 };
 use opc_media::MediaFile;
+
+use opc_camera::capture::mode;
 
 use crate::assists::{
     guide_rect, AssistOptions, AssistTool, ZebraSteps, ZEBRA_HIGHLIGHT_STEPS, ZEBRA_MIDTONE_STEPS,
@@ -52,6 +54,12 @@ const TRACK_POLL_INTERVAL: f64 = 0.5;
 const TRACK_IDLE_TICKS: u32 = 6;
 /// Mimo's yellow, for the reticle.
 const RETICLE: opc_ui::canvas::Colour = [255, 196, 0, 255];
+/// Tracking brackets: white while the body is still searching, Mimo's green once it
+/// has the subject. No words on the picture; the phones do not label the box either.
+const SEARCH_BRACKET: opc_ui::canvas::Colour = [255, 255, 255, 255];
+const LOCK_BRACKET: opc_ui::canvas::Colour = [46, 199, 107, 255];
+/// A tap's hint and commit wait this long for the region ACK before going anyway.
+const TAP_ACK_GRACE: f64 = 0.4;
 /// Frames older than this stop counting towards the rate shown.
 const FPS_WINDOW: f64 = 1.0;
 /// How long a FORMAT pin and a notice stay up, as the phones keep them.
@@ -113,28 +121,31 @@ impl GimbalMode {
     }
 }
 
-/// Shooting-mode codes behind the mode strip, by [`opc_chrome::MODES`] index. `None` is a
-/// mode the strip shows but this shell cannot select (Pano, Livestream).
-const MODE_CODES: [Option<u8>; 7] = [
-    Some(0x02), // TIMELAPSE
-    Some(0x00), // SLOWMOTION
-    Some(0x28), // LOW-LIGHT (SuperNight)
-    Some(0x01), // VIDEO
-    Some(0x17), // PHOTO (Pocket 4; Nano's 0x05 reads the same)
-    None,       // PANO
-    None,       // LIVESTREAM
+/// Shooting-mode codes behind the mode strip, by [`opc_chrome::MODES`] index. These are
+/// the core's semantic bytes; Photo goes out as the body's own byte when it is sent.
+const MODE_CODES: [u8; 6] = [
+    mode::TIME_LAPSE,  // TIMELAPSE
+    mode::SLOW_MO,     // SLOWMOTION
+    mode::SUPER_NIGHT, // LOW-LIGHT
+    mode::VIDEO,       // VIDEO
+    mode::PHOTO,       // PHOTO
+    mode::HYPER_LAPSE, // HYPERLAPSE
 ];
 
-/// The strip index for a shooting-mode code the body reported. Unknown codes read as
-/// VIDEO rather than moving the highlight somewhere the operator did not tap.
+/// The strip index for a shooting-mode code the body reported. Live Photo reads as
+/// PHOTO and the Pocket 3's `0x05` too; an unknown code reads as VIDEO rather than
+/// moving the highlight somewhere the operator did not tap.
 fn mode_index(code: Option<i32>) -> usize {
-    match code {
-        Some(0x02) => 0,
-        Some(0x00) => 1,
-        Some(0x28) => 2,
-        Some(0x17) | Some(0x05) => 4,
-        _ => 3,
+    let Some(code) = code.and_then(|code| u8::try_from(code).ok()) else {
+        return 3;
+    };
+    if opc_camera::capture::mode_is_photo(code) {
+        return 4;
     }
+    MODE_CODES
+        .iter()
+        .position(|candidate| *candidate == code)
+        .unwrap_or(3)
 }
 
 /// What a finger did — winit's touch phases, without winit, so the rule about which
@@ -280,6 +291,13 @@ pub struct Shell {
     controller_held: bool,
     /// A box sent to the body and the polling that follows it.
     tracking: Option<TrackingState>,
+    /// The core's tracking rules: the smallest box Mimo sends, the clear beat, the
+    /// push silence that means the lock is gone.
+    tracking_rules: TrackingRules,
+    /// When the operator last cleared, so a leftover push cannot resurrect the box.
+    tracking_cleared_at: Option<f64>,
+    /// A tap whose hint and commit are waiting on the region ACK, and their deadline.
+    pending_tap: Option<((f32, f32), f64)>,
     stick_sent_at: f64,
     presented: VecDeque<f64>,
     /// The rasterised chrome, kept until something it draws changes.
@@ -378,6 +396,9 @@ impl Shell {
             notice: None,
             focus_marker: None,
             tracking: None,
+            tracking_rules: opc_camera::tracking_rules(),
+            tracking_cleared_at: None,
+            pending_tap: None,
             scope_options: ScopeOptions::default(),
             scope_samples: None,
             scope_scale: None,
@@ -658,6 +679,16 @@ impl Shell {
     }
 
     pub fn set_phase(&mut self, phase: Phase) {
+        if !matches!(phase, Phase::Live | Phase::Recovering | Phase::Waiting)
+            && (self.tracking.is_some() || self.pending_tap.is_some())
+        {
+            // The link is gone: a box the body was following is not ours any more.
+            self.tracking = None;
+            self.committed = None;
+            self.hud.drag = None;
+            self.pending_tap = None;
+            self.chrome_stale = true;
+        }
         if self.hud.phase != phase {
             self.hud.phase = phase;
             self.setup.phase = self.hud.connection_chip().to_string();
@@ -796,7 +827,18 @@ impl Shell {
                 if matches!(command, Command::SetVideoFormat { .. }) {
                     self.format_pin = None;
                 }
+                if matches!(command, Command::TapFocusPoint { .. }) {
+                    self.pending_tap = None;
+                }
                 self.set_notice("NO ANSWER FROM THE CAMERA");
+            }
+            SetOutcome::Acked {
+                command: Command::TapFocusPoint { .. },
+                ..
+            } => {
+                // The region took: the hint and commit go on the next tick.
+                let tail = self.finish_tap();
+                self.chrome_pending_intents.extend(tail);
             }
             SetOutcome::Acked { .. } | SetOutcome::Superseded { .. } => {}
         }
@@ -1178,11 +1220,7 @@ impl Shell {
         self.last_now = self.last_now.max(now);
         match button.action() {
             PadAction::Record => {
-                let command = if self.hud.status.is_recording {
-                    Command::RecordStop
-                } else {
-                    Command::RecordStart
-                };
+                let command = self.record_command();
                 self.act(Action::Send(command), now)
             }
             PadAction::Recenter => self.act(Action::Send(Command::GimbalRecenter), now),
@@ -1230,11 +1268,10 @@ impl Shell {
     /// The next ISO index up or down the body's own list (or the wire's table).
     fn iso_step(&mut self, delta: i32) -> Vec<Intent> {
         let status = &self.hud.status;
-        let list: Vec<u8> = if status.available_iso.is_empty() {
-            sheets::ISO_INDEX.iter().map(|(code, _)| *code).collect()
-        } else {
-            status.available_iso.clone()
-        };
+        let color = status
+            .color_mode
+            .unwrap_or(opc_camera::capture::color::NORMAL);
+        let list = opc_camera::capture::iso_indices(color, &status.available_iso);
         let at = status
             .iso_index
             .and_then(|now| list.iter().position(|code| *code == now))
@@ -1250,11 +1287,10 @@ impl Shell {
     /// smaller denominator.
     fn shutter_step(&mut self, delta: i32) -> Vec<Intent> {
         let status = &self.hud.status;
-        let mut list: Vec<i32> = if status.available_shutter.is_empty() {
-            sheets::SHUTTER_DEFAULT.to_vec()
-        } else {
-            status.available_shutter.clone()
-        };
+        let mut list = opc_camera::capture::shutter_wheel(
+            &status.available_shutter,
+            status.shutter_denominator,
+        );
         list.sort_unstable_by(|a, b| b.cmp(a));
         let at = status
             .shutter_denominator
@@ -1916,7 +1952,8 @@ impl Shell {
     fn stick_changed(&mut self, now: f64) -> Vec<Intent> {
         if self.prefs.ramp_tau() <= 0.0 {
             self.stick_sent_at = now;
-            return vec![Intent::Send(self.stick.command())];
+            let (x, y) = self.stick.target();
+            return vec![Intent::Send(self.stick_axes(x, y))];
         }
         // One nominal frame of ease, so the first send is already a fraction of the
         // throw rather than the whole of it.
@@ -2044,7 +2081,13 @@ impl Shell {
                 self.drag = None;
                 self.committed = None;
                 self.hud.drag = None;
-                self.tracking = None;
+                self.chrome_stale = true;
+                // Nothing out with the body means nothing to clear: the phones send
+                // the all-zero SET only when a box is up.
+                if self.tracking.take().is_none() {
+                    return Vec::new();
+                }
+                self.tracking_cleared_at = Some(now);
                 vec![Intent::Send(Command::TrackClear)]
             }
             Action::CycleResolution | Action::CycleFrameRate => {
@@ -2118,9 +2161,21 @@ impl Shell {
             let (x, y, _, _) = drag.rectangle();
             return self.tap_focus((x, y), now);
         };
+        let (sx, sy, sw, sh) = drag.sensor_rectangle();
+        let minimum = self.tracking_rules.minimum_side;
+        if sw < minimum || sh < minimum {
+            // Below this Mimo toasts and does not SET; the body would not lock anyway.
+            self.hud.drag = None;
+            self.set_notice("FRAME TOO SMALL");
+            return Vec::new();
+        }
         self.next_track_id = self.next_track_id.wrapping_add(1).max(1);
         self.committed = Some((drag.rectangle(), now + BOX_CONFIRM));
-        self.tracking = Some(TrackingState::new(drag.rectangle(), now));
+        self.tracking = Some(TrackingState::new(
+            (sx as f32, sy as f32, sw as f32, sh as f32),
+            now,
+        ));
+        self.tracking_cleared_at = None;
         vec![Intent::Send(command)]
     }
 
@@ -2132,9 +2187,10 @@ impl Shell {
             return Vec::new();
         }
         let mut intents = Vec::new();
-        if self.tracking.is_some() {
-            self.tracking = None;
+        if self.tracking.take().is_some() {
             self.committed = None;
+            self.hud.drag = None;
+            self.tracking_cleared_at = Some(now);
             intents.push(Intent::Send(Command::TrackClear));
         }
         let x = if self.toggles.mirror {
@@ -2142,18 +2198,30 @@ impl Shell {
         } else {
             seen.0
         };
-        intents.extend(
-            Command::tap_focus(x as f32, seen.1 as f32)
-                .into_iter()
-                .map(Intent::Send),
-        );
+        // Mimo sends the spot and the region, waits for the region's ACK, then the
+        // hint and the commit. The tail goes from `note_set`, or from `tick` if the
+        // body never answers.
+        let point = (x as f32, seen.1 as f32);
+        let [prepare, region, _, _] = Command::tap_focus(point.0, point.1);
+        intents.push(Intent::Send(prepare));
+        intents.push(Intent::Send(region));
+        self.pending_tap = Some((point, now + TAP_ACK_GRACE));
         self.focus_marker = Some((seen, now + FOCUS_MARKER_SECONDS));
         self.chrome_stale = true;
         intents
     }
 
+    /// The hint and commit that finish a tap, once the region SET has been answered.
+    fn finish_tap(&mut self) -> Vec<Intent> {
+        let Some((point, _)) = self.pending_tap.take() else {
+            return Vec::new();
+        };
+        let [_, _, hint, commit] = Command::tap_focus(point.0, point.1);
+        vec![Intent::Send(hint), Intent::Send(commit)]
+    }
+
     /// The body answered a tracking poll.
-    pub fn tracking_reply(&mut self, poll: TrackingPoll, now: f64) {
+    pub fn tracking_reply(&mut self, poll: TrackingPoll, _now: f64) {
         let Some(tracking) = self.tracking.as_mut() else {
             return;
         };
@@ -2161,13 +2229,15 @@ impl Shell {
             TrackingPoll::Locked(subject) => {
                 tracking.saw_lock = true;
                 tracking.idle_ticks = 0;
-                if let Some((x, y, w, h)) = subject {
-                    tracking.subject =
-                        Some((f64::from(x), f64::from(y), f64::from(w), f64::from(h)));
+                // The live push is the finer signal; a poll only fills in while the
+                // body has not started pushing.
+                if tracking.last_push_at.is_none() {
+                    if let Some(subject) = subject {
+                        tracking.subject = Some(subject);
+                    }
                 }
                 // The box stays as long as the body says it has the subject.
-                let shown = tracking.subject.unwrap_or(tracking.search);
-                self.committed = Some((shown, now + 2.0 * TRACK_POLL_INTERVAL));
+                self.committed = None;
             }
             TrackingPoll::Idle => {
                 if tracking.saw_lock {
@@ -2187,22 +2257,61 @@ impl Shell {
         self.chrome_stale = true;
     }
 
+    /// The body pushed where its subject is (`0x02/0x89`, ~15 Hz while locked). The
+    /// painted box eases toward it. A push right after an operator clear is the
+    /// leftover of the box just cleared and is ignored; a push with no box up is a
+    /// lock started on the body's own screen, and becomes one.
+    pub fn tracking_push(&mut self, subject: Box4, now: f64) {
+        if let Some(cleared_at) = self.tracking_cleared_at {
+            if now - cleared_at < self.tracking_rules.clear_ignore_seconds {
+                return;
+            }
+            self.tracking_cleared_at = None;
+        }
+        let tracking = self
+            .tracking
+            .get_or_insert_with(|| TrackingState::new(subject, now));
+        let dt = tracking.last_push_at.map_or(0.0, |at| (now - at).max(0.0));
+        tracking.subject = Some(opc_camera::tracking_blend(tracking.subject, subject, dt));
+        tracking.last_push_at = Some(now);
+        tracking.saw_lock = true;
+        tracking.idle_ticks = 0;
+        self.committed = None;
+        self.chrome_stale = true;
+    }
+
     /// Whether a box is out with the body and being polled.
     pub fn is_tracking(&self) -> bool {
         self.tracking.is_some()
     }
 
-    /// The Pocket reports a subject box and lock state, not facial identity. Keep that
-    /// distinction explicit in the operator copy rather than pretending it knows who
-    /// the person is.
-    pub fn tracking_label(&self) -> Option<&'static str> {
-        self.tracking.as_ref().map(|tracking| {
-            if tracking.saw_lock {
-                "TRACKING SUBJECT"
-            } else {
-                "ACQUIRING SUBJECT"
-            }
-        })
+    /// Whether the body has said it has the subject.
+    pub fn tracking_locked(&self) -> bool {
+        self.tracking
+            .as_ref()
+            .is_some_and(|tracking| tracking.saw_lock)
+    }
+
+    /// The box the picture shows once the body has locked, as seen (mirroring
+    /// applied): the body's subject when it has sent one, else the phones' tighter
+    /// stand-in at the search centre. Before a lock the drawn search box fades on its
+    /// own clock, since the body has not said anything yet.
+    fn tracking_box_seen(&self) -> Option<(f64, f64, f64, f64)> {
+        let tracking = self
+            .tracking
+            .as_ref()
+            .filter(|tracking| tracking.saw_lock)?;
+        let sensor = tracking
+            .subject
+            .unwrap_or_else(|| opc_camera::tracking_subject_stand_in(tracking.search));
+        let (x, y, w, h) = (
+            f64::from(sensor.0),
+            f64::from(sensor.1),
+            f64::from(sensor.2),
+            f64::from(sensor.3),
+        );
+        let x = if self.toggles.mirror { 1.0 - x - w } else { x };
+        Some((x, y, w, h))
     }
 
     /// A wind or directional write: the body's own blob patched and sent back, then
@@ -2298,6 +2407,24 @@ impl Shell {
         fired
     }
 
+    /// What the record button does right now: stop a take, start one, or in a stills
+    /// mode take the picture, as the phones' shutter does.
+    fn record_command(&self) -> Command {
+        let status = &self.hud.status;
+        if status.is_recording {
+            return Command::RecordStop;
+        }
+        let photo = status
+            .shooting_mode
+            .and_then(|code| u8::try_from(code).ok())
+            .is_some_and(opc_camera::capture::mode_is_photo);
+        if photo {
+            Command::ShootPhoto
+        } else {
+            Command::RecordStart
+        }
+    }
+
     /// One control's intent, as the chrome would fire it. For tests that do not want
     /// to find the control by coordinate.
     pub fn chrome_intent_for_test(&mut self, intent: ChromeIntent) -> Vec<Intent> {
@@ -2309,11 +2436,7 @@ impl Shell {
     fn act_on_chrome(&mut self, intent: ChromeIntent, fired: &mut Vec<Intent>) {
         match intent {
             ChromeIntent::RecordToggle => {
-                fired.push(Intent::Send(if self.hud.status.is_recording {
-                    Command::RecordStop
-                } else {
-                    Command::RecordStart
-                }));
+                fired.push(Intent::Send(self.record_command()));
             }
             ChromeIntent::TakeStill => fired.push(Intent::Send(Command::ShootPhoto)),
             ChromeIntent::GimbalFlip => fired.push(Intent::Send(Command::GimbalFlip)),
@@ -2342,8 +2465,13 @@ impl Shell {
                 fired.extend(self.gimbal_mode.commands().into_iter().map(Intent::Send));
             }
             ChromeIntent::ModeSelected(index) => {
-                if let Some(code) = MODE_CODES.get(index).copied().flatten() {
-                    fired.push(Intent::Send(Command::SetShootingMode(code)));
+                if let Some(code) = MODE_CODES.get(index).copied() {
+                    if self.hud.status.is_recording {
+                        // Mimo greys the strip while rolling; the body refuses anyway.
+                        self.set_notice("STOP RECORDING TO CHANGE MODE");
+                    } else if self.hud.status.shooting_mode != Some(i32::from(code)) {
+                        fired.push(Intent::Send(Command::SetShootingMode(code)));
+                    }
                 }
             }
             ChromeIntent::OpenFormat => self.toggle_sheet(SheetKind::Format),
@@ -2872,12 +3000,22 @@ impl Shell {
         let mut intents = Vec::new();
         // Drain intents queued by Slint button callbacks.
         intents.append(&mut self.chrome_pending_intents);
-        // Ask the body about its subject on the phones' cadence.
+        // Ask the body about its subject on the phones' cadence. Once it has been
+        // pushing, a silence means it let go.
+        let silence = self.tracking_rules.push_silence_seconds;
         if let Some(tracking) = self.tracking.as_mut() {
-            if now >= tracking.next_poll_at {
+            if tracking.last_push_at.is_some_and(|at| now - at >= silence) {
+                self.tracking = None;
+                self.committed = None;
+                self.hud.drag = None;
+                self.chrome_stale = true;
+            } else if now >= tracking.next_poll_at {
                 tracking.next_poll_at = now + TRACK_POLL_INTERVAL;
                 intents.push(Intent::Send(Command::TrackPoll));
             }
+        }
+        if self.pending_tap.is_some_and(|(_, until)| now >= until) {
+            intents.extend(self.finish_tap());
         }
         if self.focus_marker.is_some_and(|(_, until)| now >= until) {
             self.focus_marker = None;
@@ -2904,7 +3042,8 @@ impl Shell {
             }
         } else if !self.stick.is_resting() && now - self.stick_sent_at >= STICK_REPEAT {
             self.stick_sent_at = now;
-            intents.push(Intent::Send(self.stick.command()));
+            let (x, y) = self.stick.target();
+            intents.push(Intent::Send(self.stick_axes(x, y)));
         }
         if let Some((_, until)) = self.committed {
             if now >= until {
@@ -2933,7 +3072,9 @@ impl Shell {
         }
         if self.chrome_stale || self.chrome.is_none() {
             self.hud.fit = Some(self.fit());
-            if let Some((rectangle, _)) = self.committed {
+            if let Some(rectangle) = self.tracking_box_seen() {
+                self.hud.drag = Some(rectangle);
+            } else if let Some((rectangle, _)) = self.committed {
                 self.hud.drag = Some(rectangle);
             }
 
@@ -2975,6 +3116,13 @@ impl Shell {
                 let link_state = self.hud.connection_chip();
                 let zoom = self.controls.zoom();
                 let battery_pct = status.battery_percent.unwrap_or(0);
+                let dash = |text: String| {
+                    if text.is_empty() {
+                        "—".to_string()
+                    } else {
+                        text
+                    }
+                };
                 let fit = self.hud.fit.unwrap_or(opc_ui::Fit {
                     x: 0.0,
                     y: 0.0,
@@ -2984,14 +3132,16 @@ impl Shell {
                 let mode = mode_index(status.shooting_mode);
                 let state = ChromeState {
                     phase: &self.hud.phase,
-                    shutter: status.shutter_label().unwrap_or_default(),
-                    iso: status.iso.map(|iso| iso.to_string()).unwrap_or_default(),
-                    ev: status.ev_label().unwrap_or_default(),
-                    wb: status
-                        .white_balance_kelvin
-                        .filter(|value| *value > 0)
-                        .map(|kelvin| format!("{kelvin}K"))
-                        .unwrap_or_default(),
+                    shutter: dash(status.shutter_label().unwrap_or_default()),
+                    iso: dash(status.iso.map(|iso| iso.to_string()).unwrap_or_default()),
+                    ev: dash(status.ev_label().unwrap_or_default()),
+                    wb: dash(
+                        status
+                            .white_balance_kelvin
+                            .filter(|value| *value > 0)
+                            .map(|kelvin| format!("{kelvin}K"))
+                            .unwrap_or_default(),
+                    ),
                     link_state,
                     is_recording: status.is_recording,
                     rec_elapsed: status.elapsed_label(),
@@ -2999,9 +3149,13 @@ impl Shell {
                     format_label,
                     expo_label: match status.expo_mode {
                         Some(0x04) => "M".to_string(),
-                        _ => "AUTO".to_string(),
+                        Some(_) => "AUTO".to_string(),
+                        None => "—".to_string(),
                     },
-                    battery_text: format!("{battery_pct}%"),
+                    battery_text: status
+                        .battery_percent
+                        .map(|pct| format!("{pct}%"))
+                        .unwrap_or_else(|| "—".to_string()),
                     battery_percent: battery_pct,
                     storage_text: status.remaining_label(),
                     zoom: zoom as f32,
@@ -3053,22 +3207,28 @@ impl Shell {
             if let Some((x, y, bw, bh)) = self.hud.drag {
                 let box_x = (fit.x + x * fit.width) as i64;
                 let box_y = (fit.y + y * fit.height) as i64;
-                canvas.stroke(
-                    box_x,
-                    box_y,
-                    (bw * fit.width) as u32,
-                    (bh * fit.height) as u32,
-                    2,
-                    opc_ui::canvas::TRACKING,
-                );
-                if let Some(label) = self.tracking_label() {
-                    canvas.label(
-                        box_x + 3,
-                        (box_y - 13).max(fit.y as i64 + 3),
-                        label,
-                        1,
-                        opc_ui::canvas::TRACKING,
-                    );
+                let width = (bw * fit.width) as i64;
+                let height = (bh * fit.height) as i64;
+                let colour = if self.tracking_locked() {
+                    LOCK_BRACKET
+                } else {
+                    SEARCH_BRACKET
+                };
+                if self.drag.is_some() {
+                    // Still being drawn: the whole outline, so the operator sees the
+                    // rectangle they are pulling out.
+                    canvas.stroke(box_x, box_y, width as u32, height as u32, 2, colour);
+                } else {
+                    // Out with the body: Mimo's corner brackets.
+                    let arm = (width.min(height) / 4).clamp(6, 24);
+                    for (sx, sy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let corner_x = box_x + sx * width;
+                        let corner_y = box_y + sy * height;
+                        let hx = if sx == 0 { corner_x } else { corner_x - arm };
+                        let vy = if sy == 0 { corner_y } else { corner_y - arm };
+                        canvas.stroke(hx, corner_y - 1, arm as u32, 2, 2, colour);
+                        canvas.stroke(corner_x - 1, vy, 2, arm as u32, 2, colour);
+                    }
                 }
             }
             // The tap-to-focus reticle: Mimo's bracketed square with the AE spot
@@ -3110,26 +3270,30 @@ impl Shell {
     }
 }
 
-/// A box out with the body, and the polling that decides whether it took.
+/// A box out with the body, and the polling that decides whether it took. Boxes are
+/// on the sensor, top-left and size; mirroring is applied only when they are drawn.
 #[derive(Debug, Clone, PartialEq)]
 struct TrackingState {
-    /// What was drawn and sent.
-    search: (f64, f64, f64, f64),
-    /// Where the body says the subject is, once it has said.
-    subject: Option<(f64, f64, f64, f64)>,
+    /// What was sent.
+    search: Box4,
+    /// The painted subject box: where the body says the subject is, eased.
+    subject: Option<Box4>,
     saw_lock: bool,
     idle_ticks: u32,
     next_poll_at: f64,
+    /// When the body last pushed a subject box, once it has.
+    last_push_at: Option<f64>,
 }
 
 impl TrackingState {
-    fn new(search: (f64, f64, f64, f64), now: f64) -> Self {
+    fn new(search: Box4, now: f64) -> Self {
         Self {
             search,
             subject: None,
             saw_lock: false,
             idle_ticks: 0,
             next_poll_at: now + TRACK_POLL_INTERVAL,
+            last_push_at: None,
         }
     }
 }

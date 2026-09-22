@@ -57,6 +57,9 @@ enum ToCamera {
     Presented,
     /// The decoder is wedged, or has just been rebuilt.
     DecoderFailed(bool),
+    /// The operator is in the library or a playback, where a repair would tear the
+    /// screen down under them.
+    RepairBlocked(bool),
     Stop,
 }
 
@@ -114,6 +117,11 @@ impl Link {
 
     pub fn note_decoder_failed(&self, failed: bool) {
         let _ = self.commands.send(ToCamera::DecoderFailed(failed));
+    }
+
+    /// Holds the watchdog's ladder while the operator is away from the live picture.
+    pub fn set_repair_blocked(&self, blocked: bool) {
+        let _ = self.commands.send(ToCamera::RepairBlocked(blocked));
     }
 
     /// Everything waiting from the camera.
@@ -192,6 +200,7 @@ fn run(
                 Ok(ToCamera::Send(command)) => session.send(command),
                 Ok(ToCamera::Presented) => session.note_presented(),
                 Ok(ToCamera::DecoderFailed(failed)) => session.set_decoder_failed(failed),
+                Ok(ToCamera::RepairBlocked(blocked)) => session.set_repair_blocked(blocked),
                 Ok(ToCamera::Stop) | Err(TryRecvError::Disconnected) => return,
                 Err(TryRecvError::Empty) => break,
             }
@@ -336,7 +345,8 @@ fn is_media_reply(frame: &DumlFrame) -> bool {
     ) || is_tracking_reply(frame)
 }
 
-/// The `0x02/0xA5` poll answer the shell reads to keep or drop its tracking box.
+/// The `0x02/0xA5` poll answer the shell reads to keep or drop its tracking box, and
+/// the `0x02/0x89` push that carries where the subject is while the body has it.
 fn is_tracking_reply(frame: &DumlFrame) -> bool {
-    (frame.cmd_set, frame.cmd_id) == (0x02, 0xA5)
+    matches!((frame.cmd_set, frame.cmd_id), (0x02, 0xA5) | (0x02, 0x89))
 }

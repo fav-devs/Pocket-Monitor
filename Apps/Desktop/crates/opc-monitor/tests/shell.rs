@@ -148,8 +148,9 @@ fn a_drag_becomes_a_box_in_the_picture_the_operator_pointed_at() {
             height,
             ..
         }) => {
-            assert!((x - 0.25).abs() < 0.01, "x was {x}");
-            assert!((y - 0.25).abs() < 0.01, "y was {y}");
+            // The wire carries the centre of the box, as Mimo sends it.
+            assert!((x - 0.375).abs() < 0.01, "x was {x}");
+            assert!((y - 0.375).abs() < 0.01, "y was {y}");
             assert!((width - 0.25).abs() < 0.01, "width was {width}");
             assert!((height - 0.25).abs() < 0.01, "height was {height}");
         }
@@ -166,8 +167,8 @@ fn a_drag_on_a_mirrored_picture_points_at_the_same_thing() {
     match sent(&shell.pointer_up(640.0, 360.0, 0.0)).first() {
         Some(Command::TrackSet { x, width, .. }) => {
             // The operator dragged the left quarter of what they see; mirrored, that is
-            // the right quarter of the sensor.
-            assert!((x - 0.5).abs() < 0.01, "mirrored x was {x}");
+            // the sensor's 0.5…0.75, whose centre goes on the wire.
+            assert!((x - 0.625).abs() < 0.01, "mirrored x was {x}");
             assert!((width - 0.25).abs() < 0.01);
         }
         other => panic!("a mirrored drag should still track, got {other:?}"),
@@ -178,18 +179,156 @@ fn a_drag_on_a_mirrored_picture_points_at_the_same_thing() {
 fn a_click_focuses_where_it_landed_and_leaves_tracking_alone() {
     let mut shell = framed();
     shell.pointer_down(640.0, 360.0);
-    let sent = sent(&shell.pointer_up(641.0, 361.0, 0.0));
+    let first = sent(&shell.pointer_up(641.0, 361.0, 0.0));
     // The picture is 1280 × 720 fitted edge to edge, so the click is the centre.
-    assert_eq!(sent.len(), 4, "Mimo's four-write burst");
-    assert_eq!(sent[0], Command::TapFocusPrepare);
+    // Mimo sends the spot and the region, then waits for the region's ACK.
+    assert_eq!(first.len(), 2, "the first half of Mimo's burst");
+    assert_eq!(first[0], Command::TapFocusPrepare);
     assert!(
-        matches!(sent[1], Command::TapFocusPoint { x, y } if (x - 0.5).abs() < 0.01 && (y - 0.5).abs() < 0.01)
+        matches!(first[1], Command::TapFocusPoint { x, y } if (x - 0.5).abs() < 0.01 && (y - 0.5).abs() < 0.01)
     );
-    assert_eq!(sent[2], Command::TapFocusHint);
-    assert!(matches!(sent[3], Command::TapFocusCommit { .. }));
     assert!(
-        !sent.contains(&Command::TrackClear),
+        !first.contains(&Command::TrackClear),
         "a click is not a box, and must not clear what the camera is following"
+    );
+    // The region took: the hint and the commit follow on the next tick.
+    shell.note_set(opc_monitor::SetOutcome::Acked {
+        command: Command::TapFocusPoint { x: 0.5, y: 0.5 },
+        late: false,
+    });
+    let tail = sent(&shell.tick(0.05));
+    assert_eq!(tail[0], Command::TapFocusHint);
+    assert!(matches!(tail[1], Command::TapFocusCommit { .. }));
+    assert!(shell.tick(0.1).is_empty(), "sent once");
+}
+
+#[test]
+fn a_tap_the_body_never_answers_still_finishes() {
+    let mut shell = framed();
+    shell.pointer_down(640.0, 360.0);
+    shell.pointer_up(641.0, 361.0, 0.0);
+    assert!(
+        shell.tick(0.2).is_empty(),
+        "still waiting on the region ACK"
+    );
+    let tail = sent(&shell.tick(0.5));
+    assert_eq!(tail[0], Command::TapFocusHint);
+    assert!(matches!(tail[1], Command::TapFocusCommit { .. }));
+}
+
+#[test]
+fn a_box_smaller_than_the_body_locks_is_refused_with_a_note() {
+    let mut shell = framed();
+    // 40 px on a 1280 × 720 picture is 3 % wide: a box, but not one Mimo would send.
+    shell.pointer_down(600.0, 300.0);
+    shell.pointer_moved(640.0, 340.0);
+    let sent = sent(&shell.pointer_up(640.0, 340.0, 0.0));
+    assert!(sent.is_empty(), "nothing goes to the body: {sent:?}");
+    assert!(!shell.is_tracking());
+    assert_eq!(shell.notice(0.1), "FRAME TOO SMALL");
+}
+
+#[test]
+fn the_body_s_own_pushes_drive_the_box_and_silence_drops_it() {
+    let mut shell = framed();
+    shell.pointer_down(320.0, 180.0);
+    shell.pointer_moved(640.0, 360.0);
+    shell.pointer_up(640.0, 360.0, 0.0);
+    assert!(!shell.tracking_locked());
+    // The first push is the lock; it lands where the body says.
+    shell.tracking_push((0.3, 0.3, 0.2, 0.2), 0.2);
+    assert!(shell.tracking_locked());
+    // Pushes keep it alive well past the poll's idle count.
+    for i in 1..30 {
+        shell.tracking_push((0.3, 0.3, 0.2, 0.2), 0.2 + 0.07 * f64::from(i));
+        shell.tick(0.2 + 0.07 * f64::from(i));
+    }
+    assert!(shell.is_tracking());
+    // The body stops pushing: the lock is gone after the core's silence.
+    shell.tick(2.5);
+    assert!(shell.is_tracking(), "not yet");
+    shell.tick(2.7);
+    assert!(!shell.is_tracking(), "silence means the body let go");
+}
+
+#[test]
+fn a_lock_started_on_the_body_becomes_a_box_here() {
+    let mut shell = framed();
+    assert!(!shell.is_tracking());
+    shell.tracking_push((0.4, 0.4, 0.2, 0.2), 1.0);
+    assert!(shell.is_tracking() && shell.tracking_locked());
+}
+
+#[test]
+fn a_clear_ignores_the_leftover_push_and_only_clears_what_is_out() {
+    let mut shell = framed();
+    // Nothing out with the body: X sends nothing.
+    assert!(sent(&shell.press(Key::Char('x'), 0.0)).is_empty());
+    shell.pointer_down(320.0, 180.0);
+    shell.pointer_moved(640.0, 360.0);
+    shell.pointer_up(640.0, 360.0, 0.0);
+    shell.tracking_push((0.3, 0.3, 0.2, 0.2), 0.2);
+    assert_eq!(
+        sent(&shell.press(Key::Char('x'), 1.0)),
+        [Command::TrackClear]
+    );
+    assert!(!shell.is_tracking());
+    // The push already in flight when the clear went out is not a new lock.
+    shell.tracking_push((0.3, 0.3, 0.2, 0.2), 1.1);
+    assert!(!shell.is_tracking(), "leftover push ignored");
+    // A push well after the beat is the body locking again on its own screen.
+    shell.tracking_push((0.3, 0.3, 0.2, 0.2), 1.6);
+    assert!(shell.is_tracking());
+}
+
+#[test]
+fn losing_the_link_drops_the_box() {
+    let mut shell = framed();
+    shell.pointer_down(320.0, 180.0);
+    shell.pointer_moved(640.0, 360.0);
+    shell.pointer_up(640.0, 360.0, 0.0);
+    assert!(shell.is_tracking());
+    shell.set_phase(Phase::Finding);
+    assert!(!shell.is_tracking());
+}
+
+#[test]
+fn in_a_stills_mode_the_record_button_takes_the_picture() {
+    use opc_chrome::ChromeIntent;
+    let mut shell = framed();
+    shell.set_status(Status {
+        shooting_mode: Some(0x4D),
+        ..Status::default()
+    });
+    assert_eq!(
+        sent(&shell.chrome_intent_for_test(ChromeIntent::RecordToggle)),
+        [Command::ShootPhoto]
+    );
+    shell.set_status(Status {
+        shooting_mode: Some(0x01),
+        ..Status::default()
+    });
+    assert_eq!(
+        sent(&shell.chrome_intent_for_test(ChromeIntent::RecordToggle)),
+        [Command::RecordStart]
+    );
+    // The strip cannot change mode while rolling, and never re-sends the current one.
+    shell.set_status(Status {
+        shooting_mode: Some(0x01),
+        is_recording: true,
+        ..Status::default()
+    });
+    assert!(sent(&shell.chrome_intent_for_test(ChromeIntent::ModeSelected(4))).is_empty());
+    assert!(shell.notice(0.0).contains("STOP RECORDING"));
+    shell.set_status(Status {
+        shooting_mode: Some(0x01),
+        ..Status::default()
+    });
+    assert!(sent(&shell.chrome_intent_for_test(ChromeIntent::ModeSelected(3))).is_empty());
+    assert_eq!(
+        sent(&shell.chrome_intent_for_test(ChromeIntent::ModeSelected(5))),
+        [Command::SetShootingMode(0x0A)],
+        "HyperLapse is on the strip"
     );
 }
 
@@ -418,7 +557,7 @@ fn a_box_is_polled_until_the_body_locks_and_then_until_it_lets_go() {
     shell.pointer_moved(640.0, 360.0);
     shell.pointer_up(640.0, 360.0, 0.0);
     assert!(shell.is_tracking());
-    assert_eq!(shell.tracking_label(), Some("ACQUIRING SUBJECT"));
+    assert!(!shell.tracking_locked());
     assert!(shell.tick(0.1).is_empty(), "not yet");
     assert_eq!(sent(&shell.tick(0.5)), [Command::TrackPoll]);
     assert!(shell.tick(0.6).is_empty(), "one poll per half second");
@@ -435,7 +574,7 @@ fn a_box_is_polled_until_the_body_locks_and_then_until_it_lets_go() {
     shell.pointer_moved(640.0, 360.0);
     shell.pointer_up(640.0, 360.0, 10.0);
     shell.tracking_reply(TrackingPoll::Locked(Some((0.3, 0.3, 0.2, 0.2))), 10.5);
-    assert_eq!(shell.tracking_label(), Some("TRACKING SUBJECT"));
+    assert!(shell.tracking_locked());
     shell.tick(12.5);
     assert!(shell.is_tracking());
     // The first idle after a lock is the subject gone.
@@ -448,7 +587,7 @@ fn a_box_is_polled_until_the_body_locks_and_then_until_it_lets_go() {
     shell.pointer_down(200.0, 200.0);
     let sent = sent(&shell.pointer_up(200.0, 200.0, 20.5));
     assert_eq!(sent[0], Command::TrackClear);
-    assert_eq!(sent.len(), 5);
+    assert_eq!(sent.len(), 3, "the clear, then the spot and the region");
     assert!(!shell.is_tracking());
 }
 
@@ -655,11 +794,11 @@ fn a_format_just_sent_is_pinned_until_the_body_confirms_it_or_gives_up() {
         video_frame_rate: Some(0x03),
         ..Status::default()
     });
-    assert_eq!(shell.format_label(0.0), "4K·30");
+    assert_eq!(shell.format_label(0.0), "4K · 30p");
     shell.press(Key::Char(']'), 0.0);
     assert_eq!(
         shell.format_label(0.5),
-        "4K·60",
+        "4K · 60p",
         "the chip reads the format asked for"
     );
     // A stale status inside the window does not unpin it.
@@ -669,7 +808,7 @@ fn a_format_just_sent_is_pinned_until_the_body_confirms_it_or_gives_up() {
         video_frame_rate: Some(0x03),
         ..Status::default()
     });
-    assert_eq!(shell.format_label(0.5), "4K·60");
+    assert_eq!(shell.format_label(0.5), "4K · 60p");
     // The body confirms: the pin is done with, and the chip reads the body.
     shell.set_status(Status {
         available_formats: vec![(0x10, 0x03), (0x10, 0x06)],
@@ -677,7 +816,7 @@ fn a_format_just_sent_is_pinned_until_the_body_confirms_it_or_gives_up() {
         video_frame_rate: Some(0x06),
         ..Status::default()
     });
-    assert_eq!(shell.format_label(0.6), "4K·60");
+    assert_eq!(shell.format_label(0.6), "4K · 60p");
     // A SET nobody answered drops the pin and tells the operator.
     shell.press(Key::Char('['), 1.0);
     shell.note_set(SetOutcome::Unanswered {
@@ -687,7 +826,7 @@ fn a_format_just_sent_is_pinned_until_the_body_confirms_it_or_gives_up() {
         },
     });
     assert_eq!(shell.notice(1.1), "NO ANSWER FROM THE CAMERA");
-    assert_eq!(shell.format_label(1.1), "4K·60");
+    assert_eq!(shell.format_label(1.1), "4K · 60p");
 }
 
 #[test]
@@ -847,8 +986,9 @@ fn a_finger_draws_the_same_box_a_mouse_does() {
             height,
             ..
         }) => {
-            assert!((x - 0.25).abs() < 0.01, "x was {x}");
-            assert!((y - 0.25).abs() < 0.01, "y was {y}");
+            // The wire carries the centre of the box, as Mimo sends it.
+            assert!((x - 0.375).abs() < 0.01, "x was {x}");
+            assert!((y - 0.375).abs() < 0.01, "y was {y}");
             assert!((width - 0.25).abs() < 0.01, "width was {width}");
             assert!((height - 0.25).abs() < 0.01, "height was {height}");
         }
@@ -875,7 +1015,7 @@ fn a_second_finger_cannot_take_over_a_box_being_drawn() {
     // The first finger's box is still the one that lands, unchanged.
     match sent(&shell.touch(1, TouchPhase::Ended, 640.0, 360.0, 0.0)).first() {
         Some(Command::TrackSet { x, width, .. }) => {
-            assert!((x - 0.25).abs() < 0.01, "x was {x}");
+            assert!((x - 0.375).abs() < 0.01, "x was {x}");
             assert!((width - 0.25).abs() < 0.01, "width was {width}");
         }
         other => panic!("the first finger should still track, got {other:?}"),
@@ -935,7 +1075,11 @@ fn a_tap_focuses_by_finger_as_by_mouse() {
     let mut shell = framed();
     shell.touch(1, TouchPhase::Started, 640.0, 360.0, 0.0);
     let sent = sent(&shell.touch(1, TouchPhase::Ended, 641.0, 361.0, 0.0));
-    assert_eq!(sent.len(), 4, "a tap is not a box: it focuses");
+    assert_eq!(
+        sent.len(),
+        2,
+        "a tap is not a box: it focuses (spot and region first)"
+    );
     assert!(
         !sent.contains(&Command::TrackClear),
         "and must not clear what the camera is following"

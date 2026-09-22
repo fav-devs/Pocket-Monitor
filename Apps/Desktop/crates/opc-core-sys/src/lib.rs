@@ -269,6 +269,18 @@ pub const OPC_TRACKING_IDLE: i32 = 0;
 pub const OPC_TRACKING_LOCKED: i32 = 1;
 pub const OPC_TRACKING_LOCKED_BOX: i32 = 2;
 
+/// The core's tracking rules, as `opc_tracking_rules` writes them. Sides are picture
+/// fractions; times are seconds.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct OpcTrackingRules {
+    pub minimum_side: f64,
+    pub clear_ignore_seconds: f64,
+    pub push_silence_seconds: f64,
+    pub position_time_constant: f64,
+    pub size_time_constant: f64,
+}
+
 /// `CameraSetMailbox` decisions, as `opc_mailbox_*` return them.
 pub const OPC_MAILBOX_LAUNCH: i32 = 0;
 pub const OPC_MAILBOX_COALESCE: i32 = 1;
@@ -403,7 +415,9 @@ pub struct OpcWatchdogSnapshot {
     pub tcp_poke_ready: i32,
     pub displayed_image_removed: i32,
     pub had_video: i32,
-    pub reserved: i32,
+    /// Non-zero while the operator is somewhere a repair would tear down (the library,
+    /// a playback): the ladder waits instead of rebuilding under them.
+    pub repair_blocked: i32,
 }
 
 impl Default for OpcWatchdogSnapshot {
@@ -431,7 +445,7 @@ impl Default for OpcWatchdogSnapshot {
             tcp_poke_ready: 0,
             displayed_image_removed: 0,
             had_video: 0,
-            reserved: 0,
+            repair_blocked: 0,
         }
     }
 }
@@ -602,7 +616,79 @@ extern "C" {
 
     /// Reads a tracking poll reply; `out_box` gets four floats when a box is carried.
     pub fn opc_tracking_poll(payload: *const u8, count: usize, out_box: *mut f32) -> i32;
+    /// Reads a `0x02/0x89` live push; 1 with four floats in `out_box`, 0 otherwise.
+    pub fn opc_tracking_live_push(payload: *const u8, count: usize, out_box: *mut f32) -> i32;
+    /// Eases a painted box (`from`, may be null) toward `toward` over `dt` seconds.
+    pub fn opc_tracking_blend(from: *const f32, toward: *const f32, dt: f64, out: *mut f32) -> i32;
+    /// The tighter box drawn at a search rect's centre until the body sends a subject.
+    pub fn opc_tracking_subject_stand_in(search: *const f32, out: *mut f32) -> i32;
+    pub fn opc_tracking_rules(out: *mut OpcTrackingRules) -> i32;
     pub fn opc_model_supports_tap_focus(model_id: i32) -> i32;
+
+    /// Capture settings: shooting modes, formats, exposure ladders and colour wheels.
+    pub fn opc_shooting_mode_wire_byte(raw: i32, model_id: i32) -> i32;
+    pub fn opc_shooting_mode_is_photo(raw: i32) -> i32;
+    pub fn opc_shooting_mode_offers_format(raw: i32) -> i32;
+    pub fn opc_shooting_mode_uses_shutter_trigger(raw: i32, model_id: i32) -> i32;
+    pub fn opc_shooting_mode_label(raw: i32, model_id: i32, out: *mut u8, capacity: usize) -> i64;
+    pub fn opc_frame_rate_fps(index: i32) -> i32;
+    pub fn opc_resolution_label(resolution: i32, out: *mut u8, capacity: usize) -> i64;
+    pub fn opc_format_chip_label(
+        resolution: i32,
+        frame_rate: i32,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
+    /// `available` and `out` are `[res, fps]` pairs; returns the pair count.
+    pub fn opc_format_picker(
+        available: *const i32,
+        available_count: usize,
+        model_id: i32,
+        shooting_mode: i32,
+        out: *mut i32,
+        capacity: usize,
+    ) -> i32;
+    pub fn opc_format_allows_set(
+        resolution: i32,
+        frame_rate: i32,
+        available: *const i32,
+        available_count: usize,
+        model_id: i32,
+        shooting_mode: i32,
+    ) -> i32;
+    pub fn opc_iso_indices(
+        color_mode: i32,
+        available: *const i32,
+        available_count: usize,
+        out: *mut i32,
+        capacity: usize,
+    ) -> i32;
+    pub fn opc_iso_index_value(raw: i32) -> i32;
+    pub fn opc_iso_auto_base(color_mode: i32, model_id: i32) -> i32;
+    pub fn opc_iso_auto_limits(color_mode: i32, out: *mut i32, capacity: usize) -> i32;
+    pub fn opc_iso_auto_limit_label(
+        raw: i32,
+        color_mode: i32,
+        model_id: i32,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
+    pub fn opc_shutter_wheel(
+        available: *const i32,
+        available_count: usize,
+        current: i32,
+        out: *mut i32,
+        capacity: usize,
+    ) -> i32;
+    pub fn opc_ev_label(thirds: i32, out: *mut u8, capacity: usize) -> i64;
+    pub fn opc_color_modes(
+        model_id: i32,
+        available: *const i32,
+        available_count: usize,
+        out: *mut i32,
+        capacity: usize,
+    ) -> i32;
+    pub fn opc_color_mode_label(raw: i32, model_id: i32, out: *mut u8, capacity: usize) -> i64;
 
     /// The scopes' display scale and readings, from the core's colour science.
     pub fn opc_scope_level_table(color_mode: i32, iso: i32, out: *mut f32, capacity: usize) -> i32;
@@ -940,7 +1026,13 @@ mod layout {
         assert_eq!(size_of::<OpcWatchdogSnapshot>(), 136);
         assert_eq!(align_of::<OpcWatchdogSnapshot>(), 8);
         assert_eq!(offset_of!(OpcWatchdogSnapshot, flow_healthy), 96);
-        assert_eq!(offset_of!(OpcWatchdogSnapshot, reserved), 132);
+        assert_eq!(offset_of!(OpcWatchdogSnapshot, repair_blocked), 132);
+    }
+
+    #[test]
+    fn the_tracking_rules_match_the_header_file() {
+        assert_eq!(size_of::<OpcTrackingRules>(), 40);
+        assert_eq!(offset_of!(OpcTrackingRules, size_time_constant), 32);
     }
 
     #[test]

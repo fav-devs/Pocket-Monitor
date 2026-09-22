@@ -65,7 +65,8 @@ func opc_watchdog_tick(
             secondsSinceFocusTrackSet: age(input.seconds_since_focus_track_set),
             secondsSinceZoomSet: age(input.seconds_since_zoom_set),
             secondsSinceGimbalThrow: age(input.seconds_since_gimbal_throw),
-            secondsSinceCameraSet: age(input.seconds_since_camera_set)
+            secondsSinceCameraSet: age(input.seconds_since_camera_set),
+            repairReady: input.repair_blocked == 0
         ))
     switch action {
     case .none: return OPC_WATCHDOG_NONE
