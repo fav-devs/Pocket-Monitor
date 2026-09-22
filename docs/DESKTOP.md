@@ -159,6 +159,19 @@ Without the Swift library the Rust workspace still type-checks and its pure-Rust
 still run; `build.rs` only emits link flags when it finds the library, and says so
 otherwise. Anything that calls the core fails at link rather than running a stub.
 
+## Windows installer
+
+`Apps/Desktop/build-installer.ps1` runs `build-release.ps1`, then compiles
+`installer/OpenPocketCine.iss` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`)
+into `Apps/Desktop/dist/OpenPocketCine-Setup-<version>.exe`. The setup puts the
+executable and every runtime DLL in Program Files, registers the virtual camera source
+(`opc_vcam_win.dll`) as the Output tab's Install would, adds a Start menu entry and an
+optional desktop shortcut, and unregisters the camera on uninstall. It asks for
+administrator approval once, for the registration. Settings and the media cache under
+the operator's profile are left alone by an uninstall. Nothing is signed, so SmartScreen
+shows its unknown-publisher page on first run; that is the cost of no certificate, not
+a fault in the build.
+
 ## Windows notes
 
 - **Wi-Fi is an advantage here.** The camera's SoftAP carries no internet. A desktop with

@@ -9,6 +9,10 @@ Two programs, Windows first; macOS and Linux build from the same sources.
 
 Full notes: [`docs/DESKTOP.md`](../../docs/DESKTOP.md).
 
+On Windows, `build-release.ps1` builds and stages a runnable `target\release`, and
+`build-installer.ps1` wraps that in an installer (`dist\OpenPocketCine-Setup-<version>.exe`,
+Inno Setup 6) that also registers the virtual camera.
+
 ## Quick start
 
 Needs a Swift toolchain, FFmpeg development libraries, a Vulkan loader, and a GLSL
