@@ -345,6 +345,7 @@ fn main() {
             sheet: (name == "sheet" || name == "settings" || name == "output").then(|| {
                 let row = |title: &str, options: &[&str], selected: Option<usize>, enabled| {
                     SheetRowState {
+                        scroll: 0,
                         title: title.into(),
                         options: options.iter().map(|o| o.to_string()).collect(),
                         selected,

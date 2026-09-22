@@ -632,8 +632,11 @@ impl CameraSession {
                 // Ask for the pushes the HUD needs before anything else is queued: the
                 // camera only sends its available-value lists to a subscriber.
                 self.send_subscriptions()?;
-                // The phones read the focus-track mode on connect; it has no push.
+                // The phones read the focus-track mode, the audio channel and vocal
+                // boost on connect; none of them has a push.
                 self.send_direct(Command::FocusTrackGet)?;
+                self.send_direct(Command::ParamGet(0x0020))?;
+                self.send_direct(Command::ParamGet(0x004C))?;
                 self.enable_not_before = Some(now + SUBSCRIBE_SETTLE);
                 events.push(SessionEvent::Opened);
             }

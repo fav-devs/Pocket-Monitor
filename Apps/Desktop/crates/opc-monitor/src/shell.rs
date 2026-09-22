@@ -312,6 +312,8 @@ pub struct Shell {
     /// The sheet over the picture, if one is open, and which settings tab it shows.
     sheet: Option<SheetKind>,
     sheet_tab: usize,
+    /// How far each row's chip strip is slid sideways, by row, for the open sheet.
+    sheet_scroll: Vec<i32>,
     prefs: Prefs,
     /// The body's model id for commands that encode per model, or -1 when unknown.
     model_id: i32,
@@ -419,6 +421,7 @@ impl Shell {
             pad_held: false,
             sheet: None,
             sheet_tab: 0,
+            sheet_scroll: Vec::new(),
             prefs: Prefs::default(),
             model_id: -1,
             screen: Screen::Viewfinder,
@@ -710,6 +713,19 @@ impl Shell {
         if status.gimbal_attitude_seq != self.attitude_seq {
             self.attitude_seq = status.gimbal_attitude_seq;
             self.attitude_at = self.last_now;
+        }
+        // The body's heartbeat says which family the gimbal is in. Only a change moves
+        // the chip: a stale push right after a SET must not undo what was just asked.
+        if status.gimbal_mode_family != self.hud.status.gimbal_mode_family {
+            match status.gimbal_mode_family {
+                Some(1) if self.gimbal_mode != GimbalMode::Fpv => {
+                    self.gimbal_mode = GimbalMode::Fpv;
+                }
+                Some(2) if self.gimbal_mode == GimbalMode::Fpv => {
+                    self.gimbal_mode = GimbalMode::Follow;
+                }
+                _ => {}
+            }
         }
         self.hud.status = status;
         // Pocket 3 pushes status at roughly the video rate. Re-rasterising a 720p HUD
@@ -1315,6 +1331,7 @@ impl Shell {
         } else {
             Some(kind)
         };
+        self.sheet_scroll.clear();
         if self.sheet == Some(SheetKind::Settings) {
             self.on_settings_tab(self.sheet_tab);
         }
@@ -1324,6 +1341,7 @@ impl Shell {
     /// Shows a settings tab, as a tap on its name would.
     pub fn select_settings_tab(&mut self, tab: usize) {
         self.sheet_tab = tab.min(sheets::SETTINGS_TABS.len() - 1);
+        self.sheet_scroll.clear();
         if self.sheet == Some(SheetKind::Settings) {
             self.on_settings_tab(self.sheet_tab);
         }
@@ -1355,6 +1373,11 @@ impl Shell {
     /// The sheet context, for tests that build a tab the way the shell does.
     pub fn sheet_context_for_test(&self) -> sheets::Context<'_> {
         self.sheet_context()
+    }
+
+    /// Whether the FOLLOW chip would read ON right now.
+    pub fn chrome_state_follow_on_for_test(&self) -> bool {
+        self.gimbal_mode == GimbalMode::Follow
     }
 
     fn sheet_context(&self) -> sheets::Context<'_> {
@@ -2497,8 +2520,16 @@ impl Shell {
                 }
             }
             ChromeIntent::SheetClose => self.close_sheet(),
+            ChromeIntent::SheetScroll { row, delta } => {
+                if self.sheet_scroll.len() <= row {
+                    self.sheet_scroll.resize(row + 1, 0);
+                }
+                self.sheet_scroll[row] = (self.sheet_scroll[row] + delta).max(0);
+                self.chrome_stale = true;
+            }
             ChromeIntent::SheetTab(tab) => {
                 self.sheet_tab = tab;
+                self.sheet_scroll.clear();
                 if self.sheet == Some(SheetKind::Settings) {
                     self.on_settings_tab(tab);
                 }
@@ -2914,7 +2945,7 @@ impl Shell {
 
     /// Whether this point belongs to a Slint control rather than the tracking-box area.
     pub fn is_control(&self, x: f64, y: f64) -> bool {
-        if !self.chrome_visible {
+        if !self.chrome_visible && self.sheet.is_none() {
             return false;
         }
         // An open sheet owns the window: the scrim around it is a close button. So
@@ -2944,6 +2975,19 @@ impl Shell {
         }
         self.chrome_stale = true;
         Some(self.take_chrome_intents())
+    }
+
+    /// The wheel turned over the chrome: a sheet scrolls its rows, and a long row of
+    /// chips scrolls sideways. Over the picture it is nobody's.
+    pub fn control_scroll(&mut self, x: f64, y: f64, dx: f64, dy: f64) -> Vec<Intent> {
+        if !self.is_control(x, y) {
+            return Vec::new();
+        }
+        if let Some(cr) = &self.chrome_renderer {
+            cr.pointer_scrolled(x as f32, y as f32, dx as f32, dy as f32);
+        }
+        self.chrome_stale = true;
+        self.take_chrome_intents()
     }
 
     /// Pointer moved while a Slint control is held.
@@ -3058,7 +3102,10 @@ impl Shell {
     /// The chrome for this frame, or `None` when the operator has hidden it or there is
     /// nothing to draw on.
     pub fn chrome(&mut self, now: f64) -> Option<&Rgba> {
-        if !self.chrome_visible || self.window.0 == 0 || self.window.1 == 0 {
+        // A clean display still shows a sheet the operator opened: otherwise the
+        // Display tab's own `Clean` chip would take the menu away with it.
+        let visible = self.chrome_visible || self.sheet.is_some();
+        if !visible || self.window.0 == 0 || self.window.1 == 0 {
             return None;
         }
         let second = self
@@ -3079,9 +3126,13 @@ impl Shell {
             }
 
             let controls_enabled = self.controls_enabled();
-            let sheet = self
-                .sheet
-                .map(|kind| sheets::build(kind, self.sheet_tab, self.sheet_context()).sheet);
+            let sheet = self.sheet.map(|kind| {
+                let mut sheet = sheets::build(kind, self.sheet_tab, self.sheet_context()).sheet;
+                for (index, row) in sheet.rows.iter_mut().enumerate() {
+                    row.scroll = self.sheet_scroll.get(index).copied().unwrap_or(0);
+                }
+                sheet
+            });
             let timecode = if self.prefs.timecode {
                 self.hud.status.timecode.clone().unwrap_or_default()
             } else {

@@ -874,6 +874,8 @@ export struct SheetRow {
     enabled: bool,
     /// Per-chip lit flags for rows where more than one chip may be on; empty otherwise.
     lit: [bool],
+    /// How far the chip strip is scrolled sideways; the shell keeps it between frames.
+    scroll: length,
 }
 
 // ── Assist toolbar ────────────────────────────────────────────────────────────
@@ -1126,10 +1128,21 @@ component SheetPanel {
     callback picked(int, int);
     callback tab-picked(int);
     callback close();
+    /// The wheel over a row whose chips do not all fit, and how far it asked to slide.
+    callback row-scrolled(int, length);
+
+    /// The window's room for the panel; rows past it scroll with the wheel.
+    in property <length> room: 4096px;
 
     property <length> row-h: 56px;
     property <length> head-h: 60px;
-    height: root.head-h + root.rows.length * root.row-h + 16px;
+    property <length> natural-h: root.head-h + root.rows.length * root.row-h + 16px;
+    height: min(root.natural-h, root.room);
+    property <length> body-h: root.height - root.head-h;
+    property <length> content-h: root.rows.length * root.row-h + 16px;
+    property <length> scroll-max: max(0px, root.content-h - root.body-h);
+    property <length> scroll-y: 0px;
+    property <length> shown-y: clamp(root.scroll-y, 0px, root.scroll-max);
 
     Rectangle {
         background: #121212f5;
@@ -1200,39 +1213,69 @@ component SheetPanel {
     }
     Rectangle { x: 16px; y: root.head-h; width: parent.width - 32px; height: 1px; background: #ffffff14; }
 
-    // Rows.
-    for row[i] in root.rows: Rectangle {
-        x: 16px;
-        y: root.head-h + 8px + i * root.row-h;
-        width: parent.width - 32px;
-        height: root.row-h;
-        opacity: row.enabled ? 1.0 : 0.4;
-
-        Text {
-            text: row.title;
-            color: Pal.ink-dim;
-            font-family: Pal.font;
-            font-size: 13px;
-            font-weight: 600;
-            letter-spacing: 0.4px;
-            x: 4px;
-            y: (parent.height - self.preferred-height) / 2;
-            width: 150px;
+    // Rows. The body clips and scrolls when the window is shorter than the sheet,
+    // and a row's chips scroll sideways when there are more than fit: the wheel
+    // does both, since a mouse cannot drag a strip the way a finger can.
+    Rectangle {
+        x: 0;
+        y: root.head-h;
+        width: parent.width;
+        height: root.body-h;
+        clip: true;
+        TouchArea {
+            scroll-event(e) => {
+                if root.scroll-max > 0px {
+                    root.scroll-y = clamp(root.shown-y - e.delta-y, 0px, root.scroll-max);
+                    return accept;
+                }
+                reject
+            }
         }
-        Flickable {
-            x: 160px;
-            y: (parent.height - self.height) / 2;
-            width: parent.width - 160px;
-            height: 36px;
-            viewport-width: chips.preferred-width;
-            chips := HorizontalLayout {
-                spacing: 6px;
-                alignment: start;
-                for opt[j] in row.options: Chip {
-                    text: opt;
-                    selected: j == row.selected || (j < row.lit.length && row.lit[j]);
-                    enabled: row.enabled;
-                    tapped => { root.picked(i, j); }
+        for row[i] in root.rows: row-rect := Rectangle {
+            x: 16px;
+            y: 8px + i * root.row-h - root.shown-y;
+            width: parent.width - 32px;
+            height: root.row-h;
+            opacity: row.enabled ? 1.0 : 0.4;
+            property <length> chips-max: max(0px, chips.preferred-width - strip.width);
+            // Anywhere on the row, not just on its chips: the wheel slides the strip.
+            TouchArea {
+                scroll-event(e) => {
+                    if row-rect.chips-max > 0px {
+                        root.row-scrolled(i, -e.delta-y - e.delta-x);
+                        return accept;
+                    }
+                    reject
+                }
+            }
+
+            Text {
+                text: row.title;
+                color: Pal.ink-dim;
+                font-family: Pal.font;
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: 0.4px;
+                x: 4px;
+                y: (parent.height - self.preferred-height) / 2;
+                width: 150px;
+            }
+            strip := Rectangle {
+                x: 160px;
+                y: (parent.height - self.height) / 2;
+                width: parent.width - 160px;
+                height: 36px;
+                clip: true;
+                chips := HorizontalLayout {
+                    x: -clamp(row.scroll, 0px, row-rect.chips-max);
+                    spacing: 6px;
+                    alignment: start;
+                    for opt[j] in row.options: Chip {
+                        text: opt;
+                        selected: j == row.selected || (j < row.lit.length && row.lit[j]);
+                        enabled: row.enabled;
+                        tapped => { root.picked(i, j); }
+                    }
                 }
             }
         }
@@ -2012,6 +2055,7 @@ export component HudOverlay inherits Window {
     callback fullscreen-tapped();
     callback mode-selected-changed(int);
     callback sheet-picked(int, int);
+    callback sheet-row-scrolled(int, length);
     callback sheet-tab-picked(int);
     callback sheet-closed();
     callback library-back();
@@ -2257,11 +2301,13 @@ export component HudOverlay inherits Window {
             width: min(920px, root.width - 48px);
             x: (parent.width - self.width) / 2;
             y: root.top-h + 16px;
+            room: root.height - root.top-h - 32px;
             title: root.sheet-title;
             tabs: root.sheet-tabs;
             tab: root.sheet-tab;
             rows: root.sheet-rows;
             picked(i, j) => { root.sheet-picked(i, j); }
+            row-scrolled(i, d) => { root.sheet-row-scrolled(i, d); }
             tab-picked(i) => { root.sheet-tab-picked(i); }
             close => { root.sheet-closed(); }
         }

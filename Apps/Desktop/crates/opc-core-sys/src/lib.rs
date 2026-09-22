@@ -345,7 +345,9 @@ pub struct OpcCameraStatus {
     pub available_iso_count: i32,
     pub available_format_count: i32,
     pub available_color_count: i32,
-    pub reserved: i32,
+    pub audio_channel: i32,
+    pub vocal_boost: i32,
+    pub gimbal_mode_family: i32,
     pub gimbal_yaw_tenth: i32,
     pub gimbal_pitch_tenth: i32,
     pub gimbal_native_pitch_tenth: i32,
@@ -1010,14 +1012,15 @@ mod layout {
     #[test]
     fn the_status_record_matches_the_header_file() {
         assert_eq!(OPC_STATUS_LIST_CAP, 32);
-        assert_eq!(size_of::<OpcCameraStatus>(), 944);
-        assert_eq!(offset_of!(OpcCameraStatus, audio_meters_count), 924);
-        assert_eq!(offset_of!(OpcCameraStatus, wind_nr), 784);
-        assert_eq!(offset_of!(OpcCameraStatus, gimbal_yaw_tenth), 128);
-        assert_eq!(offset_of!(OpcCameraStatus, available_shutter), 144);
+        assert_eq!(size_of::<OpcCameraStatus>(), 952);
+        assert_eq!(offset_of!(OpcCameraStatus, audio_meters_count), 932);
+        assert_eq!(offset_of!(OpcCameraStatus, wind_nr), 792);
+        assert_eq!(offset_of!(OpcCameraStatus, gimbal_mode_family), 132);
+        assert_eq!(offset_of!(OpcCameraStatus, gimbal_yaw_tenth), 136);
+        assert_eq!(offset_of!(OpcCameraStatus, available_shutter), 152);
         assert_eq!(
             offset_of!(OpcCameraStatus, available_color),
-            144 + 4 * 32 * 4
+            152 + 4 * 32 * 4
         );
     }
 

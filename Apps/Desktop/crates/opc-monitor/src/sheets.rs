@@ -393,6 +393,7 @@ impl RowBuilder {
                 selected: None,
                 enabled: true,
                 lit: Vec::new(),
+                scroll: 0,
             },
             picks: Vec::new(),
         }
@@ -945,7 +946,8 @@ fn exposure(status: &Status, model_id: i32) -> Built {
     // The ISO wheel is Mimo's ladder for this colour (or the body's own list), Auto
     // first where the colour has it. It is live in both modes: Auto ISO is an ISO.
     let iso_now = status.iso_index;
-    let iso_auto = iso_now == Some(capture::iso::AUTO);
+    // Until the body has said which index it is on, Auto exposure is taken as Auto ISO.
+    let iso_auto = iso_now.map_or(!manual, |index| index == capture::iso::AUTO);
     let mut iso = RowBuilder::new("ISO");
     for index in capture::iso_indices(color, &status.available_iso) {
         iso = iso.option(
@@ -1121,25 +1123,16 @@ const DIRECTIONAL_AUDIO: [(u8, &str); 3] = [(0xDA, "All"), (0x3A, "Front"), (0xB
 fn audio_rows(context: Context) -> Vec<RowBuilder> {
     let prefs = context.prefs;
     let status = context.status;
+    // The body is asked for both on connect; until it answers, the last pick stands.
+    let channel_now = status.audio_channel.unwrap_or(prefs.audio_channel);
+    let boost_now = status.vocal_boost.unwrap_or(prefs.vocal_boost);
     let channel = RowBuilder::new("Channel")
-        .option(
-            "Stereo",
-            prefs.audio_channel == 0x02,
-            Pick::AudioChannel(0x02),
-        )
-        .option(
-            "Mono",
-            prefs.audio_channel == 0x01,
-            Pick::AudioChannel(0x01),
-        )
-        .option(
-            "Spatial",
-            prefs.audio_channel == 0x03,
-            Pick::AudioChannel(0x03),
-        );
+        .option("Stereo", channel_now == 0x02, Pick::AudioChannel(0x02))
+        .option("Mono", channel_now == 0x01, Pick::AudioChannel(0x01))
+        .option("Spatial", channel_now == 0x03, Pick::AudioChannel(0x03));
     let vocal = RowBuilder::new("Vocal boost")
-        .option("Off", prefs.vocal_boost == 0x00, Pick::VocalBoost(0x00))
-        .option("On", prefs.vocal_boost == 0x01, Pick::VocalBoost(0x01));
+        .option("Off", boost_now == 0x00, Pick::VocalBoost(0x00))
+        .option("On", boost_now == 0x01, Pick::VocalBoost(0x01));
     // Wind and directional audio share one DSP blob (`@2`) the body is read for
     // first; a write carries that blob back patched. Until the GET has answered the
     // rows are greyed, and the shell asks for it when this tab opens.

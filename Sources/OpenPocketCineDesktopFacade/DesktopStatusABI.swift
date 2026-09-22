@@ -116,7 +116,9 @@ func opc_status_read(
     out.pointee.storage_total_mb = Int32(clamping: status.storageTotalMb)
     out.pointee.zoom_hundredths =
         status.zoomFactor.map { Int32(($0 * 100).rounded()) } ?? -1
-    out.pointee.reserved = 0
+    out.pointee.audio_channel = status.audioChannel.map { Int32($0.rawValue) } ?? -1
+    out.pointee.vocal_boost = status.vocalBoost.map { Int32($0.rawValue) } ?? -1
+    out.pointee.gimbal_mode_family = status.gimbalModeFamily.map { Int32($0.rawValue) } ?? -1
     out.pointee.gimbal_yaw_tenth = box.gimbalYawTenth.map { Int32($0) } ?? 0
     out.pointee.gimbal_pitch_tenth = box.gimbalPitchTenth.map { Int32($0) } ?? 0
     out.pointee.gimbal_native_pitch_tenth = box.gimbalNativePitchTenth.map { Int32($0) } ?? 0

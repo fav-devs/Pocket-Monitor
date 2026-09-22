@@ -385,7 +385,12 @@ typedef struct {
     int32_t available_iso_count;
     int32_t available_format_count;
     int32_t available_color_count;
-    int32_t reserved;
+    /// Audio channel (`0x8E` pid `0x0020`: 1 mono, 2 stereo, 3 spatial), vocal boost
+    /// (pid `0x004C`: 0 off, 1 on) and the gimbal mode family the body reports
+    /// (0 direction lock, 1 FPV, 2 follow); -1 until the body has said.
+    int32_t audio_channel;
+    int32_t vocal_boost;
+    int32_t gimbal_mode_family;
     // Gimbal attitude from the `0x04/0x05` heartbeat, 0.1°: yaw i16 @4, display
     // tilt (look-up positive) from @20, and the native absolute pitch i16 @0 that
     // `0x04/0x14` targets take. `gimbal_attitude_seq` counts pushes; zero is none.

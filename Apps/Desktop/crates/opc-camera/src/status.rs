@@ -40,6 +40,13 @@ pub struct Status {
     pub white_balance_tint: Option<i32>,
     pub focus_mode: Option<u8>,
     pub focus_track: Option<u8>,
+    /// `0x8E` pid `0x0020`: `0x01` mono, `0x02` stereo, `0x03` spatial.
+    pub audio_channel: Option<u8>,
+    /// `0x8E` pid `0x004C`: `0x00` off, `0x01` on.
+    pub vocal_boost: Option<u8>,
+    /// What the body's gimbal heartbeat says the mode family is: 0 direction lock,
+    /// 1 FPV, 2 follow. It cannot tell tilt-locked follow from follow.
+    pub gimbal_mode_family: Option<u8>,
     pub storage_free_mb: i32,
     pub storage_total_mb: i32,
     /// Hundredths: 250 is 2.5x.
@@ -259,6 +266,9 @@ impl StatusDecoder {
             white_balance_tint: (raw.has_white_balance_tint != 0).then_some(raw.white_balance_tint),
             focus_mode: optional_byte(raw.focus_mode),
             focus_track: optional_byte(raw.focus_track),
+            audio_channel: optional_byte(raw.audio_channel),
+            vocal_boost: optional_byte(raw.vocal_boost),
+            gimbal_mode_family: optional_byte(raw.gimbal_mode_family),
             storage_free_mb: raw.storage_free_mb,
             storage_total_mb: raw.storage_total_mb,
             gimbal_yaw_tenth: (raw.gimbal_attitude_seq > 0).then_some(raw.gimbal_yaw_tenth as i16),

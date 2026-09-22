@@ -1839,3 +1839,84 @@ fn a_phone_feed_shows_the_phone_labels_and_refuses_what_the_wire_lacks() {
     let link = build(SheetKind::Settings, 3, shell.sheet_context_for_test());
     assert_eq!(link.sheet.rows.len(), 6);
 }
+
+#[test]
+fn a_tall_settings_tab_scrolls_with_the_wheel_and_the_menu_survives_a_clean_display() {
+    use opc_chrome::ChromeIntent;
+    let mut shell = framed();
+    shell.set_window(1280, 600);
+    shell.press(Key::Tab, 0.0);
+    shell.chrome_intent_for_test(ChromeIntent::SheetTab(opc_monitor::sheets::TAB_OUTPUT));
+    let before = shell.chrome(0.1).expect("chrome").pixels.clone();
+    // A wheel notch over the panel moves the rows; over the picture it is nobody's.
+    shell.control_scroll(640.0, 300.0, 0.0, -120.0);
+    let after = shell.chrome(0.2).expect("chrome").pixels.clone();
+    assert_ne!(
+        after, before,
+        "the rows past the window's bottom scroll into view"
+    );
+    // A wheel over a row with more chips than fit slides that row's strip. The
+    // EXPOSURE sheet's EV row is the one at 390 px in this layout.
+    shell.press(Key::Escape, 0.25);
+    shell.chrome_intent_for_test(ChromeIntent::OpenExposure);
+    let before = shell.chrome(0.26).expect("chrome").pixels.clone();
+    shell.control_scroll(700.0, 390.0, 0.0, -400.0);
+    let after = shell.chrome(0.27).expect("chrome").pixels.clone();
+    assert_ne!(
+        after, before,
+        "the EV chips past the right edge slide into view"
+    );
+    shell.press(Key::Escape, 0.28);
+    shell.press(Key::Tab, 0.29);
+    // Clean display keeps the sheet on screen, so its own chip cannot strand the operator.
+    shell.pick_for_test(opc_monitor::sheets::Pick::Disp(true));
+    assert!(shell.chrome(0.3).is_some(), "the sheet is still drawn");
+    shell.press(Key::Escape, 0.4);
+    assert!(
+        shell.chrome(0.5).is_none(),
+        "and the display is clean once it closes"
+    );
+}
+
+#[test]
+fn the_audio_rows_read_the_body_and_the_gimbal_chip_follows_its_heartbeat() {
+    use opc_monitor::sheets::{self, SheetKind, TAB_AUDIO};
+    let mut shell = framed();
+    shell.set_status(Status {
+        audio_channel: Some(0x01),
+        vocal_boost: Some(0x01),
+        ..Status::default()
+    });
+    let built = sheets::build(
+        SheetKind::Settings,
+        TAB_AUDIO,
+        shell.sheet_context_for_test(),
+    );
+    assert_eq!(
+        built.sheet.rows[0].selected,
+        Some(1),
+        "Mono, as the body said"
+    );
+    assert_eq!(
+        built.sheet.rows[1].selected,
+        Some(1),
+        "vocal boost on, as the body said"
+    );
+    // The heartbeat says FPV: the chip follows. A repeat of the same value never
+    // undoes what the operator asks for next.
+    shell.set_status(Status {
+        gimbal_mode_family: Some(1),
+        ..Status::default()
+    });
+    assert!(!shell.chrome_state_follow_on_for_test());
+    // One V from FPV is Follow, in Mimo's cycle.
+    shell.press(Key::Char('v'), 1.0);
+    shell.set_status(Status {
+        gimbal_mode_family: Some(1),
+        ..Status::default()
+    });
+    assert!(
+        shell.chrome_state_follow_on_for_test(),
+        "a stale repeat of FPV does not undo the operator's Follow"
+    );
+}

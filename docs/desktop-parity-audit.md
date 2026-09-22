@@ -71,7 +71,7 @@ the desktop needs a number the phones use, it asks the core rather than copying 
 | # | Finding | State |
 |---|---------|-------|
 | 1 | Arrow keys bypassed `stick_axes` when the ramp was off (axes swapped, fixed ±400 throw). They go through the core mapping now. | Fixed, pass 1 |
-| 2 | FOLLOW chip only shows ON/OFF and disagrees with the `V` cycle (Follow / Tilt locked / FPV); Direction Lock is missing. | Open |
+| 2 | FOLLOW chip only shows ON/OFF and disagrees with the `V` cycle (Follow / Tilt locked / FPV); Direction Lock is missing. The chip now at least follows the body's reported family (FPV / follow). | Partly fixed, settings pass |
 | 3 | Picture-relative pan and the extra-mirror term while mirrored. | Open |
 | 4 | Recenter and flip should rest the stick and cancel a programmed move first. | Open |
 | 5 | Record confirmation (Mimo's stop confirmation) is absent. | Open |
@@ -91,6 +91,17 @@ the desktop needs a number the phones use, it asks the core rather than copying 
 | 6 | Crush / Clip toggles move the lines at IRE 0 / 100, which the phones draw permanently; the dotted IRE 5 / 95 safe borders those toggles are meant to control are permanently on. | Open |
 | 7 | FALSE reference should arm FALSE; guides should switch off when none is selected. | Open |
 | 8 | LUT Auto row, 50/50 split and exposure offset; AUDIO plate options. | Open |
+
+## Settings sheet (found on the settings pass)
+
+| # | Finding | State |
+|---|---------|-------|
+| 1 | No wheel reached the chrome: a sheet taller than the window (Output, Camera on a small window) had rows nobody could reach, and rows with more chips than fit (ISO, shutter, EV, Pocket 3 formats) hid their far chips. | Fixed, settings pass |
+| 2 | Audio channel and vocal boost rows showed the last pick, not the camera: the body was never asked and the status record did not carry them. | Fixed, settings pass |
+| 3 | The gimbal mode chip never learned a mode set on the body. | Fixed, settings pass (family only) |
+| 4 | DISP `2 · Clean` hid the sheet the operator was using to set it. | Fixed, settings pass |
+| 5 | Field of view, gimbal speed and audio picks are not re-applied on connect, so a body power-cycled to its defaults disagrees with the FOV chip until it is set again. | Open |
+| 6 | The Nano has no focus mode or tap focus; the Camera tab still offers the Focus rows on one. | Open |
 
 ## Media and connection
 

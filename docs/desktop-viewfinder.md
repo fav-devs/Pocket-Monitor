@@ -71,11 +71,18 @@ Three sheets open over the picture and close on `Esc`, the `×`, or a tap outsid
 - **Exposure** (`AUTO`/`M` chip, or `E`) — `Auto`/`Manual`, then ISO and shutter for
   manual, ISO max and EV for auto. The rows the mode does not use are drawn greyed, the
   way Mimo shows them.
-- **Settings** (`⋮`, or `Tab`) — eight tabs. **Camera:** focus mode, focus-track mode (Default / Product Showcase / Subject Lock / Registered Priority), white balance
+- **Settings** (`⋮`, or `Tab`) — nine tabs. A sheet taller than the window scrolls
+  with the wheel, and a row with more chips than fit (ISO, shutter, EV, a Pocket 3's
+  formats) slides sideways under the wheel too, since a mouse cannot drag a strip the
+  way a finger does. A sheet stays on screen in the clean display, so the Display
+  tab's own `Clean` chip cannot take the menu away with it. **Camera:** focus mode, focus-track mode (Default / Product Showcase / Subject Lock / Registered Priority), white balance
   presets, colour profile (from the body's own list), field of view, gimbal mode,
   speed and **ramp** (Off / Soft / Medium, the phones' first-order ease on the stick,
-  applied to the arrow keys and the on-screen pad alike). **Audio:** channel, vocal
-  boost, wind noise reduction and directional audio (All / Front / Front+back). The
+  applied to the arrow keys and the on-screen pad alike). The gimbal mode chip follows
+  the body's own heartbeat when it says the family changed (FPV or follow), so a mode
+  set on the body reads right here. **Audio:** channel and vocal boost (both read
+  from the body on connect, so the chips show what the camera is set to rather than
+  the last pick), wind noise reduction and directional audio (All / Front / Front+back). The
   last two live in one DSP blob (`@2` of the `0x02/0xA0` GET reply): the tab reads
   the blob when it opens, the rows stay greyed until it has answered, and a pick
   sends the body's own 26 bytes back with `@2` patched (`0x02/0x9F`) followed by a

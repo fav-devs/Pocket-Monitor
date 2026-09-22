@@ -22,7 +22,7 @@ use opc_monitor::{LutChoice, LutRequest, PadButton};
 use opc_ui::{Key as UiKey, Phase};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
@@ -1035,6 +1035,19 @@ impl ApplicationHandler for View {
                     self.shell.pointer_moved(position.x, position.y);
                     Vec::new()
                 };
+                self.carry_out(intents, event_loop);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.shell.note_time(now);
+                let (x, y) = self.pointer;
+                // A notch of a wheel is a few rows; a trackpad reports pixels already.
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(dx, dy) => {
+                        (f64::from(dx) * 40.0, f64::from(dy) * 40.0)
+                    }
+                    MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
+                };
+                let intents = self.shell.control_scroll(x, y, dx, dy);
                 self.carry_out(intents, event_loop);
             }
             WindowEvent::MouseInput {
