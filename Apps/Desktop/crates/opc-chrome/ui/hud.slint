@@ -69,12 +69,18 @@ component IconButton {
     VerticalLayout {
         alignment: center;
         spacing: 2px;
-        Image {
-            source: root.icon;
-            colorize: root.tint;
-            width: root.icon-size;
+        // A layout keeps a fixed-width child at its left edge, so the glyph sits in a
+        // full-width box and is centred inside it, over the label.
+        Rectangle {
             height: root.icon-size;
-            horizontal-alignment: center;
+            Image {
+                source: root.icon;
+                colorize: root.tint;
+                width: root.icon-size;
+                height: root.icon-size;
+                x: (parent.width - self.width) / 2;
+                y: 0;
+            }
         }
         if root.label != "": Text {
             text: root.label;
