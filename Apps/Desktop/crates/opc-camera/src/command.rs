@@ -9,6 +9,22 @@ use opc_core_sys as sys;
 
 use crate::CameraError;
 
+/// What the session knows about the body when it encodes: `-1` for unknown. A format
+/// SET on a Pocket 3 / 4 Pro in SlowMo carries the captured trailer; Photo is `0x05`
+/// on a Pocket 3 / Nano. Without either the core sends the historic bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandContext {
+    pub model_id: i32,
+    pub shooting_mode: i32,
+}
+
+impl CommandContext {
+    pub const NONE: Self = Self {
+        model_id: -1,
+        shooting_mode: -1,
+    };
+}
+
 /// A camera write or read. Values are the core's own raw encodings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
@@ -47,6 +63,8 @@ pub enum Command {
     GimbalFlip,
     GimbalFollow,
     GimbalFpv,
+    /// The third family: the picture holds its heading while the body turns.
+    GimbalDirectionLock,
     /// Notify, not a round trip. Rides the ACK queue at 25 Hz while held.
     GimbalStick {
         axis0: u16,
@@ -168,7 +186,9 @@ pub enum Command {
 
 impl Command {
     /// The kind tag and positional arguments the facade expects.
-    fn parts(self) -> (i32, Vec<i32>, Vec<f64>) {
+    /// The argument lists for the facade, with the session's context folded in where
+    /// a command encodes per body or per shooting mode.
+    fn parts_in(self, context: CommandContext) -> (i32, Vec<i32>, Vec<f64>) {
         let ints = |values: &[i32]| values.to_vec();
         match self {
             Self::SessionWake => (sys::OPC_CAM_SESSION_WAKE, vec![], vec![]),
@@ -188,7 +208,7 @@ impl Command {
             Self::ShootPhoto => (sys::OPC_CAM_SHOOT_PHOTO, vec![], vec![]),
             Self::SetShootingMode(mode) => (
                 sys::OPC_CAM_SET_SHOOTING_MODE,
-                ints(&[i32::from(mode)]),
+                ints(&[i32::from(mode), context.model_id]),
                 vec![],
             ),
 
@@ -205,6 +225,7 @@ impl Command {
             Self::GimbalFlip => (sys::OPC_CAM_GIMBAL_FLIP, vec![], vec![]),
             Self::GimbalFollow => (sys::OPC_CAM_GIMBAL_FOLLOW, vec![], vec![]),
             Self::GimbalFpv => (sys::OPC_CAM_GIMBAL_FPV, vec![], vec![]),
+            Self::GimbalDirectionLock => (sys::OPC_CAM_GIMBAL_DIRECTION_LOCK, vec![], vec![]),
             Self::GimbalStick { axis0, axis1 } => (
                 sys::OPC_CAM_GIMBAL_STICK,
                 ints(&[i32::from(axis0), i32::from(axis1)]),
@@ -306,7 +327,12 @@ impl Command {
                 frame_rate,
             } => (
                 sys::OPC_CAM_SET_VIDEO_FORMAT,
-                ints(&[i32::from(resolution), i32::from(frame_rate)]),
+                ints(&[
+                    i32::from(resolution),
+                    i32::from(frame_rate),
+                    context.shooting_mode,
+                    context.model_id,
+                ]),
                 vec![],
             ),
             Self::SetFov(fov) => (sys::OPC_CAM_SET_FOV, ints(&[i32::from(fov)]), vec![]),
@@ -384,7 +410,7 @@ impl Command {
     /// `None` without the core, or for a command it cannot build.
     #[cfg(opc_core_linked)]
     pub fn opcode_key(self) -> Option<u16> {
-        let (kind, ints, reals) = self.parts();
+        let (kind, ints, reals) = self.parts_in(CommandContext::NONE);
         // Safety: both argument slices outlive the call.
         let key = unsafe {
             sys::opc_camera_command_key(
@@ -419,7 +445,13 @@ impl Command {
     }
 
     pub fn encode(self, seq: u16) -> Result<Vec<u8>, CameraError> {
-        let (kind, ints, reals) = self.parts();
+        self.encode_in(seq, CommandContext::NONE)
+    }
+
+    /// Encodes with what the session knows about the body, so a format SET carries
+    /// the captured SlowMo trailer and Photo goes out as this body's own byte.
+    pub fn encode_in(self, seq: u16, context: CommandContext) -> Result<Vec<u8>, CameraError> {
+        let (kind, ints, reals) = self.parts_in(context);
         let call = |out: *mut u8, capacity: usize| {
             // Safety: both argument slices outlive the call, and the core writes at most
             // `capacity` bytes into `out`.

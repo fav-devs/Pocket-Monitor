@@ -39,7 +39,9 @@ public enum LinkDiagnoser {
         secondsSinceLastEnable: TimeInterval?,
         secondsSinceFocusTrackSet: TimeInterval?,
         secondsSinceZoomSet: TimeInterval? = nil,
+        zoomPinchActive: Bool = false,
         secondsSinceGimbalThrow: TimeInterval? = nil,
+        gimbalStickHeld: Bool = false,
         presentAge: TimeInterval? = nil,
         secondsSinceCameraSet: TimeInterval? = nil
     ) -> LinkFailure {
@@ -61,12 +63,15 @@ public enum LinkDiagnoser {
         if FocusTrackMode.shouldHoldWatchdog(secondsSinceSet: secondsSinceFocusTrackSet) {
             return .none
         }
-        if CamFov.shouldHoldWatchdog(secondsSinceSet: secondsSinceZoomSet) {
+        if CamFov.shouldHoldWatchdog(
+            secondsSinceSet: secondsSinceZoomSet, pinchActive: zoomPinchActive)
+        {
             return .none
         }
         if GimbalStick.shouldHoldWatchdog(
             secondsSinceThrow: secondsSinceGimbalThrow,
-            lastVideoPacketAge: videoAge)
+            lastVideoPacketAge: videoAge,
+            stickHeld: gimbalStickHeld)
         {
             return .none
         }
@@ -120,7 +125,9 @@ public enum LinkDiagnoser {
             secondsSinceLastEnable: snap.secondsSinceLastEnable,
             secondsSinceFocusTrackSet: snap.secondsSinceFocusTrackSet,
             secondsSinceZoomSet: snap.secondsSinceZoomSet,
+            zoomPinchActive: snap.zoomPinchActive,
             secondsSinceGimbalThrow: snap.secondsSinceGimbalThrow,
+            gimbalStickHeld: snap.gimbalStickHeld,
             presentAge: snap.lastDecodedFrameAge,
             secondsSinceCameraSet: snap.secondsSinceCameraSet
         )

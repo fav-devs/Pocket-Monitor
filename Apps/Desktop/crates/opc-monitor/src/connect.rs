@@ -15,6 +15,8 @@ use opc_camera::{
 };
 
 use crate::ble_impl::BtleplugTransport;
+use crate::station;
+use opc_monitor::homewifi::SavedStation;
 
 // ── palette ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +35,15 @@ const ERR: Color32 = Color32::from_rgb(220, 70, 70);
 enum BleCmd {
     Scan,
     Pair(String),
+    /// Put the camera on the operator's network.
+    Station {
+        address: String,
+        ssid: String,
+        password: String,
+        model_id: Option<i32>,
+    },
+    /// Put it back on its own.
+    ResetStation(String),
     Cancel,
 }
 
@@ -42,7 +53,17 @@ enum BleEvent {
     Found(Vec<Discovered>),
     Step(String),
     AwaitingApproval,
-    Credentials { ssid: String, password: String },
+    Credentials {
+        ssid: String,
+        password: String,
+    },
+    /// The camera took the network; `confirmed` is false when its reply never came and
+    /// the LAN search has to say.
+    StationDone {
+        identity: Vec<u8>,
+        confirmed: bool,
+    },
+    StationReset,
     Error(String),
 }
 
@@ -64,6 +85,11 @@ pub enum ConnectOutcome {
         port: u16,
         passcode: String,
     },
+    /// The camera is on the operator's network at this address.
+    StationReady {
+        address: std::net::SocketAddr,
+        model_id: Option<i32>,
+    },
 }
 
 // ── screens ──────────────────────────────────────────────────────────────────
@@ -71,6 +97,21 @@ pub enum ConnectOutcome {
 enum Screen {
     Scanning,
     Choose(Vec<Discovered>),
+    /// The network the camera should join instead of hosting its own.
+    HomeWifi {
+        camera: String,
+        ssid: String,
+        password: String,
+        show_pass: bool,
+        note: String,
+    },
+    /// Looking for the camera on this machine's networks.
+    Searching(String),
+    /// Something that finished and needs no retry.
+    Info {
+        title: String,
+        message: String,
+    },
     /// Phones sharing a feed on this Wi-Fi, found as the browser runs.
     Phones {
         hosts: Vec<opc_relay::discovery::DiscoveredHost>,
@@ -109,6 +150,12 @@ struct ConnectApp {
     phones_rx: Option<mpsc::Receiver<Result<Vec<opc_relay::discovery::DiscoveredHost>, String>>>,
     phones_stop: Arc<std::sync::atomic::AtomicBool>,
     want_phones: bool,
+    /// The Bluetooth address of the camera being paired, for the station step.
+    camera_address: String,
+    /// The LAN search's answer, while one runs.
+    search_rx: Option<mpsc::Receiver<Option<std::net::SocketAddr>>>,
+    /// What to remember once the search finds the camera.
+    pending_station: Option<SavedStation>,
 }
 
 impl ConnectApp {
@@ -133,7 +180,20 @@ impl ConnectApp {
             phones_rx: None,
             phones_stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             want_phones: start_on_phones,
+            camera_address: String::new(),
+            search_rx: None,
+            pending_station: None,
         }
+    }
+
+    /// Looks for the camera on this machine's networks, off the UI thread.
+    fn search_for(&mut self, identity: Vec<u8>, last: Option<std::net::Ipv4Addr>) {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(station::find_camera(&identity, last));
+        });
+        self.search_rx = Some(rx);
+        self.screen = Screen::Searching("Finding the camera on your Wi-Fi\u{2026}".into());
     }
 
     fn finish(&self, ctx: &egui::Context, o: ConnectOutcome) {
@@ -317,6 +377,7 @@ impl ConnectApp {
 
                 if let Some((addr, name, mid)) = chosen {
                     self.camera_name = name.clone();
+                    self.camera_address = addr.clone();
                     self.model_id = mid;
                     let _ = self.tx.send(BleCmd::Pair(addr));
                     self.screen = Screen::Pairing {
@@ -436,6 +497,158 @@ impl ConnectApp {
                         model_id: mid,
                     });
                 }
+                ui.add_space(12.0);
+                if ghost_button(ui, "Put the camera on my Wi-Fi instead  \u{2192}").clicked() {
+                    self.screen = Screen::HomeWifi {
+                        camera: self.camera_name.clone(),
+                        ssid: station::current_ssid().unwrap_or_default(),
+                        password: String::new(),
+                        show_pass: false,
+                        note: String::new(),
+                    };
+                }
+                None
+            }
+
+            Screen::HomeWifi {
+                camera,
+                ssid,
+                password,
+                show_pass,
+                note,
+            } => {
+                let camera = camera.clone();
+                ui.label(
+                    RichText::new(format!("Put {camera} on your Wi-Fi"))
+                        .color(TEXT)
+                        .font(FontId::proportional(16.0)),
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "The camera joins this network instead of hosting its own, so this PC keeps \
+                         its internet. Use a 2.4 GHz network the camera can see. The password goes \
+                         to the camera over Bluetooth and is not kept here.",
+                    )
+                    .color(DIM)
+                    .font(FontId::proportional(13.0)),
+                );
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Network")
+                            .color(DIM)
+                            .font(FontId::proportional(13.0)),
+                    );
+                    ui.add(egui::TextEdit::singleline(ssid).desired_width(220.0));
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Password")
+                            .color(DIM)
+                            .font(FontId::proportional(13.0)),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(password)
+                            .password(!*show_pass)
+                            .desired_width(220.0),
+                    );
+                    if ui
+                        .small_button(if *show_pass { "hide" } else { "show" })
+                        .clicked()
+                    {
+                        *show_pass = !*show_pass;
+                    }
+                });
+                if !note.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(note.clone())
+                            .color(ERR)
+                            .font(FontId::proportional(13.0)),
+                    );
+                }
+                let (ssid, password) = (ssid.trim().to_string(), password.clone());
+                ui.add_space(24.0);
+                let join = accent_button(ui, "Join Wi-Fi  \u{2192}").clicked();
+                ui.add_space(8.0);
+                let reset = ghost_button(ui, "Return the camera to its own Wi-Fi").clicked();
+                ui.add_space(4.0);
+                let back = ghost_button(ui, "\u{2190}  Back").clicked();
+                if join {
+                    if ssid.is_empty() {
+                        if let Screen::HomeWifi { note, .. } = &mut self.screen {
+                            *note = "Type the network's name.".into();
+                        }
+                        return None;
+                    }
+                    self.pending_station = Some(SavedStation {
+                        ssid: ssid.clone(),
+                        identity: Vec::new(),
+                        address: None,
+                        model_id: self.model_id,
+                    });
+                    let _ = self.tx.send(BleCmd::Station {
+                        address: self.camera_address.clone(),
+                        ssid,
+                        password,
+                        model_id: self.model_id,
+                    });
+                    self.screen = Screen::Pairing {
+                        label: "Connecting\u{2026}".into(),
+                        camera,
+                    };
+                } else if reset {
+                    let _ = self
+                        .tx
+                        .send(BleCmd::ResetStation(self.camera_address.clone()));
+                    self.screen = Screen::Pairing {
+                        label: "Connecting\u{2026}".into(),
+                        camera,
+                    };
+                } else if back {
+                    let _ = self.tx.send(BleCmd::Scan);
+                    self.screen = Screen::Scanning;
+                }
+                None
+            }
+
+            Screen::Searching(label) => {
+                ui.label(
+                    RichText::new(label.clone())
+                        .color(TEXT)
+                        .font(FontId::proportional(16.0)),
+                );
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new("Every address on this PC's network is asked once. This takes a few seconds.")
+                        .color(DIM)
+                        .font(FontId::proportional(13.0)),
+                );
+                ui.add_space(16.0);
+                ui.add(egui::Spinner::new().size(24.0).color(ACCENT));
+                None
+            }
+
+            Screen::Info { title, message } => {
+                let (title, message) = (title.clone(), message.clone());
+                ui.label(
+                    RichText::new(format!("\u{2713}  {title}"))
+                        .color(SUCCESS)
+                        .font(FontId::proportional(18.0)),
+                );
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(message)
+                        .color(DIM)
+                        .font(FontId::proportional(14.0)),
+                );
+                ui.add_space(24.0);
+                if accent_button(ui, "Scan Again").clicked() {
+                    let _ = self.tx.send(BleCmd::Scan);
+                    self.screen = Screen::Scanning;
+                }
                 None
             }
 
@@ -486,8 +699,45 @@ impl eframe::App for ConnectApp {
                 }
             }
         }
-        if matches!(self.screen, Screen::Phones { .. }) {
+        if matches!(self.screen, Screen::Phones { .. } | Screen::Searching(_)) {
             ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        // The LAN search's answer.
+        if let Some(rx) = self.search_rx.as_ref() {
+            if let Ok(found) = rx.try_recv() {
+                self.search_rx = None;
+                match (found, self.pending_station.take()) {
+                    (Some(address), Some(mut station)) => {
+                        if let std::net::IpAddr::V4(v4) = address.ip() {
+                            station.address = Some(v4);
+                        }
+                        if let Err(error) = station::save(&station) {
+                            eprintln!("could not remember the camera's network: {error}");
+                        }
+                        self.finish(
+                            ctx,
+                            ConnectOutcome::StationReady {
+                                address,
+                                model_id: station.model_id,
+                            },
+                        );
+                        return;
+                    }
+                    (Some(address), None) => {
+                        let model_id = self.model_id;
+                        self.finish(ctx, ConnectOutcome::StationReady { address, model_id });
+                        return;
+                    }
+                    (None, _) => {
+                        self.screen = Screen::Failed(
+                            "The camera joined, but this PC could not find it on the network. \
+                             Check that both are on the same Wi-Fi and that the router does not \
+                             isolate its clients, then try again."
+                                .into(),
+                        );
+                    }
+                }
+            }
         }
         // Drain events from the worker. A scan that finishes after the operator went to
         // the phone screen must not pull them back.
@@ -523,6 +773,26 @@ impl eframe::App for ConnectApp {
                         password,
                         model_id: self.model_id,
                         show_pass: false,
+                    };
+                }
+                BleEvent::StationDone {
+                    identity,
+                    confirmed,
+                } => {
+                    if let Some(station) = self.pending_station.as_mut() {
+                        station.identity = identity.clone();
+                    }
+                    if !confirmed {
+                        eprintln!("the camera did not confirm the join; searching anyway");
+                    }
+                    self.search_for(identity, None);
+                }
+                BleEvent::StationReset => {
+                    self.screen = Screen::Info {
+                        title: "Camera back on its own Wi-Fi".into(),
+                        message:
+                            "It hosts its own network again. Pair it when you next want to connect."
+                                .into(),
                     };
                 }
                 BleEvent::Error(msg) => {
@@ -977,6 +1247,47 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                 let _ = transport.disconnect();
             }
 
+            BleCmd::Station {
+                address,
+                ssid,
+                password,
+                model_id,
+            } => {
+                let mut progress = WorkerProgress { tx: &tx, rx: &rx };
+                match station::provision(
+                    &mut transport,
+                    &address,
+                    &ssid,
+                    &password,
+                    model_id,
+                    &mut progress,
+                ) {
+                    Ok((identity, confirmed)) => {
+                        let _ = tx.send(BleEvent::StationDone {
+                            identity,
+                            confirmed,
+                        });
+                    }
+                    Err(message) if message == "cancelled" => {}
+                    Err(message) => {
+                        let _ = tx.send(BleEvent::Error(message));
+                    }
+                }
+            }
+
+            BleCmd::ResetStation(address) => {
+                let mut progress = WorkerProgress { tx: &tx, rx: &rx };
+                match station::reset(&mut transport, &address, &mut progress) {
+                    Ok(()) => {
+                        let _ = tx.send(BleEvent::StationReset);
+                    }
+                    Err(message) if message == "cancelled" => {}
+                    Err(message) => {
+                        let _ = tx.send(BleEvent::Error(message));
+                    }
+                }
+            }
+
             BleCmd::Cancel => {
                 let _ = transport.disconnect();
                 break;
@@ -984,6 +1295,29 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
         }
     }
     let _ = transport.disconnect();
+}
+
+/// The station runner's window onto the screen.
+struct WorkerProgress<'a> {
+    tx: &'a mpsc::Sender<BleEvent>,
+    rx: &'a mpsc::Receiver<BleCmd>,
+}
+
+impl station::Progress for WorkerProgress<'_> {
+    fn step(&mut self, label: &str) {
+        let _ = self.tx.send(BleEvent::Step(label.to_string()));
+    }
+
+    fn awaiting_approval(&mut self) {
+        let _ = self.tx.send(BleEvent::AwaitingApproval);
+    }
+
+    fn cancelled(&mut self) -> bool {
+        matches!(
+            self.rx.try_recv(),
+            Ok(BleCmd::Cancel) | Err(mpsc::TryRecvError::Disconnected)
+        )
+    }
 }
 
 // ── public entry point ────────────────────────────────────────────────────────

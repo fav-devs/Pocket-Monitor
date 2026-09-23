@@ -69,8 +69,25 @@ typedef struct {
 
 #define OPC_FILE_END 3
 
-/// Opens a file for reading. NULL when it has no decodable video stream.
-OpcFileReader *opc_file_open(const char *path);
+/// The clip's audio, as the reader hands it over: always interleaved stereo float at the
+/// sample rate asked for at open.
+typedef struct {
+    int32_t sample_rate;
+    int32_t channels;
+} OpcAudioInfo;
+
+/// Opens a file for reading. NULL when it has no decodable video stream. `audio_rate`
+/// above zero also decodes the first audio track, resampled to that rate; zero leaves
+/// audio alone.
+OpcFileReader *opc_file_open(const char *path, int32_t audio_rate);
+/// `OPC_DECODE_OK` and `out` filled when the clip has an audio track being decoded;
+/// `OPC_DECODE_ERR_UNSUPPORTED` when it has none, or audio was not asked for.
+int32_t opc_file_audio_info(OpcFileReader *reader, OpcAudioInfo *out);
+/// Hands over the audio decoded so far — the samples that came with the pictures
+/// `opc_file_next` has returned — and forgets them. Returns the number of floats copied
+/// (frames × 2), with `first_pts_ms` the time of the first one. With `out` NULL, the
+/// number waiting. A seek drops what was waiting.
+int64_t opc_file_take_audio(OpcFileReader *reader, float *out, size_t capacity, int64_t *first_pts_ms);
 void opc_file_close(OpcFileReader *reader);
 int32_t opc_file_info(OpcFileReader *reader, OpcFileInfo *out);
 

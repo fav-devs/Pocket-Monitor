@@ -455,6 +455,16 @@ impl Default for GuideOptions {
 }
 
 impl GuideOptions {
+    /// The picked frames as a bit set, for the saved settings.
+    pub fn bits(&self) -> u16 {
+        self.selected
+    }
+
+    pub fn with_bits(mut self, bits: u16) -> Self {
+        self.selected = bits;
+        self
+    }
+
     pub fn is_selected(&self, aspect: GuideAspect) -> bool {
         self.selected & aspect.bit() != 0
     }

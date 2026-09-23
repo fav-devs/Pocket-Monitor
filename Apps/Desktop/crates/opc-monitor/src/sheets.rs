@@ -5,7 +5,8 @@
 //! Alongside each row of chips is the pick each chip stands for, so a tap is a lookup
 //! rather than a second interpretation of the same list.
 
-use opc_camera::{frame_rate_fps, resolution_name, Command, Status};
+use opc_camera::capture;
+use opc_camera::{Command, Status};
 use opc_chrome::{SheetRowState, SheetState};
 
 use crate::assists::{
@@ -81,6 +82,8 @@ pub struct Prefs {
     pub vcam_clean: bool,
     /// The stream's port on 127.0.0.1.
     pub vcam_port: u16,
+    /// Read the shutter as an angle at the frame rate rather than 1/N.
+    pub shutter_angle: bool,
 }
 
 /// A part of the chrome the Display tab can hide.
@@ -231,6 +234,7 @@ impl Default for Prefs {
             vcam: 0,
             vcam_clean: true,
             vcam_port: opc_vcam::DEFAULT_PORT,
+            shutter_angle: false,
         }
     }
 }
@@ -274,6 +278,8 @@ pub enum Pick {
     PeakingSense(opc_render::PeakingSense),
     /// Read zebra thresholds as IRE (true) or 0–255 (false).
     ZebraUnits(bool),
+    /// Read the shutter as an angle (true) or as 1/N.
+    ShutterUnits(bool),
     ZebraHighlightOn(bool),
     ZebraHighlightIre(f32),
     ZebraHighlightColor(ZebraPaint),
@@ -330,6 +336,8 @@ pub struct Context<'a> {
     pub gimbal_mode: GimbalMode,
     /// The body's model id for commands that encode per model, or -1.
     pub model_id: i32,
+    /// Whether the body has AF-S / AF-C and a focus-track mode (the Nano has neither).
+    pub supports_focus: bool,
     pub luts: &'a LutMenu,
     pub lut_choice: &'a LutChoice,
     pub program: &'a Program,
@@ -357,34 +365,6 @@ impl Built {
         self.picks.get(row).and_then(|row| row.get(option))
     }
 }
-
-/// ISO index on the wire and the value it means. `0x00` is auto.
-pub const ISO_INDEX: [(u8, &str); 10] = [
-    (0x00, "Auto"),
-    (0x03, "100"),
-    (0x04, "200"),
-    (0x05, "400"),
-    (0x06, "800"),
-    (0x07, "1600"),
-    (0x08, "3200"),
-    (0x09, "6400"),
-    (0x0A, "12800"),
-    (0x0B, "25600"),
-];
-
-/// Shutter denominators offered when the body has not sent its own list.
-pub const SHUTTER_DEFAULT: [i32; 13] = [
-    8000, 4000, 2000, 1000, 500, 250, 200, 120, 100, 60, 50, 30, 25,
-];
-
-const COLOR_MODES: [(u8, &str); 6] = [
-    (0x3F, "Normal"),
-    (0x3C, "HDR"),
-    (0x17, "D-Log"),
-    (0x41, "D-Log2"),
-    (0x3D, "Normal 10-bit"),
-    (0x00, "D-Log M"),
-];
 
 /// `FocusTrackMode` on the wire and the phones' labels for it.
 const FOCUS_TRACK: [(u8, &str); 4] = [
@@ -420,6 +400,7 @@ impl RowBuilder {
                 selected: None,
                 enabled: true,
                 lit: Vec::new(),
+                scroll: 0,
             },
             picks: Vec::new(),
         }
@@ -474,8 +455,8 @@ fn assemble(title: &str, tabs: &[&str], tab: usize, rows: Vec<RowBuilder>) -> Bu
 /// Builds the sheet the shell has open.
 pub fn build(kind: SheetKind, tab: usize, context: Context) -> Built {
     match kind {
-        SheetKind::Format => format(context.status),
-        SheetKind::Exposure => exposure(context.status),
+        SheetKind::Format => format(context.status, context.model_id),
+        SheetKind::Exposure => exposure(context.status, context.model_id, context.prefs),
         SheetKind::Settings => settings(tab, context),
         SheetKind::Moves => moves(context),
         SheetKind::Assist(tool) => assist(tool, context),
@@ -852,27 +833,44 @@ fn moves(context: Context) -> Built {
     )
 }
 
-fn format(status: &Status) -> Built {
-    let formats = &status.available_formats;
+fn format(status: &Status, model_id: i32) -> Built {
+    let shooting_mode = status.shooting_mode.unwrap_or(-1);
+    // The body's own list, or the documented Pocket 3 table for this mode. A picker
+    // that invents its own list offers settings the camera will refuse.
+    let formats = capture::format_picker(&status.available_formats, model_id, shooting_mode);
+    let current = status.video_resolution.zip(status.video_frame_rate);
     if formats.is_empty() {
-        // A picker that invents its own list offers settings the camera will refuse.
+        let (resolution, rate) = current
+            .map(|(resolution, rate)| {
+                (
+                    capture::resolution_label(resolution),
+                    capture::frame_rate_fps(rate)
+                        .map(|fps| fps.to_string())
+                        .unwrap_or_else(|| format!("0x{rate:02X}")),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    "Waiting for the camera's list".to_string(),
+                    "Waiting for the camera's list".to_string(),
+                )
+            });
         return assemble(
             "FORMAT",
             &[],
             0,
             vec![
-                RowBuilder::placeholder("Resolution", "Waiting for the camera's list"),
-                RowBuilder::placeholder("Frame rate", "Waiting for the camera's list"),
+                RowBuilder::placeholder("Resolution", &resolution),
+                RowBuilder::placeholder("Frame rate", &rate),
             ],
         );
     }
-    let current = status.video_resolution.zip(status.video_frame_rate);
     let resolution = current
         .map(|(resolution, _)| resolution)
         .unwrap_or(formats[0].0);
 
     let mut resolutions: Vec<u8> = Vec::new();
-    for (code, _) in formats {
+    for (code, _) in &formats {
         if !resolutions.contains(code) {
             resolutions.push(*code);
         }
@@ -894,14 +892,8 @@ fn format(status: &Status) -> Built {
             .filter(|rate| rates.contains(rate))
             .or_else(|| rates.first().copied())
             .unwrap_or(0);
-        let name = resolution_name(*code);
-        let label = if name.is_empty() {
-            format!("0x{code:02X}")
-        } else {
-            name.to_string()
-        };
         resolution_row = resolution_row.option(
-            label,
+            capture::resolution_label(*code),
             *code == resolution,
             Pick::Send(vec![Command::SetVideoFormat {
                 resolution: *code,
@@ -912,7 +904,7 @@ fn format(status: &Status) -> Built {
 
     let mut rate_row = RowBuilder::new("Frame rate");
     for rate in rates_for(resolution) {
-        let label = frame_rate_fps(rate)
+        let label = capture::frame_rate_fps(rate)
             .map(|fps| fps.to_string())
             .unwrap_or_else(|| format!("0x{rate:02X}"));
         rate_row = rate_row.option(
@@ -928,8 +920,23 @@ fn format(status: &Status) -> Built {
     assemble("FORMAT", &[], 0, vec![resolution_row, rate_row])
 }
 
-fn exposure(status: &Status) -> Built {
+/// The colour the ISO ladders follow. A stills mode must not reuse leftover video
+/// colour for its Auto ISO and fallback wheels, as on the phones.
+fn iso_presentation_color(status: &Status) -> u8 {
+    let photo = status
+        .shooting_mode
+        .and_then(|code| u8::try_from(code).ok())
+        .is_some_and(capture::mode_is_photo);
+    if photo {
+        capture::color::NORMAL
+    } else {
+        status.color_mode.unwrap_or(capture::color::NORMAL)
+    }
+}
+
+fn exposure(status: &Status, model_id: i32, prefs: Prefs) -> Built {
     let manual = status.expo_mode == Some(0x04);
+    let color = iso_presentation_color(status);
 
     let mode = RowBuilder::new("Mode")
         .option(
@@ -943,56 +950,84 @@ fn exposure(status: &Status) -> Built {
             Pick::Send(vec![Command::SetExpoMode(0x04)]),
         );
 
-    let offered: Vec<u8> = if status.available_iso.is_empty() {
-        ISO_INDEX.iter().map(|(index, _)| *index).collect()
-    } else {
-        status.available_iso.clone()
-    };
-    let mut iso = RowBuilder::new("ISO").enabled(manual);
-    for (index, label) in ISO_INDEX {
-        if index != 0x00 && offered.contains(&index) {
-            iso = iso.option(
-                label,
-                status.iso_index == Some(index),
-                Pick::Send(vec![Command::SetIsoIndex(index)]),
-            );
-        }
+    // The ISO wheel is Mimo's ladder for this colour (or the body's own list), Auto
+    // first where the colour has it. It is live in both modes: Auto ISO is an ISO.
+    let iso_now = status.iso_index;
+    // Until the body has said which index it is on, Auto exposure is taken as Auto ISO.
+    let iso_auto = iso_now.map_or(!manual, |index| index == capture::iso::AUTO);
+    let mut iso = RowBuilder::new("ISO");
+    for index in capture::iso_indices(color, &status.available_iso) {
+        iso = iso.option(
+            capture::iso_index_label(index),
+            iso_now == Some(index),
+            Pick::Send(vec![Command::SetIsoIndex(index)]),
+        );
     }
 
-    let mut iso_max = RowBuilder::new("ISO max").enabled(!manual);
-    for limit in 0x02u8..=0x09 {
-        let ceiling = 100 << (limit - 1);
+    // The ceiling only means anything with Auto ISO, and only in a colour that has
+    // it (D-Log2 has none): the labels start at this body's floor.
+    let limits = capture::iso_auto_limits(color);
+    let mut iso_max = RowBuilder::new("ISO max").enabled(iso_auto && !limits.is_empty());
+    for limit in limits {
         iso_max = iso_max.option(
-            format!("100–{ceiling}"),
+            capture::iso_auto_limit_label(limit, color, model_id),
             status.iso_limit == Some(limit),
             Pick::Send(vec![Command::SetIsoLimit(limit)]),
         );
     }
 
-    let denominators: Vec<i32> = if status.available_shutter.is_empty() {
-        SHUTTER_DEFAULT.to_vec()
-    } else {
-        status.available_shutter.clone()
-    };
+    // Speed is the wire's 1/N; angle is the same SET read at the frame rate, with
+    // the phones' stops and an unknown rate counting as 24.
+    let units = RowBuilder::new("Shutter units")
+        .option("Speed", !prefs.shutter_angle, Pick::ShutterUnits(false))
+        .option("Angle", prefs.shutter_angle, Pick::ShutterUnits(true));
     let mut shutter = RowBuilder::new("Shutter").enabled(manual);
-    for denominator in denominators {
-        shutter = shutter.option(
-            format!("1/{denominator}"),
-            status.shutter_denominator == Some(denominator),
-            Pick::Send(vec![Command::SetShutter(denominator)]),
-        );
+    if prefs.shutter_angle {
+        let fps = status
+            .video_frame_rate
+            .and_then(capture::frame_rate_fps)
+            .map(|fps| fps as i32)
+            .or(status.fps)
+            .unwrap_or(0);
+        let current = status
+            .shutter_denominator
+            .map(|denom| capture::shutter_angle_label(denom, fps));
+        for degrees in capture::shutter_angles() {
+            let label = capture::angle_label(degrees);
+            let denom = capture::shutter_angle_denom(degrees, fps, &status.available_shutter);
+            shutter = shutter.option(
+                label.clone(),
+                current.as_deref() == Some(label.as_str()),
+                Pick::Send(vec![Command::SetShutter(denom)]),
+            );
+        }
+    } else {
+        for denominator in
+            capture::shutter_wheel(&status.available_shutter, status.shutter_denominator)
+        {
+            shutter = shutter.option(
+                format!("1/{denominator}"),
+                status.shutter_denominator == Some(denominator),
+                Pick::Send(vec![Command::SetShutter(denominator)]),
+            );
+        }
     }
 
     let mut ev = RowBuilder::new("EV").enabled(!manual);
     for thirds in -9i32..=9 {
         ev = ev.option(
-            format!("{:+.1}", f64::from(thirds) / 3.0),
+            capture::ev_label(thirds),
             status.ev_thirds == Some(thirds),
             Pick::Send(vec![Command::SetEv(thirds)]),
         );
     }
 
-    assemble("EXPOSURE", &[], 0, vec![mode, iso, iso_max, shutter, ev])
+    assemble(
+        "EXPOSURE",
+        &[],
+        0,
+        vec![mode, iso, iso_max, units, shutter, ev],
+    )
 }
 
 fn settings(tab: usize, context: Context) -> Built {
@@ -1041,12 +1076,14 @@ fn camera_rows(context: Context) -> Vec<RowBuilder> {
     }
 
     let kelvin_now = status.white_balance_kelvin.unwrap_or(0);
+    // A preset changes the temperature, not the tint the operator has dialled in.
+    let tint = status.white_balance_tint.unwrap_or(0);
     let mut white_balance = RowBuilder::new("White balance");
     for (kelvin, label) in WHITE_BALANCE {
         let command = if kelvin == 0 {
-            Command::SetWhiteBalanceAuto { tint: 0 }
+            Command::SetWhiteBalanceAuto { tint }
         } else {
-            Command::SetWhiteBalanceCustom { kelvin, tint: 0 }
+            Command::SetWhiteBalanceCustom { kelvin, tint }
         };
         // The body reports the kelvin it settled on; the nearest preset lights up.
         let selected = if kelvin == 0 {
@@ -1056,24 +1093,49 @@ fn camera_rows(context: Context) -> Vec<RowBuilder> {
         };
         white_balance = white_balance.option(label, selected, Pick::Send(vec![command]));
     }
+    // The full custom range the wire takes (2000–10000 K), and the tint beside it.
+    let mut kelvin_row = RowBuilder::new("Kelvin");
+    for kelvin in (2000..=10000).step_by(250) {
+        kelvin_row = kelvin_row.option(
+            format!("{kelvin}K"),
+            kelvin_now > 0 && (kelvin_now - kelvin).abs() < 125,
+            Pick::Send(vec![Command::SetWhiteBalanceCustom { kelvin, tint }]),
+        );
+    }
+    let tint_now = status.white_balance_tint;
+    let mut tint_row = RowBuilder::new("Tint");
+    for step in (-100..=100).step_by(10) {
+        let command = if kelvin_now > 0 {
+            Command::SetWhiteBalanceCustom {
+                kelvin: kelvin_now,
+                tint: step,
+            }
+        } else {
+            Command::SetWhiteBalanceAuto { tint: step }
+        };
+        tint_row = tint_row.option(
+            if step > 0 {
+                format!("+{step}")
+            } else {
+                step.to_string()
+            },
+            tint_now.is_some_and(|now| (now - step).abs() < 5),
+            Pick::Send(vec![command]),
+        );
+    }
 
-    let offered: Vec<u8> = if status.available_colors.is_empty() {
-        vec![0x3F, 0x17, 0x41]
-    } else {
-        status.available_colors.clone()
-    };
-    let mut color = RowBuilder::new("Color");
-    for (code, label) in COLOR_MODES {
-        if offered.contains(&code) {
-            color = color.option(
-                label,
-                status.color_mode == Some(code),
-                Pick::Send(vec![Command::SetColorMode {
-                    mode: code,
-                    model_id: context.model_id,
-                }]),
-            );
-        }
+    // The body's own wheel in Mimo's order. A D-Log2 body cannot change colour while
+    // rolling (it cannot zoom either), so the row waits for the take to end.
+    let mut color = RowBuilder::new("Color").enabled(!status.is_recording);
+    for code in capture::color_modes(context.model_id, &status.available_colors) {
+        color = color.option(
+            capture::color_mode_label(code, context.model_id),
+            status.color_mode == Some(code),
+            Pick::Send(vec![Command::SetColorMode {
+                mode: code,
+                model_id: context.model_id,
+            }]),
+        );
     }
 
     let fov = RowBuilder::new("Field of view")
@@ -1095,6 +1157,11 @@ fn camera_rows(context: Context) -> Vec<RowBuilder> {
             "FPV",
             context.gimbal_mode == GimbalMode::Fpv,
             Pick::GimbalMode(GimbalMode::Fpv),
+        )
+        .option(
+            "Direction lock",
+            context.gimbal_mode == GimbalMode::DirectionLock,
+            Pick::GimbalMode(GimbalMode::DirectionLock),
         );
 
     let speed = RowBuilder::new("Gimbal speed")
@@ -1112,16 +1179,22 @@ fn camera_rows(context: Context) -> Vec<RowBuilder> {
         .option("Soft", prefs.ramp == 1, Pick::Ramp(1))
         .option("Medium", prefs.ramp == 2, Pick::Ramp(2));
 
-    vec![
-        focus,
-        focus_track,
+    let mut rows = Vec::new();
+    if context.supports_focus {
+        rows.push(focus);
+        rows.push(focus_track);
+    }
+    rows.extend([
         white_balance,
+        kelvin_row,
+        tint_row,
         color,
         fov,
         follow,
         speed,
         ramp,
-    ]
+    ]);
+    rows
 }
 
 /// Directional audio `@2` on the wire and the phones' labels.
@@ -1130,25 +1203,16 @@ const DIRECTIONAL_AUDIO: [(u8, &str); 3] = [(0xDA, "All"), (0x3A, "Front"), (0xB
 fn audio_rows(context: Context) -> Vec<RowBuilder> {
     let prefs = context.prefs;
     let status = context.status;
+    // The body is asked for both on connect; until it answers, the last pick stands.
+    let channel_now = status.audio_channel.unwrap_or(prefs.audio_channel);
+    let boost_now = status.vocal_boost.unwrap_or(prefs.vocal_boost);
     let channel = RowBuilder::new("Channel")
-        .option(
-            "Stereo",
-            prefs.audio_channel == 0x02,
-            Pick::AudioChannel(0x02),
-        )
-        .option(
-            "Mono",
-            prefs.audio_channel == 0x01,
-            Pick::AudioChannel(0x01),
-        )
-        .option(
-            "Spatial",
-            prefs.audio_channel == 0x03,
-            Pick::AudioChannel(0x03),
-        );
+        .option("Stereo", channel_now == 0x02, Pick::AudioChannel(0x02))
+        .option("Mono", channel_now == 0x01, Pick::AudioChannel(0x01))
+        .option("Spatial", channel_now == 0x03, Pick::AudioChannel(0x03));
     let vocal = RowBuilder::new("Vocal boost")
-        .option("Off", prefs.vocal_boost == 0x00, Pick::VocalBoost(0x00))
-        .option("On", prefs.vocal_boost == 0x01, Pick::VocalBoost(0x01));
+        .option("Off", boost_now == 0x00, Pick::VocalBoost(0x00))
+        .option("On", boost_now == 0x01, Pick::VocalBoost(0x01));
     // Wind and directional audio share one DSP blob (`@2`) the body is read for
     // first; a write carries that blob back patched. Until the GET has answered the
     // rows are greyed, and the shell asks for it when this tab opens.
@@ -1404,6 +1468,7 @@ mod tests {
             toggles: Toggles::default(),
             gimbal_mode: GimbalMode::Follow,
             model_id: -1,
+            supports_focus: true,
             luts: MENU.get_or_init(|| LutMenu {
                 builtin: vec!["Pocket4P DLog".to_string()],
                 custom: vec!["mine.cube".to_string()],
@@ -1598,7 +1663,7 @@ mod tests {
             ..Status::default()
         };
         let built = build(SheetKind::Format, 0, context(&status));
-        assert_eq!(built.sheet.rows[0].options, ["1080P", "4K"]);
+        assert_eq!(built.sheet.rows[0].options, ["1080p", "4K"]);
         assert_eq!(built.sheet.rows[0].selected, Some(0));
         assert_eq!(built.sheet.rows[1].options, ["30", "60"]);
         assert_eq!(built.sheet.rows[1].selected, Some(1));
@@ -1618,6 +1683,40 @@ mod tests {
         let built = build(SheetKind::Format, 0, context(&status));
         assert!(built.sheet.rows.iter().all(|row| !row.enabled));
         assert_eq!(built.pick(0, 0), Some(&Pick::Nothing));
+        // With the current pair known, the note reads it rather than a wait.
+        let status = Status {
+            video_resolution: Some(0x10),
+            video_frame_rate: Some(0x02),
+            ..Status::default()
+        };
+        let built = build(SheetKind::Format, 0, context(&status));
+        assert!(built.sheet.rows[0].options[0].contains("4K"));
+        assert!(built.sheet.rows[1].options[0].contains("25"));
+    }
+
+    #[test]
+    fn a_pocket_3_gets_the_documented_video_table_and_a_pro_does_not() {
+        let status = Status {
+            shooting_mode: Some(0x01),
+            video_resolution: Some(0x10),
+            video_frame_rate: Some(0x02),
+            ..Status::default()
+        };
+        let mut pocket3 = context(&status);
+        pocket3.model_id = 0x20;
+        let built = build(SheetKind::Format, 0, pocket3);
+        assert!(
+            built.sheet.rows[0].enabled,
+            "the Pocket 3 fallback fills the sheet"
+        );
+        assert!(built.sheet.rows[0].options.contains(&"3K 1:1".to_string()));
+        let mut pro = context(&status);
+        pro.model_id = 0x22;
+        let built = build(SheetKind::Format, 0, pro);
+        assert!(
+            !built.sheet.rows[0].enabled,
+            "nothing is invented for a Pocket 4 Pro"
+        );
     }
 
     #[test]
@@ -1630,21 +1729,169 @@ mod tests {
         };
         let built = build(SheetKind::Exposure, 0, context(&status));
         let titles: Vec<&str> = built.sheet.rows.iter().map(|r| r.title.as_str()).collect();
-        assert_eq!(titles, ["Mode", "ISO", "ISO max", "Shutter", "EV"]);
-        assert!(built.sheet.rows[1].enabled && built.sheet.rows[3].enabled);
-        assert!(!built.sheet.rows[2].enabled && !built.sheet.rows[4].enabled);
+        assert_eq!(
+            titles,
+            ["Mode", "ISO", "ISO max", "Shutter units", "Shutter", "EV"]
+        );
+        assert!(built.sheet.rows[1].enabled && built.sheet.rows[4].enabled);
+        assert!(!built.sheet.rows[2].enabled && !built.sheet.rows[5].enabled);
+        // Auto is on the wheel in this colour, and the ladder is Mimo's.
+        assert_eq!(built.sheet.rows[1].options[0], "Auto");
+        assert_eq!(built.sheet.rows[1].options.len(), 10);
+        assert_eq!(built.sheet.rows[5].options[9], "0.0");
+        assert_eq!(built.sheet.rows[5].options[5], "\u{2212}1.3");
         assert_eq!(
             built.sheet.rows[1].options[built.sheet.rows[1].selected.unwrap()],
             "400"
         );
         assert_eq!(
-            built.sheet.rows[3].options[built.sheet.rows[3].selected.unwrap()],
+            built.sheet.rows[4].options[built.sheet.rows[4].selected.unwrap()],
             "1/60"
+        );
+        // As an angle at 25p, 1/50 is 180°, and picking 90° sends 1/100.
+        let status = Status {
+            expo_mode: Some(0x04),
+            shutter_denominator: Some(50),
+            video_frame_rate: Some(0x02),
+            ..Status::default()
+        };
+        let mut angled = context(&status);
+        angled.prefs.shutter_angle = true;
+        let built = build(SheetKind::Exposure, 0, angled);
+        let row = &built.sheet.rows[4];
+        assert_eq!(row.options[row.selected.unwrap()], "180°");
+        let ninety = row.options.iter().position(|o| o == "90°").unwrap();
+        assert_eq!(
+            built.pick(4, ninety),
+            Some(&Pick::Send(vec![Command::SetShutter(100)]))
         );
         assert_eq!(
             built.pick(0, 0),
             Some(&Pick::Send(vec![Command::SetExpoMode(0x01)]))
         );
+    }
+
+    #[test]
+    fn auto_iso_owns_the_ceiling_and_the_ceiling_follows_colour_and_body() {
+        let status = Status {
+            expo_mode: Some(0x01),
+            iso_index: Some(0x00),
+            color_mode: Some(0x17),
+            ..Status::default()
+        };
+        let mut pocket3 = context(&status);
+        pocket3.model_id = 0x20;
+        let built = build(SheetKind::Exposure, 0, pocket3);
+        assert!(built.sheet.rows[2].enabled, "Auto ISO: the ceiling is live");
+        assert_eq!(
+            built.sheet.rows[2].options[0], "400–800",
+            "D-Log starts at 400"
+        );
+        assert_eq!(
+            built.sheet.rows[1].options,
+            ["Auto", "400", "800", "1600", "3200", "6400"]
+        );
+        let status = Status {
+            expo_mode: Some(0x01),
+            iso_index: Some(0x00),
+            color_mode: Some(0x3F),
+            ..Status::default()
+        };
+        let mut pocket3 = context(&status);
+        pocket3.model_id = 0x20;
+        let built = build(SheetKind::Exposure, 0, pocket3);
+        assert_eq!(
+            built.sheet.rows[2].options[0], "50–200",
+            "Rec.709 floor is 50"
+        );
+        let status = Status {
+            expo_mode: Some(0x01),
+            iso_index: Some(0x03),
+            color_mode: Some(0x41),
+            ..Status::default()
+        };
+        let built = build(SheetKind::Exposure, 0, context(&status));
+        assert!(!built.sheet.rows[2].enabled, "D-Log2 has no Auto ISO");
+        assert!(built.sheet.rows[2].options.is_empty());
+        assert!(!built.sheet.rows[1].options.contains(&"Auto".to_string()));
+    }
+
+    #[test]
+    fn the_colour_row_is_the_body_s_wheel_and_waits_while_rolling() {
+        let status = Status {
+            color_mode: Some(0x00),
+            ..Status::default()
+        };
+        let mut pocket3 = context(&status);
+        pocket3.model_id = 0x20;
+        let built = build(SheetKind::Settings, 0, pocket3);
+        let color = built
+            .sheet
+            .rows
+            .iter()
+            .position(|row| row.title == "Color")
+            .unwrap();
+        assert_eq!(
+            built.sheet.rows[color].options,
+            ["Normal", "HDR", "D-Log M"]
+        );
+        assert_eq!(built.sheet.rows[color].selected, Some(2));
+        let rolling = Status {
+            is_recording: true,
+            ..Status::default()
+        };
+        let built = build(SheetKind::Settings, 0, context(&rolling));
+        assert!(!built.sheet.rows[color].enabled);
+    }
+
+    #[test]
+    fn white_balance_offers_the_full_kelvin_range_and_keeps_the_tint() {
+        let status = Status {
+            white_balance_kelvin: Some(4300),
+            white_balance_tint: Some(20),
+            ..Status::default()
+        };
+        let built = build(SheetKind::Settings, 0, context(&status));
+        let kelvin = built
+            .sheet
+            .rows
+            .iter()
+            .position(|r| r.title == "Kelvin")
+            .unwrap();
+        let tint = built
+            .sheet
+            .rows
+            .iter()
+            .position(|r| r.title == "Tint")
+            .unwrap();
+        assert_eq!(built.sheet.rows[kelvin].options.len(), 33);
+        assert_eq!(
+            built.sheet.rows[kelvin].options[built.sheet.rows[kelvin].selected.unwrap()],
+            "4250K"
+        );
+        assert_eq!(
+            built.pick(kelvin, 0),
+            Some(&Pick::Send(vec![Command::SetWhiteBalanceCustom {
+                kelvin: 2000,
+                tint: 20
+            }]))
+        );
+        assert_eq!(
+            built.sheet.rows[tint].options[built.sheet.rows[tint].selected.unwrap()],
+            "+20"
+        );
+        assert_eq!(
+            built.pick(tint, 0),
+            Some(&Pick::Send(vec![Command::SetWhiteBalanceCustom {
+                kelvin: 4300,
+                tint: -100
+            }]))
+        );
+        // A Nano has no focus mode: its Camera tab starts at white balance.
+        let mut nano = context(&status);
+        nano.supports_focus = false;
+        let built = build(SheetKind::Settings, 0, nano);
+        assert_eq!(built.sheet.rows[0].title, "White balance");
     }
 
     #[test]

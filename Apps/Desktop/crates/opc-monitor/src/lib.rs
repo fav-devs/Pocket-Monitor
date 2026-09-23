@@ -6,6 +6,7 @@
 //! that can build it.
 
 pub mod assists;
+pub mod homewifi;
 pub mod library;
 pub mod luts;
 pub mod moves;

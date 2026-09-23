@@ -164,3 +164,4 @@ opencode.json
 
 # Rust build output for the desktop watcher shell.
 Apps/Desktop/target/
+Apps/Desktop/dist/

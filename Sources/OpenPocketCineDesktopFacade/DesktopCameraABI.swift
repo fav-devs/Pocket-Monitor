@@ -91,7 +91,15 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
     case OPC_CAM_SHOOT_PHOTO:
         return Commands.shootPhoto(seq: seq)
     case OPC_CAM_SET_SHOOTING_MODE:
-        return Commands.setShootingMode(raw: arguments.byte(0), seq: seq)
+        // ints: [mode, model_id]. A tabled mode goes out as this body's byte, so Photo
+        // is `0x05` on a Pocket 3 / Nano; a model of -1 keeps the raw value.
+        let raw = arguments.byte(0)
+        let modelId = arguments.ints.count > 1 ? arguments.int(1) : -1
+        if modelId >= 0, let mode = ShootingMode.fromWire(raw) {
+            let model = CameraModel.resolve(modelId: modelId, name: nil)
+            return Commands.setShootingMode(raw: mode.wireByte(for: model), seq: seq)
+        }
+        return Commands.setShootingMode(raw: raw, seq: seq)
 
     case OPC_CAM_ZOOM_FACTOR:
         return Commands.setZoom(factor: arguments.real(0), seq: seq)
@@ -108,6 +116,8 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
         return Commands.gimbalFlip(seq: seq)
     case OPC_CAM_GIMBAL_FOLLOW:
         return Commands.gimbalFollowFamily(seq: seq)
+    case OPC_CAM_GIMBAL_DIRECTION_LOCK:
+        return Commands.gimbalDirectionLock(seq: seq)
     case OPC_CAM_GIMBAL_FPV:
         return Commands.gimbalFpv(seq: seq)
     case OPC_CAM_GIMBAL_STICK:
@@ -163,9 +173,19 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
         guard let mode = FocusMode(rawValue: arguments.byte(0)) else { return nil }
         return Commands.setFocusMode(mode, seq: seq)
     case OPC_CAM_SET_VIDEO_FORMAT:
+        // ints: [res, fps, shooting_mode, model_id]. The last two (-1 when unknown) pick
+        // the captured SlowMo trailer on a Pocket 3 / 4 Pro; other bodies send zeros.
+        let statusMode =
+            arguments.ints.count > 2 && arguments.int(2) >= 0
+            ? ShootingMode.fromStatus(arguments.int(2)) : nil
+        let model =
+            arguments.ints.count > 3 && arguments.int(3) >= 0
+            ? CameraModel.resolve(modelId: arguments.int(3), name: nil) : nil
         return Commands.setVideoFormat(
             resolution: VideoResolution(rawValue: arguments.byte(0)),
-            frameRate: VideoFrameRate(rawValue: arguments.byte(1)), seq: seq)
+            frameRate: VideoFrameRate(rawValue: arguments.byte(1)),
+            shootingMode: VideoFormat.formatSetMode(model: model, statusMode: statusMode),
+            seq: seq)
     case OPC_CAM_SET_FOV:
         guard let fov = FovSetting(rawValue: arguments.byte(0)) else { return nil }
         return Commands.setFov(fov, seq: seq)

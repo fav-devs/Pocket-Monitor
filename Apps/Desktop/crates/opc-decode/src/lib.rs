@@ -14,6 +14,7 @@ pub mod annexb;
 mod sys {
     use std::ffi::c_void;
 
+    pub const OPC_DECODE_OK: i32 = 0;
     pub const OPC_DECODE_FRAME: i32 = 1;
     pub const OPC_DECODE_AGAIN: i32 = 2;
     pub const OPC_DECODE_FORMAT_YUV420P: i32 = 0;
@@ -54,6 +55,13 @@ mod sys {
 
     pub const OPC_FILE_END: i32 = 3;
 
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, Default)]
+    pub struct OpcAudioInfo {
+        pub sample_rate: i32,
+        pub channels: i32,
+    }
+
     extern "C" {
         pub fn opc_decoder_create(codec: i32) -> *mut c_void;
         pub fn opc_decoder_destroy(decoder: *mut c_void);
@@ -61,7 +69,14 @@ mod sys {
         pub fn opc_decoder_receive(decoder: *mut c_void, out: *mut OpcDecodedFrame) -> i32;
         pub fn opc_decoder_flush(decoder: *mut c_void);
 
-        pub fn opc_file_open(path: *const std::ffi::c_char) -> *mut c_void;
+        pub fn opc_file_open(path: *const std::ffi::c_char, audio_rate: i32) -> *mut c_void;
+        pub fn opc_file_audio_info(reader: *mut c_void, out: *mut OpcAudioInfo) -> i32;
+        pub fn opc_file_take_audio(
+            reader: *mut c_void,
+            out: *mut f32,
+            capacity: usize,
+            first_pts_ms: *mut i64,
+        ) -> i64;
         pub fn opc_file_close(reader: *mut c_void);
         pub fn opc_file_info(reader: *mut c_void, out: *mut OpcFileInfo) -> i32;
         pub fn opc_file_next(
@@ -394,19 +409,36 @@ impl FileInfo {
     }
 }
 
+/// The clip's audio as the reader hands it over: interleaved stereo float.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioInfo {
+    pub sample_rate: u32,
+    pub channels: u32,
+}
+
 /// A clip on disk, decoded picture by picture: the media player's source.
 #[derive(Debug)]
 pub struct FileReader {
     handle: *mut c_void,
     info: FileInfo,
+    audio: Option<AudioInfo>,
 }
 
 impl FileReader {
+    /// Opens the clip's video only.
     pub fn open(path: &std::path::Path) -> Result<Self, DecodeError> {
+        Self::open_with_audio(path, 0)
+    }
+
+    /// Opens the clip's video and, when `audio_rate` is above zero, its first audio track
+    /// resampled to that rate. A clip without one still opens; [`Self::audio_info`] then
+    /// says so.
+    pub fn open_with_audio(path: &std::path::Path, audio_rate: u32) -> Result<Self, DecodeError> {
         let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| DecodeError::Send)?;
         // Safety: the shim returns null rather than a partly opened reader.
-        let handle = unsafe { sys::opc_file_open(c_path.as_ptr()) };
+        let handle =
+            unsafe { sys::opc_file_open(c_path.as_ptr(), audio_rate.min(i32::MAX as u32) as i32) };
         if handle.is_null() {
             return Err(DecodeError::Unavailable(Codec::H264));
         }
@@ -418,6 +450,14 @@ impl FileReader {
             unsafe { sys::opc_file_close(handle) };
             return Err(DecodeError::Receive);
         }
+        let mut audio_raw = sys::OpcAudioInfo::default();
+        // Safety: the handle is live and `audio_raw` is a live record.
+        let audio = (unsafe { sys::opc_file_audio_info(handle, &mut audio_raw) }
+            == sys::OPC_DECODE_OK)
+            .then_some(AudioInfo {
+                sample_rate: audio_raw.sample_rate.max(0) as u32,
+                channels: audio_raw.channels.max(0) as u32,
+            });
         Ok(Self {
             handle,
             info: FileInfo {
@@ -427,11 +467,50 @@ impl FileReader {
                 fps_den: raw.fps_den.max(0) as u32,
                 duration_ms: raw.duration_ms.max(0),
             },
+            audio,
         })
     }
 
     pub fn info(&self) -> FileInfo {
         self.info
+    }
+
+    /// The audio track being decoded, if any.
+    pub fn audio_info(&self) -> Option<AudioInfo> {
+        self.audio
+    }
+
+    /// The audio that came with the pictures returned so far, interleaved stereo, and
+    /// the time of its first sample. Empty when nothing is waiting.
+    pub fn take_audio(&mut self) -> (Vec<f32>, i64) {
+        if self.audio.is_none() {
+            return (Vec::new(), 0);
+        }
+        // Safety: the handle is live; a null `out` asks how much is waiting.
+        let waiting = unsafe {
+            sys::opc_file_take_audio(self.handle, std::ptr::null_mut(), 0, std::ptr::null_mut())
+        };
+        if waiting <= 0 {
+            return (Vec::new(), 0);
+        }
+        let mut samples = vec![0f32; waiting as usize];
+        let mut first_pts_ms = 0i64;
+        // Safety: `samples` has room for everything waiting.
+        let copied = unsafe {
+            sys::opc_file_take_audio(
+                self.handle,
+                samples.as_mut_ptr(),
+                samples.len(),
+                &mut first_pts_ms,
+            )
+        };
+        samples.truncate(copied.max(0) as usize);
+        (samples, first_pts_ms)
+    }
+
+    /// Forgets the audio waiting, after a scrub that only wanted pictures.
+    pub fn discard_audio(&mut self) {
+        let _ = self.take_audio();
     }
 
     /// The next picture and its presentation time, or `None` at the end of the clip.

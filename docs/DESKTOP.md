@@ -120,7 +120,7 @@ GLSL compiler (`glslc` from the Vulkan SDK, or `glslangValidator` from glslang).
 
 ```sh
 # Debian or Ubuntu
-sudo apt install libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev glslang-tools
+sudo apt install libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libasound2-dev libvulkan-dev glslang-tools
 
 just desktop-core     # build the Swift core as a shared library
 just desktop-build    # build the Rust host against it
@@ -158,6 +158,19 @@ checked end to end before there is a window to draw in.
 Without the Swift library the Rust workspace still type-checks and its pure-Rust tests
 still run; `build.rs` only emits link flags when it finds the library, and says so
 otherwise. Anything that calls the core fails at link rather than running a stub.
+
+## Windows installer
+
+`Apps/Desktop/build-installer.ps1` runs `build-release.ps1`, then compiles
+`installer/OpenPocketCine.iss` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`)
+into `Apps/Desktop/dist/OpenPocketCine-Setup-<version>.exe`. The setup puts the
+executable and every runtime DLL in Program Files, registers the virtual camera source
+(`opc_vcam_win.dll`) as the Output tab's Install would, adds a Start menu entry and an
+optional desktop shortcut, and unregisters the camera on uninstall. It asks for
+administrator approval once, for the registration. Settings and the media cache under
+the operator's profile are left alone by an uninstall. Nothing is signed, so SmartScreen
+shows its unknown-publisher page on first run; that is the cost of no certificate, not
+a fault in the build.
 
 ## Windows notes
 

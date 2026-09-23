@@ -29,9 +29,17 @@ public enum ShootingMode: UInt8, CaseIterable, Sendable {
     case slowMo = 0x00
     case video = 0x01
     case timeLapse = 0x02
-    case photo = 0x17  // Pocket 4 (Mimo mimo-settings-1). Nano used 0x05 → 0xEE here.
+    case photo = 0x17  // Pocket 4 / 4 Pro SET. Pocket 3 / Nano Photo is `photoRawPocket3AndNano`.
     case hyperLapse = 0x0A
+    /// Pocket 4 Pro Live Photo, physically observed in Mimo.
+    case livePhoto = 0x4D
+    /// Pocket 3 Mimo Low-Light **video**. Not a stills mode — `isPhoto` is false.
     case superNight = 0x28
+
+    /// Pocket 3 / Nano Photo `0x02/0xE1` byte. Pocket 3 survey + Nano capture.
+    public static let photoRawPocket3AndNano: UInt8 = 0x05
+    /// Pocket 4 / 4 Pro Photo `0x02/0xE1` byte (`mimo-settings-1`).
+    public static let photoRawPocket4: UInt8 = 0x17
 
     public var label: String {
         switch self {
@@ -39,12 +47,46 @@ public enum ShootingMode: UInt8, CaseIterable, Sendable {
         case .video: "Video"
         case .timeLapse: "TimeLapse"
         case .photo: "Photo"
+        case .livePhoto: "Live Photo"
         case .hyperLapse: "HyperLapse"
         case .superNight: "SuperNight"
         }
     }
 
-    public var isPhoto: Bool { self == .photo || self == .superNight }
+    public func label(for model: CameraModel?) -> String {
+        self == .superNight && model?.isPocket3 == true ? "Low-Light" : label
+    }
+
+    /// Stills only. SuperNight / Low-Light is video (`0x28`).
+    public var isPhoto: Bool { self == .photo || self == .livePhoto }
+
+    /// Video FORMAT / fps apply. Photo has no `0x02/0x18` pair.
+    public var offersVideoFormat: Bool { !isPhoto }
+
+    /// Pocket 3 TimeLapse start/stop is `0x02/0x01`, not Video `0x02/0x02`.
+    public var usesShutterTriggerOnPocket3: Bool { self == .timeLapse }
+
+    /// Map a reported `0x02/0x80` / SET byte onto the tabled case. `0x05` is Photo.
+    public static func fromWire(_ raw: UInt8) -> ShootingMode? {
+        if raw == photoRawPocket3AndNano { return .photo }
+        return ShootingMode(rawValue: raw)
+    }
+
+    public static func fromStatus(_ shootingMode: Int) -> ShootingMode? {
+        guard (0...255).contains(shootingMode) else { return nil }
+        return fromWire(UInt8(shootingMode))
+    }
+
+    /// Photo SET byte for this body. Unknown bodies keep the historic `0x17` default.
+    public static func photoWireByte(for model: CameraModel?) -> UInt8 {
+        guard let model else { return photoRawPocket4 }
+        if model.family == .nano || model.isPocket3 { return photoRawPocket3AndNano }
+        return photoRawPocket4
+    }
+
+    public func wireByte(for model: CameraModel?) -> UInt8 {
+        self == .photo ? Self.photoWireByte(for: model) : rawValue
+    }
 
     /// Every `0x02/0xE1` value a supported body accepts, including the Nano's Photo `0x05`, which
     /// has no case of its own because `photo` carries the Pocket 4 encoding `0x17`.
@@ -56,11 +98,33 @@ public enum ShootingMode: UInt8, CaseIterable, Sendable {
         0x00,  // SlowMo
         0x01,  // Video
         0x02,  // TimeLapse
-        0x05,  // Photo (Nano)
+        0x05,  // Photo (Pocket 3 / Nano)
         0x0A,  // HyperLapse
         0x17,  // Photo (Pocket 4 / 4 Pro)
-        0x28,  // SuperNight
+        0x28,  // SuperNight / Low-Light video
+        0x4D,  // Live Photo (Pocket 4 Pro)
     ]
+}
+
+/// Choose record vs shutter from the documented mode, not a photo/video boolean.
+///
+/// Pocket 3 TimeLapse start/stop is `0x02/0x01` `01`/`00` (accepted survey). That
+/// mapping is Pocket 3 only — Pocket 4 / 4 Pro TimeLapse stays Video `0x02/0x02`
+/// until a later survey. Motionlapse `0x18` is not tabled.
+public enum CaptureCommand: Sendable {
+    public static func frame(
+        mode: ShootingMode?,
+        model: CameraModel?,
+        isRecording: Bool
+    ) -> Duml.Frame {
+        if mode?.isPhoto == true {
+            return Commands.shootPhoto()
+        }
+        if model?.isPocket3 == true, mode?.usesShutterTriggerOnPocket3 == true {
+            return Commands.shutterTrigger(start: !isRecording)
+        }
+        return isRecording ? Commands.recordStop() : Commands.recordStart()
+    }
 }
 
 /// Osmosis §14 / Mimo 2026-08-14 `0x02/0x8E` pids.
@@ -191,7 +255,6 @@ public enum ControlHud {
         "Can't change color while recording — D-Log2 can't zoom"
 
     /// #174 lock-all — no captured opcode. Do not invent a SET.
-    public static let gimbalLockUnavailable = "Can't lock all axes yet"
 
     public static let gimbalPoseNotReady = "Gimbal pose not ready"
     public static let gimbalHoldStill = "Hold the gimbal still"
@@ -1007,6 +1070,38 @@ public struct VideoResolution: Equatable, Hashable, Sendable {
         }
     }
 
+    /// Width / height for the recorded frame. Used to map guides onto the
+    /// active picture instead of letterbox padding in a 16:9 live well.
+    public var ratio: Double? {
+        switch aspect {
+        case .sixteenNine: 16.0 / 9.0
+        case .fourThree: 4.0 / 3.0
+        case .oneOne: 1
+        case .nineSixteen: 9.0 / 16.0
+        case nil: nil
+        }
+    }
+
+    /// Pocket 3 digital-zoom ceiling for this FORMAT, or `nil` for a byte the
+    /// catalog does not name.
+    ///
+    /// The limit tracks the capture size class, not the aspect — a bigger frame
+    /// leaves less crop headroom. Measured on a body by asking past the ceiling
+    /// and reading `cam_fov` `zoomLens` back: the camera clamps to its own max
+    /// rather than refusing, so an over-ask reports the true limit. `0x0A`,
+    /// `0x69` (4x), `0x2D`, `0x6A` (3x), `0x10`, `0x6B` (2x) are measured; the
+    /// rest inherit from a measured sibling in the same size class.
+    public var pocket3ZoomMax: Double? {
+        switch rawValue {
+        case 0x0A, 0x0C, 0x42, 0x69: 4  // 1080 — 0x0A, 0x69 measured
+        case 0x2D, 0x43, 0x5F: 3  // 2.7K — 0x2D measured
+        case 0x6A: 3  // 2160 — measured
+        case 0x10, 0x67, 0x7D: 2  // 4K — 0x10 measured
+        case 0x6B, 0x6C: 2  // 3K — 0x6B measured
+        default: nil
+        }
+    }
+
     public var sizeTitle: String {
         switch rawValue {
         case 0x0A, 0x0C, 0x42, 0x69: "1080"
@@ -1055,6 +1150,7 @@ public struct VideoFrameRate: Equatable, Hashable, Sendable {
     public static let fps240 = Self(rawValue: 0x08)
     public static let fps100 = Self(rawValue: 0x0A)
     public static let fps96 = Self(rawValue: 0x0B)
+    public static let fps200 = Self(rawValue: 0x13)
     public static let fps15 = Self(rawValue: 0x1D)
 
     public var fps: Int { Self.fps(index: rawValue) ?? 0 }
@@ -1074,12 +1170,12 @@ public struct VideoFrameRate: Equatable, Hashable, Sendable {
         catalog.first { $0.fps == fps }
     }
 
-    /// Video-mode SET 24–60. SlowMo 100/120/240 from that mode's camcap.
+    /// Video-mode SET 24–60. SlowMo 100/120/200/240 from that mode's camcap.
     public static let labeledVideo: [VideoFrameRate] = [
         .fps24, .fps25, .fps30, .fps48, .fps50, .fps60,
     ]
 
-    /// Osmosis index table (Nano / Pocket share it). 200 fps is still unlabeled.
+    /// Osmosis index table, plus Pocket 4 Pro 200 fps from the physical mode survey.
     public static func fps(index: UInt8) -> Int? {
         switch index {
         case 1: 24
@@ -1092,18 +1188,22 @@ public struct VideoFrameRate: Equatable, Hashable, Sendable {
         case 8: 240
         case 10: 100
         case 11: 96
+        case 19: 200
         case 29: 15
         default: nil
         }
     }
 
     private static let catalog: [VideoFrameRate] = [
-        .fps24, .fps25, .fps30, .fps48, .fps50, .fps60, .fps120, .fps240, .fps100, .fps96,
+        .fps24, .fps25, .fps30, .fps48, .fps50, .fps60, .fps120, .fps240, .fps100, .fps96, .fps200,
         .fps15,
     ]
 }
 
-/// One 5-byte SET: `[res][fps_idx] 00 00 00`. No GET — `cam_video_param_v2` `@0–1`.
+/// One 5-byte SET: `[res][fps_idx]` plus a 3-byte trailer. No GET — `cam_video_param_v2` `@0–1`.
+///
+/// Normal / Video / Low-Light trailer is `00 00 00`. Captured Pocket 3 / 4 Pro SlowMo:
+/// 100/120/200 uses `00 04 00`; 240 uses `00 08 00`. Default API is the zero trailer.
 public struct VideoFormat: Equatable, Hashable, Sendable {
     public var resolution: VideoResolution
     public var frameRate: VideoFrameRate
@@ -1113,8 +1213,37 @@ public struct VideoFormat: Equatable, Hashable, Sendable {
         self.frameRate = frameRate
     }
 
+    /// Historic 5-byte SET. Equivalent to `setPayload(shootingMode: nil)`.
     public var setPayload: [UInt8] {
-        [resolution.rawValue, frameRate.rawValue, 0x00, 0x00, 0x00]
+        setPayload(shootingMode: nil)
+    }
+
+    public func setPayload(shootingMode: ShootingMode?) -> [UInt8] {
+        [resolution.rawValue, frameRate.rawValue]
+            + Self.trailer(
+                frameRate: frameRate, shootingMode: shootingMode)
+    }
+
+    /// SlowMo 100/120/200 → `00 04 00`; 240 → `00 08 00`; other modes/rates → `00 00 00`.
+    /// Mimo labels 200 as 8X, but its captured SET still uses the `00 04 00` trailer.
+    public static func trailer(
+        frameRate: VideoFrameRate, shootingMode: ShootingMode?
+    ) -> [UInt8] {
+        guard shootingMode == .slowMo else { return [0x00, 0x00, 0x00] }
+        switch frameRate.rawValue {
+        case VideoFrameRate.fps240.rawValue: return [0x00, 0x08, 0x00]
+        case VideoFrameRate.fps100.rawValue, VideoFrameRate.fps120.rawValue,
+            VideoFrameRate.fps200.rawValue:
+            return [0x00, 0x04, 0x00]
+        default: return [0x00, 0x00, 0x00]
+        }
+    }
+
+    /// iOS / JNI call sites: captured SlowMo trailer context for Pocket 3 and Pocket 4 Pro.
+    public static func formatSetMode(
+        model: CameraModel?, statusMode: ShootingMode?
+    ) -> ShootingMode? {
+        (model?.isPocket3 == true || model?.isPocket4Pro == true) ? statusMode : nil
     }
 
     /// Top-deck chip, OpenZCine `resolutionFrameRate` shape (`4K · 25p`).
@@ -1226,24 +1355,49 @@ public enum GimbalSpeed: UInt8, CaseIterable, Sendable, Hashable {
     public static let pickerOrder: [GimbalSpeed] = [.slow, .defaultSpeed, .fast]
 }
 
-/// Live gimbal mode. Follow / Tilt Locked / FPV are captured SETs. Locked
-/// (latched joystick-hold) has no opcode yet — HUD only.
+/// Live gimbal modes. Direction Lock preserves the world-facing direction;
+/// the camera's separate joystick-hold Lock Gimbal action remains unresolved.
 public enum GimbalMode: String, CaseIterable, Sendable, Hashable {
     case follow
     case tiltLocked
     case fpv
-    case locked
+    case directionLock
 
     public var label: String {
         switch self {
         case .follow: "Follow"
         case .tiltLocked: "Tilt locked"
         case .fpv: "FPV"
-        case .locked: "Locked"
+        case .directionLock: "Direction Lock"
         }
     }
 
-    public static let pickerOrder: [GimbalMode] = [.follow, .tiltLocked, .fpv, .locked]
+    public static let pickerOrder: [GimbalMode] = [.follow, .tiltLocked, .fpv, .directionLock]
+}
+
+/// Mode family in the 50-byte Pocket attitude push. Tilt lock is a separate parameter.
+public enum GimbalModeFamily: UInt8, Sendable {
+    case directionLock = 0
+    case fpv = 1
+    case follow = 2
+
+    public static func parse(_ payload: [UInt8]) -> GimbalModeFamily? {
+        guard payload.count == 50 else { return nil }
+        return GimbalModeFamily(rawValue: payload[6] >> 6)
+    }
+}
+
+/// Refresh tilt/speed from attitude receipts without adding another live-session timer.
+public struct GimbalParamPoll: Sendable {
+    private var lastRequestAt: TimeInterval?
+
+    public init() {}
+
+    public mutating func shouldRequest(at now: TimeInterval) -> Bool {
+        guard lastRequestAt.map({ now - $0 >= 1 }) ?? true else { return false }
+        lastRequestAt = now
+        return true
+    }
 }
 
 /// Local stick ease-in/out on top of analog expo. Not camera Fast/Default/Slow.
@@ -1272,7 +1426,7 @@ public enum GimbalRamp: Int, CaseIterable, Sendable, Hashable {
     public static let pickerOrder: [GimbalRamp] = [.off, .soft, .medium]
 }
 
-/// SET frames for a mode tap. Locked is empty — no opcode on the wire.
+/// SET frames and reconciliation of the camera's independent mode/tilt reports.
 public enum GimbalControl {
     public static func setModeFrames(_ mode: GimbalMode) -> [Duml.Frame] {
         switch mode {
@@ -1282,19 +1436,31 @@ public enum GimbalControl {
             [Commands.gimbalFollowFamily(), Commands.setGimbalTiltLock(.locked)]
         case .fpv:
             [Commands.gimbalFpv()]
-        case .locked:
-            []
+        case .directionLock:
+            [Commands.gimbalDirectionLock()]
         }
     }
 
-    /// GET cannot tell FPV from Tilt Locked. Keep FPV / Locked as commanded.
+    /// A tilt GET alone cannot identify FPV or Direction Lock.
     public static func modeFromGet(_ params: GimbalParamState, commanded: GimbalMode) -> GimbalMode
     {
         switch commanded {
-        case .fpv, .locked:
+        case .fpv, .directionLock:
             return commanded
         case .follow, .tiltLocked:
             return params.tiltLock == .locked ? .tiltLocked : .follow
+        }
+    }
+
+    /// A fresh attitude report identifies Direction Lock and FPV even when the
+    /// tilt parameter is stale. Follow-family reports retain the last tilt choice
+    /// until a fresh parameter reply distinguishes Follow from Tilt locked.
+    public static func modeFromFamily(_ family: GimbalModeFamily, current: GimbalMode) -> GimbalMode
+    {
+        switch family {
+        case .directionLock: .directionLock
+        case .fpv: .fpv
+        case .follow: current == .tiltLocked ? .tiltLocked : .follow
         }
     }
 }
@@ -1517,12 +1683,16 @@ public enum GimbalStick {
 
     public static func shouldHoldWatchdog(
         secondsSinceThrow: TimeInterval?,
-        lastVideoPacketAge: TimeInterval? = nil
+        lastVideoPacketAge: TimeInterval? = nil,
+        stickHeld: Bool = false
     ) -> Bool {
+        // Finger still on the stick: throw / a phone roll can pause HEVC.
+        // GOP-cutting or rebuilding UDP mid-hold is the dropped-connection look.
+        if stickHeld { return true }
         guard let secondsSinceThrow else { return false }
         guard secondsSinceThrow >= 0, secondsSinceThrow < videoGrace else { return false }
-        // Held analog/head-track refreshes throw every 40 ms. Do not block
-        // recover forever: once HEVC has been dead stall+grace, lift the hold.
+        // Held analog/head-track refreshes throw every 40 ms. After lift, do
+        // not block recover forever: once HEVC has been dead stall+grace, go.
         if let video = lastVideoPacketAge,
             video >= FeedWatchdog.stallThreshold + videoGrace
         {
@@ -1591,6 +1761,56 @@ public enum GimbalStick {
         normalizedMagnitude < tapSlop
     }
 
+    /// Full command throw as a multiple of the visible outer radius (`stickSize / 2`).
+    /// Knob travel stays `(stickSize - knobSize) / 2`.
+    public static let touchCommandRadiusFactor: Double = 1.35
+
+    /// Visual knob offset plus command axes for one on-screen stick sample.
+    public struct TouchMapping: Equatable, Sendable {
+        public var visualX: Double
+        public var visualY: Double
+        public var commandX: Double
+        public var commandY: Double
+        public var isTap: Bool
+        public var engaged: Bool
+        public var emit: Bool
+    }
+
+    /// Map raw drag translation. Command uses the outer radius, never knob travel.
+    public static func mapTouch(
+        dx: Double, dy: Double, stickSize: Double, knobSize: Double, engaged: Bool
+    ) -> TouchMapping {
+        let size = stickSize.isFinite ? Swift.max(stickSize, 0) : 0
+        let knob = knobSize.isFinite ? Swift.max(knobSize, 0) : 0
+        let rawX = dx.isFinite ? dx : 0
+        let rawY = dy.isFinite ? dy : 0
+        let travel = Swift.max((size - knob) / 2, 0)
+        let commandRadius = touchCommandRadiusFactor * (size / 2)
+        let (visualX, visualY) = radialClamp(rawX, rawY, radius: travel)
+        let visualMag = hypot(visualX, visualY)
+        let visualNorm = travel > 0 ? visualMag / travel : 0
+        let isTap = visualNorm < tapSlop
+        let nowEngaged = engaged || !isTap
+        let (cmdX, cmdY) = radialClamp(rawX, rawY, radius: commandRadius)
+        let commandX = commandRadius > 0 ? cmdX / commandRadius : 0
+        let commandY = commandRadius > 0 ? -cmdY / commandRadius : 0
+        return TouchMapping(
+            visualX: visualX,
+            visualY: visualY,
+            commandX: commandX,
+            commandY: commandY,
+            isTap: isTap,
+            engaged: nowEngaged,
+            emit: nowEngaged)
+    }
+
+    private static func radialClamp(_ x: Double, _ y: Double, radius: Double) -> (Double, Double) {
+        let mag = hypot(x, y)
+        guard radius > 0, mag > radius else { return (x, y) }
+        let scale = radius / mag
+        return (x * scale, y * scale)
+    }
+
     public static func isDoubleTap(secondsSincePreviousTap: TimeInterval?) -> Bool {
         guard let since = secondsSincePreviousTap else { return false }
         return since >= 0 && since < doubleTapWindow
@@ -1641,31 +1861,129 @@ public enum GimbalStick {
         Swift.min(Swift.max(value, sensitivityRange.lowerBound), sensitivityRange.upperBound)
     }
 
+    /// Operator on-screen stick rest, 0…25%. 8 is the captured 0.08 feel.
+    public static let deadzonePercentRange: ClosedRange<Int> = 0...25
+    public static let defaultDeadzonePercent = 8
+
+    public static func clampedDeadzone(_ value: Double) -> Double {
+        guard value.isFinite else { return deadzone }
+        return Swift.min(Swift.max(value, 0), 0.25)
+    }
+
+    public static func clampedDeadzonePercent(_ value: Int) -> Int {
+        Swift.min(
+            Swift.max(value, deadzonePercentRange.lowerBound), deadzonePercentRange.upperBound)
+    }
+
+    /// Percent slider → unit rest. 8 maps to the exact captured `deadzone`.
+    public static func deadzoneFromPercent(_ percent: Int) -> Double {
+        let p = clampedDeadzonePercent(percent)
+        if p == defaultDeadzonePercent { return deadzone }
+        return Double(p) / 100
+    }
+
+    public static func deadzonePercent(_ value: Double) -> Int {
+        let zone = clampedDeadzone(value)
+        if abs(zone - deadzone) < 0.0005 { return defaultDeadzonePercent }
+        return Int((zone * 100).rounded())
+    }
+
+    /// On-screen stick response after the deadzone. Gamepad keeps `standard`.
+    public enum ResponseCurve: String, Sendable, CaseIterable {
+        case linear
+        case standard
+        case fine
+
+        public var expo: Double {
+            switch self {
+            case .linear: 1
+            case .standard: GimbalStick.analogExpo
+            case .fine: 3
+            }
+        }
+
+        public var label: String {
+            switch self {
+            case .linear: "Linear"
+            case .standard: "Standard"
+            case .fine: "Fine"
+            }
+        }
+
+        public static func parse(_ raw: String?) -> ResponseCurve {
+            switch raw?.lowercased() {
+            case ResponseCurve.linear.rawValue: .linear
+            case ResponseCurve.fine.rawValue: .fine
+            default: .standard
+            }
+        }
+
+        public static func fromLabel(_ label: String) -> ResponseCurve {
+            Self.allCases.first { $0.label == label } ?? .standard
+        }
+    }
+
+    /// Virtual (on-screen) stick extras. Defaults match the existing analog map.
+    public struct Mapping: Equatable, Sendable {
+        public var invertPan: Bool
+        public var invertTilt: Bool
+        public var deadzone: Double
+        public var curve: ResponseCurve
+
+        public static let defaults = Mapping()
+
+        public init(
+            invertPan: Bool = false,
+            invertTilt: Bool = false,
+            deadzone: Double = GimbalStick.deadzone,
+            curve: ResponseCurve = .standard
+        ) {
+            self.invertPan = invertPan
+            self.invertTilt = invertTilt
+            self.deadzone = GimbalStick.clampedDeadzone(deadzone)
+            self.curve = curve
+        }
+
+        public var isDefault: Bool { self == .defaults }
+    }
+
     /// 4 = 1.0 (current). 5 saturates earlier; 1–3 never reach full throw.
     public static func sensitivityGain(_ value: Int) -> Double {
         Double(clampedSensitivity(value)) / Double(defaultSensitivity)
     }
 
     /// Deadzone, then linear remainder onto −1…1. Zoom stick uses this (no expo).
-    public static func linearThrow(_ normalized: Double) -> Double {
+    public static func linearThrow(
+        _ normalized: Double, deadzone zone: Double = deadzone
+    ) -> Double {
         let n = Swift.min(Swift.max(normalized, -1), 1)
         let magnitude = abs(n)
-        if magnitude < deadzone { return 0 }
-        let t = (magnitude - deadzone) / (1 - deadzone)
+        let rest = clampedDeadzone(zone)
+        if magnitude < rest { return 0 }
+        let span = 1 - rest
+        if span <= 0 { return 0 }
+        let t = (magnitude - rest) / span
         return n < 0 ? -t : t
     }
 
     /// Deadzone, then expo ease-in onto −1…1. Full throw stays 1. Rest stays 0.
-    public static func analogCurve(_ normalized: Double) -> Double {
-        let t = linearThrow(normalized)
+    public static func analogCurve(
+        _ normalized: Double, deadzone zone: Double = deadzone, expo: Double = analogExpo
+    ) -> Double {
+        let t = linearThrow(normalized, deadzone: zone)
         if t == 0 { return 0 }
-        let curved = pow(abs(t), analogExpo)
+        let power = expo.isFinite && expo > 0 ? expo : analogExpo
+        let curved = pow(abs(t), power)
         return t < 0 ? -curved : curved
     }
 
     /// Clamp a unit axis (−1…1) onto 1024 ± 550, then apply sensitivity.
-    public static func axis(_ normalized: Double, sensitivity: Int = defaultSensitivity) -> UInt16 {
-        let curved = analogCurve(normalized)
+    public static func axis(
+        _ normalized: Double, sensitivity: Int = defaultSensitivity,
+        mapping: Mapping = .defaults
+    ) -> UInt16 {
+        let curved = analogCurve(
+            normalized, deadzone: mapping.deadzone, expo: mapping.curve.expo)
         if curved == 0 { return center }
         let scaled = Swift.min(Swift.max(curved * sensitivityGain(sensitivity), -1), 1)
         let raw = Double(center) + scaled * Double(travel)
@@ -1767,15 +2085,24 @@ public enum GimbalStick {
     /// `x` −1…1 left…right → pan (axis1). `y` −1…1 down…up → tilt (axis0).
     /// Tracking uses the same pan invert as the free stick. `linear` skips expo
     /// (head-tracking look-at; expo is why that path crawled).
+    /// `mapping` is the on-screen stick extras; defaults preserve the analog map.
+    /// Picture invert (`invertPan`) XORs operator invert pan once. `linear`
+    /// ignores mapping so head-track / motion keep their wire.
     public static func encode(
         x: Double, y: Double, invertPan: Bool = false,
-        sensitivity: Int = defaultSensitivity, linear: Bool = false
+        sensitivity: Int = defaultSensitivity, linear: Bool = false,
+        mapping: Mapping = .defaults
     ) -> (axis0: UInt16, axis1: UInt16) {
-        let pan = invertPan ? -x : x
         if linear {
+            let pan = invertPan ? -x : x
             return (axisLinear(y), axisLinear(pan))
         }
-        return (axis(y, sensitivity: sensitivity), axis(pan, sensitivity: sensitivity))
+        let pan = (invertPan != mapping.invertPan) ? -x : x
+        let tilt = mapping.invertTilt ? -y : y
+        return (
+            axis(tilt, sensitivity: sensitivity, mapping: mapping),
+            axis(pan, sensitivity: sensitivity, mapping: mapping)
+        )
     }
 
     public static func encode(
@@ -1932,8 +2259,12 @@ public enum CamFov {
 
     public static func shouldHoldWatchdog(
         secondsSinceSet: TimeInterval?,
-        lastVideoPacketAge: TimeInterval? = nil
+        lastVideoPacketAge: TimeInterval? = nil,
+        pinchActive: Bool = false
     ) -> Bool {
+        // Fingers on the dial: slew / D-Log2 hop can pause HEVC. GOP-cutting
+        // or rebuilding UDP mid-drag is the dropped-connection look.
+        if pinchActive { return true }
         guard let secondsSinceSet else { return false }
         guard secondsSinceSet >= 0, secondsSinceSet < videoGrace else { return false }
         if let video = lastVideoPacketAge,
@@ -1995,6 +2326,28 @@ public enum CamFov {
 
     public static func clamp(_ factor: Double, max: Double = maxFactor) -> Double {
         min(Swift.max(factor, minFactor), max)
+    }
+
+    /// The remembered chip stop, kept inside what the current FORMAT allows.
+    ///
+    /// A FORMAT change can drop the ceiling under a stop the operator already
+    /// picked — 2.7K offers 3×, 4K stops at 2×. The stop is only the readout's
+    /// last resort, before any `cam_fov` lands, but even then it must not
+    /// advertise a factor this FORMAT would refuse.
+    public static func stopWithinCycle(_ stop: Double, stops: [Double]) -> Double {
+        clamp(stop, max: stops.last ?? minFactor)
+    }
+
+    /// The line to show when a new FORMAT pulls the zoom ceiling out from
+    /// under the factor the operator is already holding.
+    ///
+    /// The body does not refuse: it walks the lens back to whatever the new
+    /// capture size allows, so without a word the chip just falls to 1x and
+    /// nothing on screen says why. `size` is `VideoResolution.sizeTitle`.
+    /// Nil while the held factor still fits, which is the usual case.
+    public static func ceilingNote(size: String, held: Double, stops: [Double]) -> String? {
+        guard let ceiling = stops.last, displayTenths(held) > ceiling + 0.05 else { return nil }
+        return "\(size) caps zoom at \(displayLabel(factor: ceiling))"
     }
 
     private static func lerpLens(_ a: UInt16, _ b: UInt16, _ t: Double) -> UInt16 {
@@ -2143,10 +2496,19 @@ public enum CamFov {
     public static func readout(
         live: Double?, preview: Double?, fallback: Double, optimistic: Double? = nil
     ) -> Double {
-        if let preview { return displayTenths(preview) }
-        if let optimistic { return displayTenths(optimistic) }
-        if let live { return displayTenths(live) }
-        return displayTenths(fallback)
+        displayTenths(
+            continuousReadout(
+                live: live, preview: preview, fallback: fallback, optimistic: optimistic))
+    }
+
+    /// Unrounded lens factor for the zoom disc. The chip still uses `readout`.
+    public static func continuousReadout(
+        live: Double?, preview: Double?, fallback: Double, optimistic: Double? = nil
+    ) -> Double {
+        if let preview { return clamp(preview) }
+        if let optimistic { return clamp(optimistic) }
+        if let live { return clamp(live) }
+        return clamp(fallback)
     }
 
     /// Lens is monotonic with the 1× → 12× pinch. `cam_fov` jumps at the 3× hop.
@@ -2155,6 +2517,9 @@ public enum CamFov {
         return raw == 0 ? nil : factor(raw: raw)
     }
 
+    /// Confirmation test for the chip pin (`CameraValuePin`): the live factor
+    /// comes back off a lens position and lands a hair off what was asked, so
+    /// exact equality would never release the pin.
     public static func matches(_ live: Double, _ target: Double) -> Bool {
         abs(displayTenths(live) - displayTenths(target)) < 0.15
     }

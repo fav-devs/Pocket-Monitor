@@ -11,6 +11,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::command;
+use crate::command::CommandContext;
 use crate::depacketizer::Depacketizer;
 use crate::health::FeedHealth;
 use crate::mailbox::SetOutcome;
@@ -346,6 +347,12 @@ impl CameraSession {
         self.health.set_path_ready(ready);
     }
 
+    /// The operator is somewhere a repair would tear down (the library, a playback).
+    /// The watchdog holds its ladder until they are back on the live picture.
+    pub fn set_repair_blocked(&mut self, blocked: bool) {
+        self.health.set_repair_blocked(blocked);
+    }
+
     /// The shell reports whether its decoder is wedged; the watchdog escalates on it.
     pub fn set_decoder_failed(&mut self, failed: bool) {
         self.health.set_decoder_failed(failed);
@@ -625,6 +632,11 @@ impl CameraSession {
                 // Ask for the pushes the HUD needs before anything else is queued: the
                 // camera only sends its available-value lists to a subscriber.
                 self.send_subscriptions()?;
+                // The phones read the focus-track mode, the audio channel and vocal
+                // boost on connect; none of them has a push.
+                self.send_direct(Command::FocusTrackGet)?;
+                self.send_direct(Command::ParamGet(0x0020))?;
+                self.send_direct(Command::ParamGet(0x004C))?;
                 self.enable_not_before = Some(now + SUBSCRIBE_SETTLE);
                 events.push(SessionEvent::Opened);
             }
@@ -779,7 +791,11 @@ impl CameraSession {
     /// Wraps a command in its routing and transport headers, advancing all three
     /// counters the way the iOS driver does.
     fn command_datagram(&mut self, command: Command) -> Result<Vec<u8>, SessionError> {
-        let frame = command.encode(self.duml_seq)?;
+        let context = CommandContext {
+            model_id: self.model_id.unwrap_or(-1),
+            shooting_mode: self.status.status().shooting_mode.unwrap_or(-1),
+        };
+        let frame = command.encode_in(self.duml_seq, context)?;
         self.duml_seq = self.duml_seq.wrapping_add(1);
         self.command_counter = self.command_counter.wrapping_add(1);
 

@@ -224,6 +224,8 @@ typedef struct {
 #define OPC_CAM_AUDIO_DSP_GET 78
 #define OPC_CAM_AUDIO_WIND 79
 #define OPC_CAM_AUDIO_DIRECTIONAL 80
+/* Gimbal direction lock: the third family beside follow and FPV. */
+#define OPC_CAM_GIMBAL_DIRECTION_LOCK 81
 
 /* False-colour scales for opc_false_color_cube / opc_false_color_legend. */
 #define OPC_FALSE_COLOR_STOPS 0
@@ -251,6 +253,16 @@ typedef struct {
 #define OPC_TRACKING_IDLE 0
 #define OPC_TRACKING_LOCKED 1
 #define OPC_TRACKING_LOCKED_BOX 2
+
+/* The core's tracking rules, for opc_tracking_rules. Sides and boxes are picture
+   fractions; times are seconds. */
+typedef struct {
+    double minimum_side;
+    double clear_ignore_seconds;
+    double push_silence_seconds;
+    double position_time_constant;
+    double size_time_constant;
+} OpcTrackingRules;
 
 /* What a zoom write needs first, for opc_zoom_hop. */
 #define OPC_ZOOM_HOP_NONE 0
@@ -325,7 +337,9 @@ typedef struct {
     int32_t tcp_poke_ready;
     int32_t displayed_image_removed;
     int32_t had_video;
-    int32_t reserved;
+    /* Non-zero while the operator is somewhere a repair would tear down (the media
+       library, a playback): the ladder waits instead of rebuilding under them. */
+    int32_t repair_blocked;
 } OpcWatchdogSnapshot;
 
 // ---- Camera status --------------------------------------------------------
@@ -373,7 +387,12 @@ typedef struct {
     int32_t available_iso_count;
     int32_t available_format_count;
     int32_t available_color_count;
-    int32_t reserved;
+    /// Audio channel (`0x8E` pid `0x0020`: 1 mono, 2 stereo, 3 spatial), vocal boost
+    /// (pid `0x004C`: 0 off, 1 on) and the gimbal mode family the body reports
+    /// (0 direction lock, 1 FPV, 2 follow); -1 until the body has said.
+    int32_t audio_channel;
+    int32_t vocal_boost;
+    int32_t gimbal_mode_family;
     // Gimbal attitude from the `0x04/0x05` heartbeat, 0.1°: yaw i16 @4, display
     // tilt (look-up positive) from @20, and the native absolute pitch i16 @0 that
     // `0x04/0x14` targets take. `gimbal_attitude_seq` counts pushes; zero is none.

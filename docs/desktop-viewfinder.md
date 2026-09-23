@@ -30,7 +30,8 @@ The chrome is a DJI Mimo replica laid out for a landscape laptop, rendered by Sl
 (`opc-chrome`, Outfit type, Tabler icons) into a transparent overlay the shell composites
 over the picture:
 
-- **Top bar** — menu, gimbal follow `ON`/`OFF`, the format chip (`1080P·60`), the
+- **Top bar** — menu, gimbal follow `ON`/`OFF`, the format chip (`1080p · 60p`, the
+  phones' shape, with the aspect when it is not 16:9), the
   exposure mode chip (`AUTO`/`M`), the link state in the middle with a red `REC` badge
   and running time while the body is rolling, and exit at the far right.
 - **Zoom ruler** — a dotted ruler under the top bar that slides beneath a fixed ring;
@@ -48,8 +49,12 @@ over the picture:
 - **Bottom bar** — gallery, flip and orientation next to the joystick on the left; the
   record button in the middle (a red disc, a red square while rolling, white in photo
   mode); `CTR`, `FOLLOW`, `STILL` and fullscreen on the right; and the mode strip
-  (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · PANO · LIVESTREAM`) with the
-  active mode in Mimo yellow and Pano / Livestream greyed out.
+  (`TIMELAPSE · SLOWMOTION · LOW-LIGHT · VIDEO · PHOTO · HYPERLAPSE`) with the active
+  mode in Mimo yellow. Pano and Livestream have no SET the phones send, so the strip
+  does not show them. Photo goes out as the body's own byte (`0x05` on a Pocket 3 or
+  Nano, `0x17` on a Pocket 4), Live Photo reads as PHOTO, and the strip refuses a
+  change while the body is rolling. In a stills mode the record button takes the
+  picture.
 
 `V` cycles the gimbal's Follow, Tilt Locked and FPV modes without opening Settings;
 the Settings → Camera tab remains the place to set gimbal speed and ramp.
@@ -65,12 +70,27 @@ Three sheets open over the picture and close on `Esc`, the `×`, or a tap outsid
   nothing else. Picking a size keeps the rate when that size offers it.
 - **Exposure** (`AUTO`/`M` chip, or `E`) — `Auto`/`Manual`, then ISO and shutter for
   manual, ISO max and EV for auto. The rows the mode does not use are drawn greyed, the
-  way Mimo shows them.
-- **Settings** (`⋮`, or `Tab`) — eight tabs. **Camera:** focus mode, focus-track mode (Default / Product Showcase / Subject Lock / Registered Priority), white balance
+  way Mimo shows them. **Shutter units** reads the shutter as a **Speed** (1/N) or an
+  **Angle**: the phones' stops from 5.6° to 360°, converted at the current frame rate
+  (an unknown rate counts as 24) and snapped to the body's published list, so 180° at
+  25p is 1/50.
+- **Settings** (`⋮`, or `Tab`) — nine tabs. A sheet taller than the window scrolls
+  with the wheel, and a row with more chips than fit (ISO, shutter, EV, a Pocket 3's
+  formats) slides sideways under the wheel too, since a mouse cannot drag a strip the
+  way a finger does. A sheet stays on screen in the clean display, so the Display
+  tab's own `Clean` chip cannot take the menu away with it. **Camera:** focus mode, focus-track mode (Default / Product Showcase / Subject Lock / Registered Priority), white balance
   presets, colour profile (from the body's own list), field of view, gimbal mode,
   speed and **ramp** (Off / Soft / Medium, the phones' first-order ease on the stick,
-  applied to the arrow keys and the on-screen pad alike). **Audio:** channel, vocal
-  boost, wind noise reduction and directional audio (All / Front / Front+back). The
+  applied to the arrow keys and the on-screen pad alike). White balance has the
+  presets, then a **Kelvin** row over the whole custom range (2000–10000 K) and a
+  **Tint** row (−100…+100), each keeping the other's value. Gimbal mode offers Follow,
+  Tilt locked, FPV and **Direction lock**. On a Nano, which has no focus mode, the
+  Focus rows are not shown. The field of view and gimbal speed go to the body once when
+  a link comes up, since the body does not report them. The gimbal mode chip follows
+  the body's own heartbeat when it says the family changed (FPV or follow), so a mode
+  set on the body reads right here. **Audio:** channel and vocal boost (both read
+  from the body on connect, so the chips show what the camera is set to rather than
+  the last pick), wind noise reduction and directional audio (All / Front / Front+back). The
   last two live in one DSP blob (`@2` of the `0x02/0xA0` GET reply): the tab reads
   the blob when it opens, the rows stay greyed until it has answered, and a pick
   sends the body's own 26 bytes back with `@2` patched (`0x02/0x9F`) followed by a
@@ -198,6 +218,15 @@ path, so it is graded too. Playback is from the file on disk, never streamed fro
 `/v2`: the camera parks `moov` at the end and serves no extension, which no player
 copes with.
 
+**Sound.** The clip's audio track plays through the machine's default output. The
+reader decodes it beside the pictures, resampled to the device's rate as interleaved
+stereo, and the player hands it to the device a little ahead of the frame on screen —
+80 ms, enough to ride out a late frame — dropping anything already behind the clock
+after a scrub. Pause holds the device; a seek clears it; any speed but the clip's own
+(the conform preview) plays silent. A clip without an audio track, or a machine with no
+output device, plays as before. Live view has no sound to play: the datalink carries
+pictures and the camera's own meter readings, not audio.
+
 **Conform preview.** A high-frame-rate take offers the core's `ConformPreview` targets
 (the rates below its capture rate, from `opc_conform_targets`); the chip cycles
 `Conform → 120 → 24 → 120 → 60 → Conform`, and the player's clock runs at the core's
@@ -270,7 +299,9 @@ on.
     30 frames a second, black while nothing is coming. **Install** registers the DLL
     that sits beside the viewfinder through an elevated `regsvr32` (the administrator
     prompt is the consent); the tab reads the registration back from the machine hive
-    and says when the DLL is missing beside the executable. Nothing is signed and
+    and says when the DLL is missing beside the executable. The Windows installer
+    (`build-installer.ps1`, see `docs/DESKTOP.md`) registers it during setup, so a
+    viewfinder installed that way shows the component as installed from the first run. Nothing is signed and
     nothing runs in the kernel. On Windows 10 the tab reports the component as not
     available; use the stream there.
   - **macOS 13 or later** writes into the sink stream of the OpenPocketCine camera
@@ -297,6 +328,48 @@ None of the three camera devices has been run against its platform here: the Lin
 path is pinned to the kernel header, the Windows source is type-checked against the
 real bindings on the Windows target, and the macOS extension and facade are written to
 Apple's camera-extension pattern but not compiled. Each needs one run on its machine.
+
+## The camera on your Wi-Fi
+
+The camera normally hosts its own network and the PC has to join it, which costs the PC
+its internet. The Pocket can instead join a network you name — station mode, the same
+role the phone apps use for their multi-camera stage — and then the viewfinder finds it
+on your own Wi-Fi and links it there directly, with every control, while the PC stays
+online.
+
+Pair as usual. On the **Pairing complete** screen pick **Put the camera on my Wi-Fi
+instead**, type the network's name (the PC's own is filled in) and its password, and
+press **Join Wi-Fi**. Over Bluetooth the app then reads the camera's identity, asks its
+Wi-Fi role, switches it to station mode and reads the role back until the radio has
+turned, gives the radio ten seconds, and sends the join, up to three times as the core's
+policy allows. The password goes to the camera and is not kept on the PC. Then the app
+looks for the camera: every address on the PC's network is asked for the camera's poke
+port, and each that answers is opened as a datalink and asked for its Wi-Fi identity,
+which has to match what the camera said over Bluetooth. Only that match makes an
+address the camera's.
+
+Once found, the network name, the identity and the address are remembered beside the
+saved-camera file, and every later launch looks there first, last address before the
+subnet, with no Wi-Fi change and no Bluetooth. If the camera is not on the network the
+launch falls through to the saved camera Wi-Fi and then the pairing screen. **Return
+the camera to its own Wi-Fi**, on the same screen, puts it back in access-point mode
+and forgets the network.
+
+What to know:
+
+- Use a 2.4 GHz network, or one that offers 2.4 GHz alongside 5 GHz; the cameras' radios
+  do not all take every 5 GHz channel. WPA2-Personal is what has been seen to work.
+- Routers with client isolation (a guest network, usually) let the camera join but keep
+  the PC from reaching it. The search then fails with a note saying so.
+- The search walks at most a /22. A bigger subnet is refused rather than scanned.
+- Pocket 3 and Nano may answer the role query with "no such getter"; the app switches
+  them without a readback, as the phone apps do. The Pocket 4 family is asked to select
+  video mode first. Other bodies are treated strictly.
+- The join reply sometimes never comes over Bluetooth. The app then searches anyway,
+  since a lost reply is not a failed join.
+
+The order and every reply reading come from the core's station commands and policies,
+observed on hardware by the upstream project; none of it has been run from this PC yet.
 
 ## Watching a phone
 
@@ -330,6 +403,15 @@ What changes on a phone's feed:
 
 None of this has met a real phone yet; the wire is the same core code the phone encodes
 with, so a mismatch is a bug, not a design gap.
+
+## What is remembered
+
+Everything the operator sets up is saved beside the LUT folder (`desktop-prefs.txt`)
+the moment it changes and comes back at the next start: the setup tabs, which assists
+and scopes are on, how each is set (zebra thresholds and colours, peaking colour and
+sensitivity, the false-colour scale, grid lines, guide frames and mask, waveform mode
+and guides, parade mode, vectorscope gain, brightness, the ND notation), and the cube
+in use. Nothing the camera reports is remembered; the camera is asked again.
 
 ## Keys
 
@@ -366,19 +448,31 @@ disabled while the link is recovering or failed.
 
 A finger drags a tracking box on the unobstructed fitted image, exactly as the mouse
 does. A press that starts in a control stays a control — it can never become tracking.
-The box is labelled **ACQUIRING SUBJECT** until the Pocket confirms its lock, then
-**TRACKING SUBJECT**. The camera supplies a subject box and lock state, not a person’s
-name or identity.
+The box is drawn as Mimo's corner brackets: white while the Pocket is still searching,
+green once it has the subject. There are no words on the picture; the camera supplies
+a subject box and lock state, not a person’s name or identity.
 Keyboard shortcuts remain available.
 
 A click (or a tap) that is not a drag is **tap-to-focus**: Mimo's four-write burst
 (`0x22` spot, `0x30` region, `0x68` hint, `0x32` commit) at that point on the sensor,
 mirroring undone, with a bracketed reticle and the AE spot marked at its corner for
-1.5 s. A body already following something is told to stop first. The Nano takes no
-tap focus, so a click on one sends nothing. A drag's box is then **polled** on the
-phones' cadence (`0x02/0xA5` every 0.5 s): the box stays as long as the body says it
-has the subject, moves to the subject's rectangle when the body sends one, and comes
-off at the first idle after a lock or after six idle answers with no lock. The AF-C
+1.5 s. As on the phones the spot and the region go first and the hint and commit wait
+for the region's ACK (or 0.4 s, if the body never answers). A body already following
+something is told to stop first. The Nano takes no tap focus, so a click on one sends
+nothing.
+
+A drag's box goes to the body as **centre and size** (`0x02/0xA6`), which is what
+Mimo sends; a box with a side under 9 % of the picture is refused with `FRAME TOO
+SMALL`, since that is where the official app stops sending too. The box is then
+**polled** on the phones' cadence (`0x02/0xA5` every 0.5 s) and, once the body has
+locked, driven by its own `0x02/0x89` pushes (~15 Hz): the painted box eases toward
+each push with the core's constants (centre fast, size slow), a lock the body started
+on its own screen becomes a box here, and 0.35 s without a push means the body let
+go. `X` clears only when a box is out, and a push still in flight for 0.28 s after
+the clear is ignored rather than resurrecting the box. Losing the link drops the box.
+The box is drawn where it is on the sensor, so a mirrored picture shows it mirrored
+too. Without pushes the poll decides: the box comes off at the first idle after a
+lock, or after six idle answers with no lock. The AF-C
 face bracket is not here: the phones detect faces on-device, and the desktop has no
 detector yet.
 

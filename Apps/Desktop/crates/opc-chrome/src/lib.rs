@@ -170,6 +170,11 @@ pub enum ChromeIntent {
         row: usize,
         option: usize,
     },
+    /// The wheel turned over a row whose chips do not all fit: slide its strip.
+    SheetScroll {
+        row: usize,
+        delta: i32,
+    },
     /// A tab tapped in the open sheet.
     SheetTab(usize),
     /// The sheet's close button, or a tap on the scrim around it.
@@ -341,6 +346,9 @@ pub struct SheetRowState {
     /// Per-chip lit flags for rows where more than one chip may be on. Empty means
     /// `selected` alone says which chip is lit.
     pub lit: Vec<bool>,
+    /// How far the chip strip is scrolled sideways, in logical pixels. The shell keeps
+    /// it, since the rows are rebuilt every frame.
+    pub scroll: i32,
 }
 
 /// One chip on the assist toolbar.
@@ -460,14 +468,13 @@ pub struct SheetState {
 }
 
 /// The mode strip, in Mimo's order. Indices are what [`ChromeIntent::ModeSelected`] carries.
-pub const MODES: [&str; 7] = [
+pub const MODES: [&str; 6] = [
     "TIMELAPSE",
     "SLOWMOTION",
     "LOW-LIGHT",
     "VIDEO",
     "PHOTO",
-    "PANO",
-    "LIVESTREAM",
+    "HYPERLAPSE",
 ];
 
 // ── State passed by the shell each frame ─────────────────────────────────────
@@ -656,6 +663,17 @@ impl Chrome {
         }
         {
             let q = intents.clone();
+            component.on_sheet_row_scrolled(move |row, delta| {
+                if row >= 0 {
+                    q.borrow_mut().push(ChromeIntent::SheetScroll {
+                        row: row as usize,
+                        delta: delta.round() as i32,
+                    });
+                }
+            });
+        }
+        {
+            let q = intents.clone();
             component.on_sheet_tab_picked(move |i| {
                 if i >= 0 {
                     q.borrow_mut().push(ChromeIntent::SheetTab(i as usize));
@@ -786,6 +804,15 @@ impl Chrome {
     pub fn pointer_moved(&self, x: f32, y: f32) {
         self.window.dispatch_event(WindowEvent::PointerMoved {
             position: LogicalPosition::new(x, y),
+        });
+    }
+
+    /// Forward a wheel turn to Slint (logical coords and pixels).
+    pub fn pointer_scrolled(&self, x: f32, y: f32, dx: f32, dy: f32) {
+        self.window.dispatch_event(WindowEvent::PointerScrolled {
+            position: LogicalPosition::new(x, y),
+            delta_x: dx,
+            delta_y: dy,
         });
     }
 
@@ -1176,6 +1203,7 @@ impl Chrome {
                         selected: row.selected.map_or(-1, |i| i as i32),
                         enabled: row.enabled,
                         lit: ModelRc::new(VecModel::from(row.lit.clone())),
+                        scroll: row.scroll as f32,
                     })
                     .collect();
                 c.set_sheet_rows(ModelRc::new(VecModel::from(rows)));

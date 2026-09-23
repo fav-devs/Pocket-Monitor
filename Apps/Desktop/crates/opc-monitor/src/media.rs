@@ -2,6 +2,7 @@
 //! or the clock. The shell decides what the screens show; this fetches, lists, plays
 //! and brings live view back.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use opc_camera::{Command, DumlFrame};
@@ -15,6 +16,8 @@ use opc_monitor::library;
 use opc_monitor::luts;
 use opc_monitor::{MediaAction, Shell};
 
+use crate::audio::AudioOut;
+
 /// Leaving playback: exit until the bit clears, then enable live view.
 #[derive(Debug, Clone, Copy)]
 struct Resume {
@@ -26,6 +29,12 @@ struct Resume {
 
 const RESUME_PERIOD: f64 = 0.6;
 const SCREEN_PICTURE: (u32, u32) = (1280, 720);
+/// Pictures decoded ahead of the clock. Their audio comes with them, so this is also
+/// how far ahead the sound can be staged.
+const LOOKAHEAD: usize = 8;
+/// How far ahead of the picture on screen audio is handed to the device: enough to ride
+/// out a late frame, little enough to stay in step.
+const AUDIO_LEAD_MS: i64 = 80;
 
 #[derive(Debug, Default)]
 pub struct MediaDriver {
@@ -44,8 +53,15 @@ pub struct MediaDriver {
     shown_at: f64,
     /// Playback rate: 1 is the clip's own, a conform preview slows it.
     speed: f64,
-    /// The next frame, decoded ahead of its time.
-    next: Option<(OwnedPicture, i64)>,
+    /// The next frames, decoded ahead of their time.
+    ahead: VecDeque<(OwnedPicture, i64)>,
+    /// The clip has no more pictures after those.
+    drained: bool,
+    /// The device the clip's sound goes to, once a clip has asked for it.
+    audio: Option<AudioOut>,
+    /// Decoded audio not yet handed to the device, and the time of its first sample.
+    staged: Vec<f32>,
+    staged_pts: i64,
     /// A clip the operator asked to play; the worker is fetching it.
     pending_play: Option<MediaFile>,
     pending_photo: Option<MediaFile>,
@@ -199,6 +215,9 @@ impl MediaDriver {
             MediaAction::PlayerToggle => {
                 self.playing = shell.player().is_some_and(|player| player.playing);
                 self.shown_at = now;
+                if let Some(audio) = &self.audio {
+                    audio.set_playing(self.playing);
+                }
                 if self.playing && self.reader.is_some() {
                     // Restarting at the end plays the clip again.
                     if let Some(player) = shell.player() {
@@ -249,7 +268,12 @@ impl MediaDriver {
 
     fn stop_player(&mut self) {
         self.reader = None;
-        self.next = None;
+        self.ahead.clear();
+        self.drained = false;
+        self.staged.clear();
+        if let Some(audio) = &self.audio {
+            audio.clear();
+        }
         self.playing = false;
         self.pending_play = None;
         self.pending_photo = None;
@@ -260,7 +284,12 @@ impl MediaDriver {
             return;
         };
         if reader.seek(position_ms).is_ok() {
-            self.next = None;
+            self.ahead.clear();
+            self.drained = false;
+            self.staged.clear();
+            if let Some(audio) = &self.audio {
+                audio.clear();
+            }
             // Decode up to the asked frame so a scrub lands where the thumb is.
             let mut landed = None;
             while let Ok(Some((picture, pts))) = reader.next_picture() {
@@ -286,7 +315,11 @@ impl MediaDriver {
         proxy: bool,
         now: f64,
     ) {
-        match FileReader::open(&local) {
+        if self.audio.is_none() {
+            self.audio = AudioOut::open();
+        }
+        let audio_rate = self.audio.as_ref().map_or(0, AudioOut::rate);
+        match FileReader::open_with_audio(&local, audio_rate) {
             Ok(mut reader) => {
                 let info = reader.info();
                 shell.player_strip(&file.path, &filmstrip(&mut reader, info.duration_ms));
@@ -296,8 +329,15 @@ impl MediaDriver {
                     self.picture = Some(picture);
                     self.shown_ms = pts;
                 }
-                self.next = reader.next_picture().ok().flatten();
+                self.ahead.clear();
+                self.drained = false;
+                self.staged.clear();
+                if let Some(audio) = &self.audio {
+                    audio.clear();
+                    audio.set_playing(true);
+                }
                 self.reader = Some(reader);
+                self.fill_ahead();
                 self.playing = true;
                 self.shown_at = now;
                 self.speed = 1.0;
@@ -320,6 +360,56 @@ impl MediaDriver {
             Err(error) => {
                 shell.library_failed(&file.path, &format!("cannot play: {error}"));
             }
+        }
+    }
+
+    /// Decodes pictures ahead of the clock, and stages the audio that comes with them.
+    fn fill_ahead(&mut self) {
+        let Some(reader) = self.reader.as_mut() else {
+            return;
+        };
+        while !self.drained && self.ahead.len() < LOOKAHEAD {
+            match reader.next_picture() {
+                Ok(Some(next)) => self.ahead.push_back(next),
+                Ok(None) | Err(_) => self.drained = true,
+            }
+        }
+        let (samples, pts) = reader.take_audio();
+        if !samples.is_empty() {
+            if self.staged.is_empty() {
+                self.staged_pts = pts;
+            }
+            self.staged.extend(samples);
+        }
+    }
+
+    /// Hands the device the staged audio up to a little past `clock_ms`, dropping what
+    /// is already behind it. Anything but the clip's own speed plays silent.
+    fn release_audio(&mut self, clock_ms: i64) {
+        let Some(audio) = self.audio.as_ref() else {
+            self.staged.clear();
+            return;
+        };
+        if self.staged.is_empty() {
+            return;
+        }
+        if self.speed != 1.0 {
+            self.staged.clear();
+            audio.clear();
+            return;
+        }
+        let per_ms = f64::from(audio.rate()) * 2.0 / 1000.0;
+        let frames = |ms: i64| ((ms.max(0) as f64 * per_ms) as usize / 2) * 2;
+        let late = frames(clock_ms - AUDIO_LEAD_MS / 2 - self.staged_pts).min(self.staged.len());
+        if late > 0 {
+            self.staged.drain(..late);
+            self.staged_pts += (late / 2) as i64 * 1000 / i64::from(audio.rate());
+        }
+        let release = frames(clock_ms + AUDIO_LEAD_MS - self.staged_pts).min(self.staged.len());
+        if release > 0 {
+            audio.push(&self.staged[..release]);
+            self.staged.drain(..release);
+            self.staged_pts += (release / 2) as i64 * 1000 / i64::from(audio.rate());
         }
     }
 
@@ -412,37 +502,24 @@ impl MediaDriver {
         }
 
         // Playback pacing: show each frame when its time comes.
-        if self.playing {
-            if let Some(reader) = self.reader.as_mut() {
-                let target_ms =
-                    self.shown_ms + ((now - self.shown_at) * 1000.0 * self.speed) as i64;
-                let mut ended = false;
-                while let Some((_, pts)) = &self.next {
-                    if *pts > target_ms {
-                        break;
-                    }
-                    let (picture, pts) = self.next.take().unwrap();
-                    self.picture = Some(picture);
-                    self.shown_ms = pts;
-                    self.shown_at = now;
-                    shell.player_position(pts);
-                    match reader.next_picture() {
-                        Ok(Some(next)) => self.next = Some(next),
-                        Ok(None) => {
-                            ended = true;
-                            break;
-                        }
-                        Err(_) => {
-                            ended = true;
-                            break;
-                        }
-                    }
+        if self.playing && self.reader.is_some() {
+            let target_ms = self.shown_ms + ((now - self.shown_at) * 1000.0 * self.speed) as i64;
+            while let Some((_, pts)) = self.ahead.front() {
+                if *pts > target_ms {
+                    break;
                 }
-                if ended && self.next.is_none() {
-                    self.playing = false;
-                    shell.player_ended();
-                }
+                let (picture, pts) = self.ahead.pop_front().unwrap();
+                self.picture = Some(picture);
+                self.shown_ms = pts;
+                self.shown_at = now;
+                shell.player_position(pts);
             }
+            self.fill_ahead();
+            if self.drained && self.ahead.is_empty() {
+                self.playing = false;
+                shell.player_ended();
+            }
+            self.release_audio(target_ms);
         }
 
         // Leaving playback for live view.

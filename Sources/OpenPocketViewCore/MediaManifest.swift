@@ -809,7 +809,10 @@ public enum MediaLibraryQuery {
         tab: MediaLibraryTab,
         formats: Set<String> = [],
         resolutions: Set<String> = [],
-        dateKey: String? = nil,
+        dateStart: String? = nil,
+        dateEnd: String? = nil,
+        colors: Set<UInt8> = [],
+        shotColors: [String: UInt8] = [:],
         storage: Int? = nil,
         localFavorites: Set<String> = []
     ) -> [MediaFile] {
@@ -826,10 +829,41 @@ public enum MediaLibraryQuery {
                 let bucket = file.resolution ?? ""
                 if !resolutions.contains(bucket) { return false }
             }
-            if let dateKey, file.dateKey != dateKey { return false }
+            if dateStart != nil || dateEnd != nil {
+                if file.dateKey.isEmpty { return false }
+                if let dateStart, file.dateKey < dateStart { return false }
+                if let dateEnd, file.dateKey > dateEnd { return false }
+            }
+            if !colors.isEmpty {
+                guard let code = shotColors[file.path], colors.contains(code) else { return false }
+            }
             if let storage, file.storage != storage { return false }
             return true
         }
+    }
+
+    /// Gregorian civil date in the local zone. Filenames are `YYYYMMDD`, not the
+    /// device calendar identifier (Thai Buddhist years would otherwise miss).
+    public static func filenameCalendar(timeZone: TimeZone = .current) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
+    /// Filename `YYYYMMDD` as Gregorian year-month-day. Not an instant.
+    public static func dateKey(from date: Date, calendar: Calendar = filenameCalendar()) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d%02d%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    public static func date(fromKey key: String, calendar: Calendar = filenameCalendar()) -> Date? {
+        guard key.count == 8,
+            let year = Int(key.prefix(4)),
+            let month = Int(key.dropFirst(4).prefix(2)),
+            let day = Int(key.suffix(2))
+        else { return nil }
+        return calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12))
     }
 
     /// Offline library: keep only files the phone can play without the camera.

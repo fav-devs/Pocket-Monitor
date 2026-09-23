@@ -40,6 +40,13 @@ pub struct Status {
     pub white_balance_tint: Option<i32>,
     pub focus_mode: Option<u8>,
     pub focus_track: Option<u8>,
+    /// `0x8E` pid `0x0020`: `0x01` mono, `0x02` stereo, `0x03` spatial.
+    pub audio_channel: Option<u8>,
+    /// `0x8E` pid `0x004C`: `0x00` off, `0x01` on.
+    pub vocal_boost: Option<u8>,
+    /// What the body's gimbal heartbeat says the mode family is: 0 direction lock,
+    /// 1 FPV, 2 follow. It cannot tell tilt-locked follow from follow.
+    pub gimbal_mode_family: Option<u8>,
     pub storage_free_mb: i32,
     pub storage_total_mb: i32,
     /// Hundredths: 250 is 2.5x.
@@ -124,65 +131,37 @@ impl Status {
             .map(|denominator| format!("1/{denominator}"))
     }
 
-    /// EV as the operator reads it: `-0.3`, `+1.0`.
+    /// EV as the operator reads it: `0.0`, `+1.0`, `−1.3`; empty until the body has said.
     pub fn ev_label(&self) -> Option<String> {
-        self.ev_thirds
-            .map(|thirds| format!("{:+.1}", f64::from(thirds) / 3.0))
+        self.ev_thirds.map(crate::capture::ev_label)
     }
 
-    /// The format chip: `1080P·60`. Resolution and rate are shown when the body has
-    /// reported them; nothing is guessed.
+    /// The format chip: `4K · 60p`, the phones' shape. Resolution and rate are shown
+    /// when the body has reported them; nothing is guessed.
     pub fn format_label(&self) -> String {
-        let resolution = self.video_resolution.map(resolution_name);
-        let rate = self.video_frame_rate.and_then(frame_rate_fps);
-        match (resolution, rate) {
-            (Some(resolution), Some(rate)) => format!("{resolution}·{rate}"),
-            (Some(resolution), None) => resolution.to_string(),
-            (None, Some(rate)) => format!("{rate} FPS"),
+        match (self.video_resolution, self.video_frame_rate) {
+            (Some(resolution), Some(rate)) => crate::capture::format_chip((resolution, rate)),
+            (Some(resolution), None) => crate::capture::resolution_label(resolution),
+            (None, Some(rate)) => crate::capture::frame_rate_fps(rate)
+                .map(|fps| format!("{fps}p"))
+                .unwrap_or_default(),
             (None, None) => String::new(),
         }
     }
 
     /// Recording time left on the card as `h:mm:ss`, or the free space when the body
-    /// has not said how long that is.
+    /// has not said how long that is, or a dash until it has said anything at all.
     pub fn remaining_label(&self) -> String {
         if self.record_remaining > 0 {
             let seconds = self.record_remaining;
             let (hours, minutes, seconds) = (seconds / 3600, (seconds / 60) % 60, seconds % 60);
             return format!("{hours}:{minutes:02}:{seconds:02}");
         }
+        if self.storage_total_mb <= 0 && self.storage_free_mb <= 0 {
+            return "—".to_string();
+        }
         format!("{} GB", self.storage_free_mb / 1024)
     }
-}
-
-/// The size half of a video format, from the body's `0x02/0x18` catalogue.
-pub fn resolution_name(code: u8) -> &'static str {
-    match code {
-        0x0A | 0x0C | 0x42 | 0x69 => "1080P",
-        0x2D | 0x43 | 0x5F => "2.7K",
-        0x10 | 0x67 | 0x7D => "4K",
-        0x6A => "2160P",
-        0x6B | 0x6C => "3K",
-        _ => "",
-    }
-}
-
-/// Frames per second for a frame-rate index, from the Osmosis table.
-pub fn frame_rate_fps(index: u8) -> Option<u32> {
-    Some(match index {
-        0x01 => 24,
-        0x02 => 25,
-        0x03 => 30,
-        0x04 => 48,
-        0x05 => 50,
-        0x06 => 60,
-        0x07 => 120,
-        0x08 => 240,
-        0x0A => 100,
-        0x0B => 96,
-        0x1D => 15,
-        _ => return None,
-    })
 }
 
 fn optional(value: i32) -> Option<i32> {
@@ -287,6 +266,9 @@ impl StatusDecoder {
             white_balance_tint: (raw.has_white_balance_tint != 0).then_some(raw.white_balance_tint),
             focus_mode: optional_byte(raw.focus_mode),
             focus_track: optional_byte(raw.focus_track),
+            audio_channel: optional_byte(raw.audio_channel),
+            vocal_boost: optional_byte(raw.vocal_boost),
+            gimbal_mode_family: optional_byte(raw.gimbal_mode_family),
             storage_free_mb: raw.storage_free_mb,
             storage_total_mb: raw.storage_total_mb,
             gimbal_yaw_tenth: (raw.gimbal_attitude_seq > 0).then_some(raw.gimbal_yaw_tenth as i16),

@@ -36,6 +36,8 @@ fn show_error(message: &str) {
 mod demo;
 
 #[cfg(opc_core_linked)]
+mod audio;
+#[cfg(opc_core_linked)]
 mod ble_impl;
 #[cfg(opc_core_linked)]
 mod connect;
@@ -43,6 +45,8 @@ mod connect;
 mod link;
 #[cfg(opc_core_linked)]
 mod media;
+#[cfg(opc_core_linked)]
+mod station;
 #[cfg(opc_core_linked)]
 mod view;
 
@@ -61,7 +65,9 @@ USAGE:
     opc-monitor keys
     opc-monitor version
 
-Join the camera's Wi-Fi first; the viewfinder talks to it directly.
+Join the camera's Wi-Fi first; the viewfinder talks to it directly. Or put the camera on
+your own Wi-Fi from the connection screen (Put the camera on my Wi-Fi): it is then found
+on this PC's network at every launch, and the PC keeps its internet.
 `--camera` points the link somewhere other than the camera's usual address, which is
 how a capture or a fake camera is driven.
 `watch` takes the feed an iPhone running OpenPocketCine is sharing (Operator Setup ›
@@ -212,7 +218,10 @@ fn watch_phone(args: &[String]) -> Result<(), String> {
             port,
             passcode,
         } => relaunch_phone_viewfinder(args, &name, &addresses, port, &passcode),
-        ConnectOutcome::Quit | ConnectOutcome::Skip | ConnectOutcome::Connected { .. } => Ok(()),
+        ConnectOutcome::Quit
+        | ConnectOutcome::Skip
+        | ConnectOutcome::Connected { .. }
+        | ConnectOutcome::StationReady { .. } => Ok(()),
     }
 }
 
@@ -269,6 +278,27 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         };
         (Some(addr), mid)
     } else {
+        // A camera on the operator's own network is looked for there first: no Wi-Fi
+        // change, no Bluetooth.
+        if let Some(saved) = station::load() {
+            log_connection("looking for the camera on the saved home network");
+            if let Some(address) = station::find_camera(&saved.identity, saved.address) {
+                let mut remembered = saved.clone();
+                if let std::net::IpAddr::V4(v4) = address.ip() {
+                    remembered.address = Some(v4);
+                }
+                let _ = station::save(&remembered);
+                relaunch_viewfinder_at(
+                    args,
+                    address,
+                    saved
+                        .model_id
+                        .or_else(|| model_id_str.and_then(|text| text.parse().ok())),
+                )?;
+                return Ok(());
+            }
+            log_connection("camera not on the home network; trying its own Wi-Fi");
+        }
         // A first pair creates a manual Windows WLAN profile. On later launches that
         // profile is all the authority Windows needs to join the camera SoftAP, so do
         // not wake Bluetooth or ask the operator to pair again.
@@ -300,6 +330,14 @@ fn view_camera(args: &[String]) -> Result<(), String> {
                 passcode,
             } => {
                 relaunch_phone_viewfinder(args, &name, &addresses, port, &passcode)?;
+                return Ok(());
+            }
+            ConnectOutcome::StationReady { address, model_id } => {
+                relaunch_viewfinder_at(
+                    args,
+                    address,
+                    model_id.or_else(|| model_id_str.and_then(|text| text.parse().ok())),
+                )?;
                 return Ok(());
             }
             ConnectOutcome::Connected {
@@ -441,12 +479,26 @@ fn relaunch_phone_viewfinder(
 
 #[cfg(opc_core_linked)]
 fn relaunch_viewfinder(args: &[String], model_id: Option<i32>) -> Result<(), String> {
+    relaunch_viewfinder_at(
+        args,
+        "192.168.2.1:9004".parse().expect("a literal"),
+        model_id,
+    )
+}
+
+/// The viewfinder on a camera at `camera`, in a fresh process after the screen closes.
+#[cfg(opc_core_linked)]
+fn relaunch_viewfinder_at(
+    args: &[String],
+    camera: std::net::SocketAddr,
+    model_id: Option<i32>,
+) -> Result<(), String> {
     use std::process::Command;
 
     let mut child_args = vec![
         "view".to_string(),
         "--camera".to_string(),
-        "192.168.2.1:9004".to_string(),
+        camera.to_string(),
     ];
     if let Some(model_id) = model_id {
         child_args.push("--model".to_string());

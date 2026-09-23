@@ -330,6 +330,11 @@ extension CameraSoftAP {
         }
         if videoFresh {
             if enableSends == 1 { return .resendEnable }
+            // A missed initial IRAP leaves fresh P-frames indefinitely. After
+            // the one resend, use the existing picture-repair deadline and
+            // hand ownership to the bounded rejoin instead of waiting forever
+            // or adding a periodic enable loop on this working UDP socket.
+            if secondsSinceLastEnable >= FeedWatchdog.decoderRepairDeadline { return .rejoin }
             return .wait
         }
         // Live status with frozen HEVC is the watchdog's encoder-pause path
@@ -537,11 +542,14 @@ extension CameraSoftAP {
         pathReady: Bool,
         rebindsUsed: Int,
         inboundDatagrams: Int = 0,
-        rebindLimit: Int = handshakeRebindLimit
+        rebindLimit: Int = handshakeRebindLimit,
+        sendRoundsUsed: Int = 0
     ) -> HandshakeTimeoutStep {
+        // Old telemetry is neither a live path nor a handshake. Keeping a bind
+        // must consume the same finite budget as replacing one.
+        if !pathReady || sendRoundsUsed >= rebindLimit + 1 { return .fail }
         // Mimo HEVC at join+17 ms can beat the 0x00 ACK. Rebind here dumps the IDR.
         if inboundDatagrams > 0 { return .keepSocket }
-        if !pathReady { return .fail }
         if rebindsUsed < rebindLimit { return .rebindUDP }
         return .fail
     }

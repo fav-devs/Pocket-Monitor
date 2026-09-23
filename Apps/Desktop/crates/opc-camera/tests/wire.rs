@@ -9,7 +9,7 @@
 
 use opc_camera::{
     handshake, is_handshake, scan_frames, tap_focus, transport_header, transport_seq, AckPump,
-    CameraError, Command, PktType,
+    CameraError, Command, CommandContext, PktType,
 };
 
 /// Encodes a command and reads the single frame back out of it.
@@ -86,6 +86,59 @@ fn video_format_sends_resolution_then_frame_rate() {
     );
     assert_eq!((frame.cmd_set, frame.cmd_id), (0x02, 0x18));
     assert_eq!(frame.payload, vec![0x10, 0x02, 0x00, 0x00, 0x00]);
+}
+
+#[test]
+fn a_slow_mo_format_on_a_pocket_3_carries_the_captured_trailer() {
+    let context = CommandContext {
+        model_id: 0x20,
+        shooting_mode: 0x00,
+    };
+    let encoded = Command::SetVideoFormat {
+        resolution: 0x0A,
+        frame_rate: 0x08,
+    }
+    .encode_in(7, context)
+    .expect("the core should build this command");
+    let frame = scan_frames(&encoded).expect("scans back").remove(0);
+    assert_eq!(
+        frame.payload,
+        vec![0x0A, 0x08, 0x00, 0x08, 0x00],
+        "240 fps trailer"
+    );
+    // A Pocket 4 Pro in Video keeps the zero trailer.
+    let context = CommandContext {
+        model_id: 0x22,
+        shooting_mode: 0x01,
+    };
+    let encoded = Command::SetVideoFormat {
+        resolution: 0x10,
+        frame_rate: 0x02,
+    }
+    .encode_in(8, context)
+    .expect("the core should build this command");
+    let frame = scan_frames(&encoded).expect("scans back").remove(0);
+    assert_eq!(frame.payload, vec![0x10, 0x02, 0x00, 0x00, 0x00]);
+}
+
+#[test]
+fn photo_goes_out_as_the_body_s_own_byte() {
+    let pocket3 = CommandContext {
+        model_id: 0x20,
+        shooting_mode: 0x01,
+    };
+    let encoded = Command::SetShootingMode(0x17)
+        .encode_in(9, pocket3)
+        .expect("the core should build this command");
+    let frame = scan_frames(&encoded).expect("scans back").remove(0);
+    assert_eq!((frame.cmd_set, frame.cmd_id), (0x02, 0xE1));
+    assert_eq!(frame.payload, vec![0x05], "Pocket 3 Photo");
+    let frame = frame_of(Command::SetShootingMode(0x17), 10);
+    assert_eq!(
+        frame.payload,
+        vec![0x17],
+        "no body known: the historic byte"
+    );
 }
 
 #[test]

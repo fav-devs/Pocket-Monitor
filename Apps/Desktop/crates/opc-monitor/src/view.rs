@@ -22,7 +22,7 @@ use opc_monitor::{LutChoice, LutRequest, PadButton};
 use opc_ui::{Key as UiKey, Phase};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Fullscreen, Window, WindowId};
@@ -75,6 +75,9 @@ struct View {
     placeholder_presented: bool,
     /// Avoid flooding stderr with the same renderer failure every redraw.
     render_error: Option<String>,
+    /// What the camera thread was last told about the operator being away from the
+    /// live picture, so the watchdog holds its repairs while they browse.
+    repair_blocked: bool,
     lut: Option<Lut>,
     /// The false-colour paint and weight lattices, while that assist is on.
     false_color: Option<(Lut, Lut)>,
@@ -281,6 +284,19 @@ impl View {
         }
     }
 
+    /// In the library or a playback a repair would tear the screen down under the
+    /// operator; the watchdog waits until they are back on the live picture.
+    fn sync_repair_blocked(&mut self) {
+        let blocked = self.media.is_active() || self.shell.screen() != Screen::Viewfinder;
+        if blocked == self.repair_blocked {
+            return;
+        }
+        self.repair_blocked = blocked;
+        if let Feed::Camera(link) = &self.link {
+            link.set_repair_blocked(blocked);
+        }
+    }
+
     /// Writes everything a bug report needs next to the LUT folder.
     fn write_diagnostics(&mut self) {
         let now = self.now();
@@ -437,6 +453,10 @@ impl View {
                     if (frame.cmd_set, frame.cmd_id) == (0x02, 0xA5) {
                         if let Some(poll) = opc_camera::tracking_poll(&frame.payload) {
                             self.shell.tracking_reply(poll, now);
+                        }
+                    } else if (frame.cmd_set, frame.cmd_id) == (0x02, 0x89) {
+                        if let Some(subject) = opc_camera::tracking_live_push(&frame.payload) {
+                            self.shell.tracking_push(subject, now);
                         }
                     } else {
                         self.media.frame(frame, now);
@@ -1017,6 +1037,19 @@ impl ApplicationHandler for View {
                 };
                 self.carry_out(intents, event_loop);
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.shell.note_time(now);
+                let (x, y) = self.pointer;
+                // A notch of a wheel is a few rows; a trackpad reports pixels already.
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(dx, dy) => {
+                        (f64::from(dx) * 40.0, f64::from(dy) * 40.0)
+                    }
+                    MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
+                };
+                let intents = self.shell.control_scroll(x, y, dx, dy);
+                self.carry_out(intents, event_loop);
+            }
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state,
@@ -1066,6 +1099,7 @@ impl ApplicationHandler for View {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.sync_repair_blocked();
         if self.latest.is_some()
             || self.media.is_active()
             || self.shell.screen() != Screen::Viewfinder
@@ -1133,6 +1167,7 @@ pub fn run(options: Options) -> Result<(), String> {
         placeholder: OwnedPicture::black(1280, 720),
         placeholder_presented: false,
         render_error: None,
+        repair_blocked: false,
         lut: options.lut,
         false_color: None,
         still: options.still,

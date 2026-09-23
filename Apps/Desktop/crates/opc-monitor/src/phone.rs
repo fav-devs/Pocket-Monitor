@@ -451,6 +451,7 @@ pub fn proxy(command: &Command, recording: bool) -> Proxy {
         | Command::GimbalFlip
         | Command::GimbalFollow
         | Command::GimbalFpv
+        | Command::GimbalDirectionLock
         | Command::GimbalStick { .. }
         | Command::GimbalSpeed(_)
         | Command::GimbalTiltLock(_) => Unavailable("GIMBAL"),

@@ -2,7 +2,10 @@
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/frame.h>
+#include <libavutil/opt.h>
+#include <libswresample/swresample.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,9 +146,115 @@ struct OpcFileReader {
     AVFrame *frame;
     int stream;
     int at_end;
+    // The audio track, when asked for: decoded as its packets come past, resampled to
+    // interleaved stereo float at `audio_rate`, and kept until the caller takes it.
+    int audio_stream;
+    AVCodecContext *audio_context;
+    AVFrame *audio_frame;
+    struct SwrContext *swr;
+    int32_t audio_rate;
+    float *audio;
+    size_t audio_len;
+    size_t audio_cap;
+    int64_t audio_pts_ms;
+    int audio_pts_known;
 };
 
-OpcFileReader *opc_file_open(const char *path) {
+static int open_audio(OpcFileReader *reader, int32_t audio_rate) {
+    const AVCodec *implementation = NULL;
+    int stream = av_find_best_stream(reader->format, AVMEDIA_TYPE_AUDIO, -1, -1, &implementation, 0);
+    if (stream < 0 || !implementation) {
+        return 0;
+    }
+    AVCodecContext *context = avcodec_alloc_context3(implementation);
+    if (!context) {
+        return 0;
+    }
+    if (avcodec_parameters_to_context(context, reader->format->streams[stream]->codecpar) < 0 ||
+        avcodec_open2(context, implementation, NULL) < 0) {
+        avcodec_free_context(&context);
+        return 0;
+    }
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    AVChannelLayout source;
+    if (context->ch_layout.nb_channels > 0) {
+        av_channel_layout_copy(&source, &context->ch_layout);
+    } else {
+        av_channel_layout_default(&source, 2);
+    }
+    struct SwrContext *swr = NULL;
+    int made = swr_alloc_set_opts2(&swr, &stereo, AV_SAMPLE_FMT_FLT, audio_rate, &source,
+                                   context->sample_fmt, context->sample_rate, 0, NULL);
+    av_channel_layout_uninit(&source);
+    if (made < 0 || !swr || swr_init(swr) < 0) {
+        swr_free(&swr);
+        avcodec_free_context(&context);
+        return 0;
+    }
+    reader->audio_frame = av_frame_alloc();
+    if (!reader->audio_frame) {
+        swr_free(&swr);
+        avcodec_free_context(&context);
+        return 0;
+    }
+    reader->audio_stream = stream;
+    reader->audio_context = context;
+    reader->swr = swr;
+    reader->audio_rate = audio_rate;
+    return 1;
+}
+
+/// Appends one decoded audio frame, resampled, to the waiting buffer.
+static void keep_audio(OpcFileReader *reader) {
+    AVFrame *frame = reader->audio_frame;
+    int64_t out_samples = swr_get_out_samples(reader->swr, frame->nb_samples);
+    if (out_samples <= 0) {
+        return;
+    }
+    size_t needed = reader->audio_len + (size_t)out_samples * 2;
+    if (needed > reader->audio_cap) {
+        size_t grown = reader->audio_cap ? reader->audio_cap * 2 : 8192;
+        while (grown < needed) {
+            grown *= 2;
+        }
+        float *bigger = realloc(reader->audio, grown * sizeof(float));
+        if (!bigger) {
+            return;
+        }
+        reader->audio = bigger;
+        reader->audio_cap = grown;
+    }
+    uint8_t *out = (uint8_t *)(reader->audio + reader->audio_len);
+    int converted = swr_convert(reader->swr, &out, (int)out_samples,
+                                (const uint8_t **)frame->extended_data, frame->nb_samples);
+    if (converted <= 0) {
+        return;
+    }
+    if (!reader->audio_pts_known) {
+        AVStream *stream = reader->format->streams[reader->audio_stream];
+        int64_t pts = frame->pts != AV_NOPTS_VALUE ? frame->pts : frame->pkt_dts;
+        reader->audio_pts_ms =
+            pts == AV_NOPTS_VALUE ? 0 : av_rescale_q(pts, stream->time_base, (AVRational){1, 1000});
+        reader->audio_pts_known = 1;
+    }
+    reader->audio_len += (size_t)converted * 2;
+}
+
+/// Decodes everything the audio decoder holds.
+static void drain_audio(OpcFileReader *reader) {
+    if (!reader->audio_context) {
+        return;
+    }
+    for (;;) {
+        av_frame_unref(reader->audio_frame);
+        if (avcodec_receive_frame(reader->audio_context, reader->audio_frame) != 0) {
+            return;
+        }
+        keep_audio(reader);
+    }
+}
+
+OpcFileReader *opc_file_open(const char *path, int32_t audio_rate) {
     if (!path) {
         return NULL;
     }
@@ -154,6 +263,7 @@ OpcFileReader *opc_file_open(const char *path) {
         return NULL;
     }
     reader->stream = -1;
+    reader->audio_stream = -1;
     if (avformat_open_input(&reader->format, path, NULL, NULL) < 0) {
         opc_file_close(reader);
         return NULL;
@@ -186,12 +296,28 @@ OpcFileReader *opc_file_open(const char *path) {
         opc_file_close(reader);
         return NULL;
     }
+    if (audio_rate > 0) {
+        // A clip without a usable audio track still plays; it is just silent.
+        open_audio(reader, audio_rate);
+    }
     return reader;
 }
 
 void opc_file_close(OpcFileReader *reader) {
     if (!reader) {
         return;
+    }
+    if (reader->audio) {
+        free(reader->audio);
+    }
+    if (reader->swr) {
+        swr_free(&reader->swr);
+    }
+    if (reader->audio_frame) {
+        av_frame_free(&reader->audio_frame);
+    }
+    if (reader->audio_context) {
+        avcodec_free_context(&reader->audio_context);
     }
     if (reader->frame) {
         av_frame_free(&reader->frame);
@@ -225,6 +351,42 @@ int32_t opc_file_info(OpcFileReader *reader, OpcFileInfo *out) {
         out->duration_ms = reader->format->duration / (AV_TIME_BASE / 1000);
     }
     return OPC_DECODE_OK;
+}
+
+int32_t opc_file_audio_info(OpcFileReader *reader, OpcAudioInfo *out) {
+    if (!reader || !out) {
+        return OPC_DECODE_ERR_NULL;
+    }
+    if (!reader->audio_context) {
+        return OPC_DECODE_ERR_UNSUPPORTED;
+    }
+    out->sample_rate = reader->audio_rate;
+    out->channels = 2;
+    return OPC_DECODE_OK;
+}
+
+int64_t opc_file_take_audio(OpcFileReader *reader, float *out, size_t capacity, int64_t *first_pts_ms) {
+    if (!reader) {
+        return OPC_DECODE_ERR_NULL;
+    }
+    if (!out) {
+        return (int64_t)reader->audio_len;
+    }
+    size_t count = reader->audio_len < capacity ? reader->audio_len : capacity;
+    memcpy(out, reader->audio, count * sizeof(float));
+    if (first_pts_ms) {
+        *first_pts_ms = reader->audio_pts_ms;
+    }
+    size_t left = reader->audio_len - count;
+    if (left > 0) {
+        memmove(reader->audio, reader->audio + count, left * sizeof(float));
+        // Two floats per frame at the resampled rate.
+        reader->audio_pts_ms += (int64_t)(count / 2) * 1000 / reader->audio_rate;
+    } else {
+        reader->audio_pts_known = 0;
+    }
+    reader->audio_len = left;
+    return (int64_t)count;
 }
 
 static int32_t fill_frame(OpcFileReader *reader, OpcDecodedFrame *out, int64_t *pts_ms) {
@@ -273,6 +435,17 @@ int32_t opc_file_next(OpcFileReader *reader, OpcDecodedFrame *out, int64_t *pts_
         if (read < 0) {
             reader->at_end = 1;
             avcodec_send_packet(reader->context, NULL);
+            if (reader->audio_context) {
+                avcodec_send_packet(reader->audio_context, NULL);
+                drain_audio(reader);
+            }
+            continue;
+        }
+        if (reader->audio_context && reader->packet->stream_index == reader->audio_stream) {
+            if (avcodec_send_packet(reader->audio_context, reader->packet) == 0) {
+                drain_audio(reader);
+            }
+            av_packet_unref(reader->packet);
             continue;
         }
         if (reader->packet->stream_index != reader->stream) {
@@ -302,6 +475,11 @@ int32_t opc_file_seek(OpcFileReader *reader, int64_t position_ms) {
         }
     }
     avcodec_flush_buffers(reader->context);
+    if (reader->audio_context) {
+        avcodec_flush_buffers(reader->audio_context);
+        reader->audio_len = 0;
+        reader->audio_pts_known = 0;
+    }
     reader->at_end = 0;
     return OPC_DECODE_OK;
 }

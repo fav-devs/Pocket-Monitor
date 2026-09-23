@@ -54,7 +54,7 @@ impl PktType {
 }
 
 /// Runs an emitter twice: once to learn the size, once to fill the buffer.
-fn emit<F>(encode: F) -> Result<Vec<u8>, CameraError>
+pub(crate) fn emit<F>(encode: F) -> Result<Vec<u8>, CameraError>
 where
     F: Fn(*mut u8, usize) -> i64,
 {
