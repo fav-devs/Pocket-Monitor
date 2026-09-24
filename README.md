@@ -80,7 +80,7 @@ DJI Mimo remains DJI's official mobile companion and is the right choice for fir
 
 ## Quick start on Windows
 
-For normal use, download the installer or portable ZIP from the [latest GitHub release](https://github.com/fav-devs/OpenPocketCine/releases/latest). Releases are currently unsigned, so Windows may show a SmartScreen warning; verify the published SHA-256 checksum before running them.
+For normal use, download the installer or portable ZIP from the [latest GitHub release](https://github.com/fav-devs/Pocket-Monitor/releases/latest). Releases are currently unsigned, so Windows may show a SmartScreen warning; verify the published SHA-256 checksum before running them.
 
 ### 1. Install prerequisites
 

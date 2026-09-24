@@ -20,5 +20,5 @@ Versioning while the desktop application is in active validation.
 - Camera, firmware, GPU, and long-session coverage remains in active physical validation.
 - Firmware updates, activation, and DJI account features remain in DJI Mimo.
 
-[Unreleased]: https://github.com/fav-devs/OpenPocketCine/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/fav-devs/OpenPocketCine/releases/tag/v0.1.0
+[Unreleased]: https://github.com/fav-devs/Pocket-Monitor/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/fav-devs/Pocket-Monitor/releases/tag/v0.1.0
