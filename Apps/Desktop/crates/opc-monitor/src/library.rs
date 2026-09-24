@@ -484,7 +484,7 @@ pub struct Player {
 }
 
 impl Player {
-    /// The conform chip: "120 → 24", or "Conform" when off.
+    /// The conform chip: "120 → 24 fps · 20%", or "Conform" when off.
     pub fn conform_label(&self) -> String {
         match self.conform {
             Some(target) => conform_label(self.capture_rate, target),
@@ -908,7 +908,7 @@ mod tests {
         assert!((player.speed() - 0.2).abs() < 1e-9);
         let state = player.state(&library, Toggles::default());
         assert!(state.conform_on);
-        assert_eq!(state.conform_label, "120 → 24");
+        assert_eq!(state.conform_label, "120 → 24 fps · 20%");
 
         player.next_conform();
         assert_eq!(player.conform, Some(60.0));

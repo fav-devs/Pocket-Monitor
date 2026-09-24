@@ -3,11 +3,9 @@ import Testing
 
 @testable import OpenPocketViewCore
 
-/// The Swift half of `Tests/Fixtures/camfov-vectors.tsv`.
-///
-/// Kotlin re-implements `CamFov` and `VideoResolution` by hand, and nothing in
-/// the build links the two. Both suites read the same rows so a change that
-/// lands on one side and not the other fails a test instead of shipping.
+/// Validates `CamFov` and `VideoResolution` against the checked-in golden vectors in
+/// `Tests/Fixtures/camfov-vectors.tsv`. Keeping the generated table outside the test
+/// source makes accidental formula drift visible as a focused fixture diff.
 @Suite struct CamFovVectorTests {
     /// Fixtures live next to the sources, so walk up from this file rather
     /// than trusting whatever directory the test runner was started in.

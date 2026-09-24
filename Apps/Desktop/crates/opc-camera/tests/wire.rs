@@ -221,10 +221,20 @@ fn an_argument_the_core_refuses_comes_back_as_rejected() {
 }
 
 #[test]
-fn tap_focus_is_three_frames_in_order() {
+fn tap_focus_is_four_frames_in_captured_order() {
     let frames = tap_focus(0.5, 0.5, 20).expect("tap focus should build");
-    assert_eq!(frames.len(), 3);
-    assert!(frames.iter().all(|frame| !frame.is_empty()));
+    let opcodes: Vec<_> = frames
+        .iter()
+        .map(|encoded| {
+            let scanned = scan_frames(encoded).expect("each tap-focus frame should scan back");
+            assert_eq!(scanned.len(), 1, "one tap-focus write is one DUML frame");
+            (scanned[0].cmd_set, scanned[0].cmd_id)
+        })
+        .collect();
+    assert_eq!(
+        opcodes,
+        [(0x02, 0x22), (0x02, 0x30), (0x02, 0x68), (0x02, 0x32)]
+    );
 }
 
 #[test]

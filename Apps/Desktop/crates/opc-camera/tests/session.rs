@@ -231,16 +231,18 @@ fn a_session_opens_and_then_pumps() {
         "the camera should have answered"
     );
 
-    // Let the pump run for a quarter second and check the cadence over the wire.
+    // Registration intentionally sends immediate acknowledgements. Measure only the
+    // steady-state pump interval so that burst does not inflate the 40 Hz cadence.
+    let acks_before = camera.seen().acks;
     let deadline = Instant::now() + Duration::from_millis(250);
     while Instant::now() < deadline {
         session.poll().expect("polling should not fail");
     }
     let seen = camera.seen();
+    let interval_acks = seen.acks.saturating_sub(acks_before);
     assert!(
-        (6..=14).contains(&seen.acks),
-        "about ten acknowledgements in a quarter second, saw {}",
-        seen.acks
+        (6..=14).contains(&interval_acks),
+        "about ten pump acknowledgements in a quarter second, saw {interval_acks}"
     );
 }
 
@@ -254,15 +256,16 @@ fn live_view_is_enabled_once_over_a_real_socket() {
         session.poll().expect("polling should not fail");
     }
 
-    let enables = camera
-        .seen()
+    let seen = camera.seen();
+    let enables = seen
         .commands
         .iter()
         .filter(|(set, id)| *set == 0x09 && *id == 0xA8)
         .count();
     assert_eq!(
         enables, 1,
-        "live view must be enabled exactly once per session"
+        "live view must be enabled exactly once per session; saw {:?}",
+        seen.commands
     );
 }
 
@@ -361,6 +364,20 @@ fn a_frozen_feed_is_noticed_and_recovered() {
             .any(|event| matches!(event, SessionEvent::Picture(_)))
     });
 
+    // Registration ACKs can make the loopback camera send a picture before the
+    // 150 ms subscription-settle delay expires. Keep polling until the ordinary
+    // connect-path enable has actually reached the wire.
+    let enable_deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < enable_deadline
+        && !camera
+            .seen()
+            .commands
+            .iter()
+            .any(|(set, id)| *set == 0x09 && *id == 0xA8)
+    {
+        session.poll().expect("polling should not fail");
+    }
+
     let enables_before = camera
         .seen()
         .commands
@@ -394,12 +411,21 @@ fn a_frozen_feed_is_noticed_and_recovered() {
         "the ladder starts by asking for live view again"
     );
 
-    let enables_after = camera
-        .seen()
-        .commands
-        .iter()
-        .filter(|(set, id)| *set == 0x09 && *id == 0xA8)
-        .count();
+    // The recovery event is emitted immediately after the socket write; give the
+    // fake camera's receiver thread time to record that datagram before inspecting it.
+    let recovery_write_deadline = Instant::now() + Duration::from_secs(1);
+    let enables_after = loop {
+        let count = camera
+            .seen()
+            .commands
+            .iter()
+            .filter(|(set, id)| *set == 0x09 && *id == 0xA8)
+            .count();
+        if count > enables_before || Instant::now() >= recovery_write_deadline {
+            break count;
+        }
+        std::thread::yield_now();
+    };
     assert!(
         enables_after > enables_before,
         "the watchdog should have asked for the feed again"

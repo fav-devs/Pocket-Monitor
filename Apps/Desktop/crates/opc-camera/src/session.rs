@@ -422,6 +422,13 @@ impl CameraSession {
         if self.drive_first_picture_format_poke(now, events)? {
             return Ok(());
         }
+        // The sequencer deliberately delays the connect-path enable until the
+        // subscription burst has settled. The watchdog must not interpret that
+        // short, intentional window as a missing feed and send its recovery enable
+        // first; doing so would put two `0x09/0xa8` writes on a fresh session.
+        if self.last_live_enable.is_none() {
+            return Ok(());
+        }
         let live = matches!(self.sequencer.phase(), Phase::Waiting | Phase::Live);
         let snapshot = self.health.snapshot(now, live);
         let Some(action) = self.watchdog.tick(&snapshot) else {
@@ -587,11 +594,15 @@ impl CameraSession {
                     self.buffer = scratch;
                     None
                 }
-                // Windows can report WSA_IO_PENDING (997) or WSAEINVAL (10022) from a
-                // timed synchronous UDP receive while the camera changes its stream.
-                // Neither invalidates the socket; treat both as an empty poll so the
-                // watchdog can reopen the datalink if needed.
-                Err(error) if matches!(error.raw_os_error(), Some(997 | 10022)) => {
+                // Windows reports an ICMP port-unreachable response from a connected
+                // UDP socket as WSAECONNRESET (10054). It can also report
+                // WSA_IO_PENDING (997) or WSAEINVAL (10022) while the camera changes
+                // its stream. None is a fatal local-socket failure: keep the session
+                // clock moving so handshake timeout or the watchdog owns recovery.
+                Err(error)
+                    if error.kind() == io::ErrorKind::ConnectionReset
+                        || matches!(error.raw_os_error(), Some(997 | 10022 | 10054)) =>
+                {
                     self.buffer = scratch;
                     None
                 }

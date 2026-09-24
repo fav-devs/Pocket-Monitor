@@ -263,7 +263,7 @@ private func cameraFrame(kind: Int32, seq: UInt16, arguments: Arguments) -> Duml
     }
 }
 
-/// Tap-to-focus is three frames in order. They are returned as one
+/// Tap-to-focus is four frames in captured order. They are returned as one
 /// `[u16le count]([u16le length][frame])…` blob so the shell sends them unchanged.
 @_cdecl("opc_camera_tap_focus")
 func opc_camera_tap_focus(
