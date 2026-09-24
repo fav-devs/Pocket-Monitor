@@ -58,6 +58,7 @@ Source: "{#Staged}\*.dll"; DestDir: "{app}"; Excludes: "opc_vcam_win.dll"; Flags
 ; uninstall; `noregerror` keeps a failed registration from failing the whole install,
 ; since the tab can register it again later.
 Source: "{#Staged}\opc_vcam_win.dll"; DestDir: "{app}"; Flags: ignoreversion regserver noregerror
+Source: "{#Staged}\FFmpeg-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "viewfinder.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

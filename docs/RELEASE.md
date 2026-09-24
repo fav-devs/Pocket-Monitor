@@ -1,90 +1,57 @@
-# Git and releases
+# Windows releases
 
-Trunk-based GitHub Flow. One long-lived branch (`main`), short-lived PRs, annotated
-**`v*`** tags for product trains. Not Git Flow: there is no `develop` branch, no
-standing `release/*`, and no `git-flow` CLI.
+Pocket Monitor uses one SemVer version from `Apps/Desktop/Cargo.toml`. Product releases are
+annotated `v*` tags on `main` and GitHub Releases containing an installer, a portable ZIP, and
+checksums. Tags and publishing are human gates: prepare and verify on a branch, merge through a
+PR, then tag the resulting `main` commit deliberately.
 
-This matches how the repo already ships: PRs into `main`, squash merge, linear
-history, **CI gate**, TestFlight from `main`, Play closed testing from `main`
-once `ANDROID_PLAY_UPLOAD` is on. See
-[`repository-settings.md`](repository-settings.md),
-[`testflight-ci.md`](testflight-ci.md), and
-[`android-play-ci.md`](android-play-ci.md).
+## Prepare the train
 
-## Branches
+1. Update the workspace version in `Apps/Desktop/Cargo.toml` and `Apps/Desktop/Cargo.lock`.
+2. Move the release notes from the `Unreleased` section of `CHANGELOG.md` into the new version.
+3. Update `docs/releases/vX.Y.Z.md` with operator-facing notes and known limitations.
+4. Use an x64 shared LGPL FFmpeg build made without `--enable-gpl` or `--enable-nonfree`.
+5. Run the repository gates and the Windows release build on the physical release machine.
 
-| Branch | Lifetime | Purpose |
-| --- | --- | --- |
-| `main` | Forever | Only long-lived branch. Protected. Never commit here. |
-| `feat/…`, `fix/…`, `docs/…`, `chore/…`, `ci/…`, `test/…` | One PR | Work. Name matches the Conventional Commit type. |
-| `release/x.y` or `hotfix/x.y.z` | Until tagged | **Exception only** — see below. |
-
-Open a PR into `main`. CI runs on the PR, not a second time on the branch push.
-Squash merge. Delete the head branch (GitHub already does this).
-
-Agents: same rules. Do not push `main`. Do not create tags (human gate).
-
-## Version numbers
-
-One **product** semver for iOS and Android. Two **store** counters.
-
-| Field | Source | Example |
-| --- | --- | --- |
-| Product version | iOS `MARKETING_VERSION` in `ios/Config/Version.xcconfig` **and** Android `openpocketcine.versionName` in `Apps/Android/gradle.properties` | `0.1.0` |
-| iOS build | Xcode Cloud counter (`CURRENT_PROJECT_VERSION` locally is not the cloud stamp) | `42` |
-| Android build | Play workflow stamp (`ANDROID_VERSION_CODE_BASE` + `github.run_number`). Local `openpocketcine.versionCode` is the sideload floor. | `7` |
-
-Keep `MARKETING_VERSION` and `openpocketcine.versionName` equal. Testers see
-`0.1.0 (42)` on iOS and `0.1.0 (7)` on Android — same train, different builds.
-
-Bump the product version only when starting a new train (`0.1.0` → `0.2.0`).
-Daily TestFlight and Play closed-testing uploads stay on the current train. The
-first external TestFlight build of a new marketing version needs TestFlight App
-Review. The first closed Play release of the app sits in Play review.
-
-iOS build numbers are the Xcode Cloud counter. Android Play `versionCode` is the
-Actions stamp — do not bump `openpocketcine.versionCode` for every closed-testing
-upload. Raise `ANDROID_VERSION_CODE_BASE` only to jump over a manual upload.
-
-```bash
-just ios-version
-just android-version
+```powershell
+$env:FFMPEG_DIR = 'C:\path\to\ffmpeg-win64-lgpl-shared'
+swift test
+just desktop-check
+.\Apps\Desktop\build-release-assets.ps1 -StopRunning
 ```
 
-## Tags
+The packaging command writes these ignored artifacts under `Apps/Desktop/dist/`:
 
-Tags mark **trains**, not every TestFlight or CI run. Annotated, from `main`:
+- `OpenPocketCine-Setup-X.Y.Z.exe` — installer; registers the optional virtual camera.
+- `OpenPocketCine-X.Y.Z-windows-x64.zip` — portable application and runtime DLLs.
+- `SHA256SUMS.txt` — SHA-256 for every published binary asset.
 
-```bash
-git checkout main && git pull
-git tag -a v0.2.0 -m "OpenPocketCine 0.2.0"
-git push origin v0.2.0
+The build is currently unsigned. Release notes and the README must say so until Authenticode
+signing is added. Smoke-test both the staged executable and a clean installer on Windows 11. A
+successful compile is not physical-camera proof; keep the validation language in the release
+notes accurate.
+
+## FFmpeg release compliance
+
+The build script rejects FFmpeg configurations containing `--enable-gpl` or
+`--enable-nonfree`, stages `FFmpeg-LICENSE.txt`, and removes stale DLLs from previous FFmpeg
+majors. Attach the exact corresponding FFmpeg source archive and build provenance to the same
+GitHub Release as the Windows binaries. Follow the upstream
+[FFmpeg license checklist](https://ffmpeg.org/legal.html) before publishing.
+
+## Tag and publish
+
+After the preparation PR is green and merged, confirm `main` is at the intended commit. Then a
+human creates and pushes the annotated tag:
+
+```powershell
+git switch main
+git pull --ff-only origin main
+git tag -a vX.Y.Z -m "OpenPocketCine X.Y.Z"
+git push origin vX.Y.Z
 ```
 
-Then a GitHub Release from that tag. Changelog: move `[Unreleased]` entries under
-`## [0.2.0] - YYYY-MM-DD` in the same version-bump PR. TestFlight and Play tester
-notes are a this-build window, not that changelog — [`tester-notes.md`](tester-notes.md).
-
-One tag for both platforms (`v0.2.0`). Do not cut `ios/0.2.0` and `android/0.2.0`
-unless the apps actually ship different product versions — they share the Swift
-core, so they should not.
-
-Do not tag `v0.1.0` retroactively unless you are cutting that train on purpose.
-
-## Hotfix / freeze (rare)
-
-A `release/x.y` or `hotfix/x.y.z` branch exists only when **all** of these hold:
-
-- Testers (or Play) are on `x.y` / `x.y.z`
-- `main` already has work that must not ship on that train
-- A fix must land on the shipped train anyway
-
-Branch from the train tag (or from `main` if it still *is* that train). PR the
-fix into the release branch **and** into `main`. Tag, then delete the branch.
-This is not a standing `develop`.
-
-## Contributors
-
-When a second person gets write access, turn **admin enforcement** on for `main`
-([`repository-settings.md`](repository-settings.md)). Required review then
-applies to everyone, including the original maintainer.
+Create the GitHub Release from that tag, paste `docs/releases/vX.Y.Z.md`, and upload the
+installer, portable ZIP, checksum file, and FFmpeg source/provenance assets. Mark early hardware
+validation trains as pre-releases. Download the published assets once, verify the hashes, and
+launch the downloaded build before announcing it.

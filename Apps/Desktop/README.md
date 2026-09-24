@@ -12,6 +12,9 @@ Full notes: [`docs/DESKTOP.md`](../../docs/DESKTOP.md).
 On Windows, `build-release.ps1` builds and stages a runnable `target\release`, and
 `build-installer.ps1` wraps that in an installer (`dist\OpenPocketCine-Setup-<version>.exe`,
 Inno Setup 6) that also registers the virtual camera.
+`build-release-assets.ps1` produces both the installer and a portable ZIP, plus
+`SHA256SUMS.txt`, ready for a GitHub Release. Public assets require a shared LGPL
+FFmpeg build; the release script rejects GPL and nonfree FFmpeg configurations.
 
 ## Quick start
 

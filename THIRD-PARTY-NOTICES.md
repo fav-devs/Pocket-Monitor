@@ -33,6 +33,18 @@ references that are **not** distributed.
   `Apps/Desktop/crates/opc-chrome/assets/fonts/OFL-Outfit.txt`)
 - **Copyright:** 2021 The Outfit Project Authors
 
+## FFmpeg
+
+- **Homepage:** <https://ffmpeg.org/>
+- **Windows build source:** <https://github.com/BtbN/FFmpeg-Builds>
+- **Used for:** H.264/HEVC decode, media playback, audio decode, and image conversion in the desktop app
+- **License:** GNU Lesser General Public License version 3 or later for the shared release build
+
+Windows release assets dynamically link to the unmodified, shared `lgpl-shared` FFmpeg DLLs.
+`FFmpeg-LICENSE.txt` is installed beside the application. The corresponding FFmpeg source and
+build provenance are attached to each GitHub Release that distributes those DLLs. FFmpeg is a
+trademark of Fabrice Bellard, originator of the FFmpeg project.
+
 ## Tabler Icons
 
 - **Homepage:** <https://tabler.io/icons>
