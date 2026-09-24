@@ -1311,9 +1311,37 @@ fn build_pipelines(gpu: &Gpu) -> Result<Pipelines, RenderError> {
     let subpass = [vk::SubpassDescription::default()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&reference)];
+    // Every offscreen pass is consumed by the next fragment pass. Make the
+    // attachment writes visible before those shader reads; relying only on the
+    // implicit layout transition is not sufficient on every Vulkan driver.
+    let dependencies = [
+        vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(
+                vk::PipelineStageFlags::FRAGMENT_SHADER
+                    | vk::PipelineStageFlags::TRANSFER
+                    | vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            )
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::TRANSFER_READ)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dependency_flags(vk::DependencyFlags::BY_REGION),
+        vk::SubpassDependency::default()
+            .src_subpass(0)
+            .dst_subpass(vk::SUBPASS_EXTERNAL)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(
+                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::TRANSFER,
+            )
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::TRANSFER_READ)
+            .dependency_flags(vk::DependencyFlags::BY_REGION),
+    ];
     let pass_info = vk::RenderPassCreateInfo::default()
         .attachments(&attachment)
-        .subpasses(&subpass);
+        .subpasses(&subpass)
+        .dependencies(&dependencies);
     // Safety: every borrowed slice outlives the call.
     let render_pass =
         unsafe { device.create_render_pass(&pass_info, None) }.context("vkCreateRenderPass")?;

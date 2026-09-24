@@ -164,18 +164,19 @@ fn a_tracking_drag_is_drawn_where_it_was_dragged() {
     shell.pointer_moved(192.0, 108.0);
     let dragging = frame(&mut renderer, &mut shell, 0.0);
 
-    // The box is drawn in the tracking colour, which is green enough to find.
-    let green = |x: u32, y: u32| {
+    // A drag is still searching, so its bracket is white. It turns green only after
+    // the camera reports a subject lock.
+    let bracket = |x: u32, y: u32| {
         dragging
             .pixel(x, y)
-            .is_some_and(|(r, g, b, _)| g > 180 && g > r + 60 && g > b.saturating_add(20))
+            .is_some_and(|(r, g, b, _)| r > 200 && g > 200 && b > 200)
     };
     assert!(
-        (60..70).any(|x| green(x, 36)),
+        (60..70).any(|x| bracket(x, 36)),
         "the top-left corner of the box should be on screen"
     );
     assert!(
-        !green(WIDTH / 2, HEIGHT - 4),
+        !bracket(WIDTH / 2, HEIGHT - 4),
         "and nothing should be drawn well outside it"
     );
 }

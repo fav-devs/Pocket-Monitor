@@ -438,6 +438,7 @@ fn a_controller_drives_the_shell_on_the_phones_map() {
     use opc_monitor::sheets::Pick;
     use opc_monitor::PadButton;
     let mut shell = framed();
+    shell.set_model(Some(0x22));
     shell.set_phase(opc_ui::Phase::Live);
     assert_eq!(
         sent(&shell.controller_button(PadButton::A, 0.0)),
@@ -479,12 +480,24 @@ fn a_controller_drives_the_shell_on_the_phones_map() {
         [Command::SetShutter(50)],
         "open is a longer exposure"
     );
-    // The stick throws with the operator's sensitivity: 4 is the captured throw.
+    // The portable mapping puts pan on axis1; sensitivity 4 is the captured ±550 throw.
     let full = sent(&shell.controller_stick(1.0, 0.0, 0.7));
-    assert_eq!(full, [opc_ui::stick_command(-1.0, 0.0)]);
+    assert_eq!(
+        full,
+        [Command::GimbalStick {
+            axis0: 1024,
+            axis1: 474
+        }]
+    );
     shell.pick_for_test(Pick::StickSensitivity(2));
     let half = sent(&shell.controller_stick(1.0, 0.0, 0.8));
-    assert_eq!(half, [opc_ui::stick_command(-0.5, 0.0)]);
+    assert_eq!(
+        half,
+        [Command::GimbalStick {
+            axis0: 1024,
+            axis1: 749
+        }]
+    );
     // Letting go rests the gimbal once, and a resting stick sends nothing more.
     assert_eq!(
         sent(&shell.controller_stick(0.0, 0.0, 0.9)),
@@ -714,11 +727,12 @@ fn a_camera_that_has_reported_nothing_yet_is_not_sent_a_guess() {
 #[test]
 fn zoom_follows_the_body_rather_than_fighting_it() {
     let mut shell = framed();
+    shell.set_model(Some(0x22));
     shell.set_status(Status {
         zoom_hundredths: Some(400),
         ..Status::default()
     });
-    // Without the core the stand-in stops are 1 / 3 / 6 / 12: from 4× the next is 6×.
+    // Pocket 4 Pro stops are 1 / 3 / 6 / 12: from 4× the next is 6×.
     assert_eq!(
         sent(&shell.press(Key::Char('='), 0.0)),
         [Command::ZoomJump(6.0)],
@@ -757,7 +771,7 @@ fn a_zoom_out_of_dlog2_hops_the_colour_first_and_puts_it_back_at_wide() {
         color_mode: Some(0x17),
         ..Status::default()
     });
-    assert_eq!(sent(&shell.tick(0.6)), [Command::ZoomJump(3.0)]);
+    assert_eq!(sent(&shell.tick(0.6)), [Command::ZoomJump(2.0)]);
     // Parking at 1× restores D-Log2.
     assert_eq!(
         sent(&shell.press(Key::Char('0'), 1.0)),
@@ -774,6 +788,7 @@ fn a_zoom_out_of_dlog2_hops_the_colour_first_and_puts_it_back_at_wide() {
 #[test]
 fn rolling_in_dlog2_refuses_the_zoom_and_says_so() {
     let mut shell = framed();
+    shell.set_model(Some(0x20));
     shell.set_status(Status {
         color_mode: Some(0x41),
         is_recording: true,
@@ -1398,11 +1413,11 @@ fn with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest() {
     shell.press(Key::Escape, 0.0);
 
     let first = sent(&shell.press(Key::Right, 1.0));
-    let axis0 = |commands: &[Command]| match commands.last() {
-        Some(Command::GimbalStick { axis0, .. }) => *axis0,
+    let pan_axis = |commands: &[Command]| match commands.last() {
+        Some(Command::GimbalStick { axis1, .. }) => *axis1,
         other => panic!("expected a stick, got {other:?}"),
     };
-    let start = axis0(&first);
+    let start = pan_axis(&first);
     assert!(
         start < 1024 && start > 624,
         "the first step is a fraction: {start}"
@@ -1412,7 +1427,7 @@ fn with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest() {
     while t < 3.0 {
         let step = sent(&shell.tick(t));
         if !step.is_empty() {
-            let now = axis0(&step);
+            let now = pan_axis(&step);
             assert!(now <= last, "the throw only grows toward the target");
             last = now;
         }

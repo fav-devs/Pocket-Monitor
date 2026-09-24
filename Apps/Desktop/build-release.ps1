@@ -34,13 +34,34 @@ $kitVersion = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Lib' -Direct
     Sort-Object Name -Descending | Select-Object -First 1
 if (-not $kitVersion) { throw 'Windows SDK libraries are not installed.' }
 
-$ffmpegPackage = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'Gyan.FFmpeg.Shared*' |
-    Sort-Object Name -Descending | Select-Object -First 1
-if ($ffmpegPackage) {
-    $ffmpeg = Get-ChildItem $ffmpegPackage.FullName -Directory -Filter 'ffmpeg-*-full_build-shared' |
-        Sort-Object Name -Descending | Select-Object -First 1
+$ffmpeg = $null
+if ($env:FFMPEG_DIR -and (Test-Path (Join-Path $env:FFMPEG_DIR 'include')) -and (Test-Path (Join-Path $env:FFMPEG_DIR 'lib'))) {
+    $ffmpeg = Get-Item $env:FFMPEG_DIR
 }
-if (-not $ffmpeg) { throw 'FFmpeg shared build is not installed.' }
+if (-not $ffmpeg) {
+    $ffmpegPackage = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'Gyan.FFmpeg*' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    if ($ffmpegPackage) {
+        $ffmpeg = Get-ChildItem $ffmpegPackage.FullName -Directory -Filter 'ffmpeg-*-full_build-shared' -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+    }
+}
+if (-not $ffmpeg) {
+    $ffmpegCommand = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($ffmpegCommand) {
+        $candidate = Split-Path (Split-Path $ffmpegCommand.Source -Parent) -Parent
+        if ((Test-Path (Join-Path $candidate 'include')) -and (Test-Path (Join-Path $candidate 'lib'))) {
+            $ffmpeg = Get-Item $candidate
+        }
+    }
+}
+if (-not $ffmpeg) { throw 'FFmpeg shared development files are not installed or discoverable. Set FFMPEG_DIR to their root.' }
+$ffmpegExe = Join-Path $ffmpeg.FullName 'bin\ffmpeg.exe'
+if (-not (Test-Path $ffmpegExe)) { throw "FFmpeg executable is missing from $($ffmpeg.FullName)." }
+$ffmpegConfiguration = (& $ffmpegExe -buildconf 2>&1 | Out-String)
+if ($ffmpegConfiguration -match '(?m)(^|\s)--enable-(gpl|nonfree)(\s|$)') {
+    throw 'Release builds must use an LGPL shared FFmpeg build without --enable-gpl or --enable-nonfree.'
+}
 $vulkan = Get-ChildItem 'C:\VulkanSDK' -Directory -ErrorAction SilentlyContinue |
     Sort-Object Name -Descending | Select-Object -First 1
 if (-not $vulkan) { throw 'Vulkan SDK is not installed.' }
@@ -62,7 +83,15 @@ function Stage-Runtime([string]$outputDir) {
         $candidate = Join-Path $swiftBin $name
         if (Test-Path $candidate) { Copy-Item $candidate $outputDir -Force }
     }
+    # Do not leave DLLs from a previously selected FFmpeg major beside the app.
+    $ffmpegDlls = 'avcodec-*.dll', 'avdevice-*.dll', 'avfilter-*.dll', 'avformat-*.dll',
+        'avutil-*.dll', 'postproc-*.dll', 'swresample-*.dll', 'swscale-*.dll'
+    foreach ($pattern in $ffmpegDlls) {
+        Get-ChildItem $outputDir -Filter $pattern -ErrorAction SilentlyContinue |
+            Remove-Item -Force
+    }
     Get-ChildItem (Join-Path $ffmpeg.FullName 'bin\*.dll') | Copy-Item -Destination $outputDir -Force
+    Copy-Item (Join-Path $ffmpeg.FullName 'LICENSE.txt') (Join-Path $outputDir 'FFmpeg-LICENSE.txt') -Force
 }
 
 Push-Location $repo

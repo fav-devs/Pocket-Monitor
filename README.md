@@ -4,6 +4,18 @@ Pocket Monitor is a Windows-first, open-source field monitor and control surface
 
 It is designed for operators who want a larger, keyboard- and controller-friendly monitor without depending on a phone once the camera has been paired.
 
+<p align="center">
+  <img src="docs/assets/screenshots/recording.png" alt="Pocket Monitor recording view with camera controls" width="900">
+</p>
+
+| Monitoring assists | Camera settings |
+| --- | --- |
+| ![Waveform, guides, grid, false colour legend, and audio meters](docs/assets/screenshots/monitoring-assists.png) | ![Camera settings for focus, white balance, colour, field of view, and gimbal](docs/assets/screenshots/camera-settings.png) |
+| **Media library** | **Desktop operator surface** |
+| ![Media library with filtering, favorites, bursts, and multi-select](docs/assets/screenshots/media-library.png) | Recording, gimbal, zoom, assists, settings, and playback stay in one Windows-native workflow. |
+
+_Screenshots use the built-in offline demo renderer and contain no camera footage._
+
 > **Independent project.** Pocket Monitor is not made by, affiliated with, or endorsed by DJI. It talks to the camera through independently implemented protocol code; it does not bundle a DJI SDK.
 
 ## What works today
@@ -67,6 +79,8 @@ DJI Mimo remains DJI's official mobile companion and is the right choice for fir
 - A live feed can still expose decoder, Wi-Fi, GPU-driver, or camera-firmware issues. Keep `opc-monitor.log` when reporting a problem.
 
 ## Quick start on Windows
+
+For normal use, download the installer or portable ZIP from the [latest GitHub release](https://github.com/fav-devs/Pocket-Monitor/releases/latest). Releases are currently unsigned, so Windows may show a SmartScreen warning; verify the published SHA-256 checksum before running them.
 
 ### 1. Install prerequisites
 

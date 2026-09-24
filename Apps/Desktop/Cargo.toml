@@ -19,7 +19,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/erik-sutton95/OpenPocketCine"
+repository = "https://github.com/fav-devs/Pocket-Monitor"
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"

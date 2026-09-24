@@ -160,7 +160,7 @@ pub fn encode_frame(frame: &DumlFrame) -> Result<Vec<u8>, CameraError> {
     })
 }
 
-/// Tap-to-focus is three frames, in order.
+/// Tap-to-focus is four frames in captured order: prepare, point, live hint, commit.
 pub fn tap_focus(x: f32, y: f32, seq: u16) -> Result<Vec<Vec<u8>>, CameraError> {
     let blob = emit(|out, capacity| {
         // Safety: the core only writes into `out`.
