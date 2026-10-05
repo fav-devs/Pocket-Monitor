@@ -37,7 +37,9 @@ const FIRST_PICTURE_UNKNOWN_FORMAT_GRACE: f64 = 8.0;
 /// encoder. The mobile shells refresh app presence once a second.
 const APP_PRESENCE_INTERVAL: f64 = 1.0;
 const TCP_POKE_PORT: u16 = 7001;
-const TCP_POKE_TIMEOUT: Duration = Duration::from_secs(2);
+const DATALINK_PORT: u16 = 9004;
+const TCP_POKE_TIMEOUT: Duration = Duration::from_millis(600);
+const TCP_POKE_QUICK: Duration = Duration::from_millis(250);
 
 /// What happened while polling.
 #[derive(Debug, Clone, PartialEq)]
@@ -214,30 +216,54 @@ impl CameraSession {
         })
     }
 
-    /// The Pocket's TCP 7001 control channel is a setup poke, not a video transport.
-    /// Keep a successful connection for the entire session, but retain UDP-only fallback
-    /// for models and test peers which do not expose that port.
+    /// Pocket cameras arm UDP live view after a TCP `SetPairingPIN("osmo")` write.
+    /// SoftAP answers that poke on 7001; a station-mode Pocket 3 answers on 9004.
+    /// Keep a successful connection for the entire session. Test peers and other
+    /// ports stay UDP-only.
     fn open_tcp_poke(remote: SocketAddr) -> (Option<TcpStream>, String) {
         let SocketAddr::V4(address) = remote else {
             return (None, "skipped (non-IPv4 peer)".to_string());
         };
-        if *address.ip() != Ipv4Addr::new(192, 168, 2, 1) || address.port() != 9004 {
-            return (None, "skipped (non-standard camera peer)".to_string());
+        if address.port() != DATALINK_PORT {
+            return (None, "skipped (not a camera datalink port)".to_string());
         }
-        let target = SocketAddr::new(IpAddr::V4(*address.ip()), TCP_POKE_PORT);
-        let mut stream = match TcpStream::connect_timeout(&target, TCP_POKE_TIMEOUT) {
-            Ok(stream) => stream,
-            Err(error) => return (None, format!("failed to connect: {error}")),
+        let ip = *address.ip();
+        let softap = ip == Ipv4Addr::new(192, 168, 2, 1);
+        let attempts: &[(u16, Duration)] = if softap {
+            &[(TCP_POKE_PORT, Duration::from_secs(2))]
+        } else {
+            &[
+                (TCP_POKE_PORT, TCP_POKE_QUICK),
+                (DATALINK_PORT, TCP_POKE_TIMEOUT),
+            ]
         };
-        let frame = match transport::pair_set_pin("osmo", None) {
-            Ok(frame) => frame,
-            Err(error) => return (None, format!("could not encode SetPairingPIN: {error}")),
-        };
-        if let Err(error) = stream.write_all(&frame).and_then(|_| stream.flush()) {
-            return (None, format!("could not write SetPairingPIN: {error}"));
+        let mut last = String::from("no TCP poke port answered");
+        for &(port, timeout) in attempts {
+            match Self::poke_pin(ip, port, timeout) {
+                Ok(stream) => {
+                    return (
+                        Some(stream),
+                        format!("ready on {port} (SetPairingPIN osmo sent)"),
+                    );
+                }
+                Err(status) => last = status,
+            }
         }
+        (None, last)
+    }
+
+    fn poke_pin(ip: Ipv4Addr, port: u16, timeout: Duration) -> Result<TcpStream, String> {
+        let target = SocketAddr::new(IpAddr::V4(ip), port);
+        let mut stream = TcpStream::connect_timeout(&target, timeout)
+            .map_err(|error| format!("{port}: {error}"))?;
+        let frame = transport::pair_set_pin("osmo", None)
+            .map_err(|error| format!("could not encode SetPairingPIN: {error}"))?;
+        stream
+            .write_all(&frame)
+            .and_then(|_| stream.flush())
+            .map_err(|error| format!("{port}: write {error}"))?;
         let _ = stream.set_nodelay(true);
-        (Some(stream), "ready (SetPairingPIN osmo sent)".to_string())
+        Ok(stream)
     }
 
     /// Opens the camera flow on a new ephemeral client port. The camera's :9004 is

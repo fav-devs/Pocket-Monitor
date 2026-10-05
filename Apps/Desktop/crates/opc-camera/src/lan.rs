@@ -1,9 +1,11 @@
 //! Finding a camera on a network it joined.
 //!
 //! Station mode leaves the camera with an address DHCP chose, so the laptop looks: every
-//! host on its own subnet is asked for the TCP `:7001` poke port, and each that answers
-//! is opened as a datalink and asked for its Wi-Fi identity, which must match what the
-//! camera said over Bluetooth. Only that identity match makes an address the camera's.
+//! host on its own subnet is asked for TCP `:9004` (the datalink port a station-mode
+//! Pocket answers on) and, if that is quiet, TCP `:7001`. Each that answers is opened as
+//! a UDP datalink after a TCP SetPairingPIN poke (7001 on SoftAP, 9004 in station mode)
+//! and asked for its Wi-Fi identity. A silent getter still counts if the handshake
+//! answers.
 
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::sync::mpsc;
@@ -77,40 +79,72 @@ pub fn probe_hosts(
     found
 }
 
-/// Opens a datalink to `address` and asks the camera there for its Wi-Fi identity. True
-/// when it matches `identity`; false when it answers with another, or not at all.
-pub fn identity_matches(address: SocketAddr, identity: &[u8], timeout: Duration) -> bool {
+/// Opens a datalink to `address` and asks the camera there for its Wi-Fi identity.
+/// `Ok` is this camera (or a handshake that answered when the getter stayed silent).
+/// `Err` is the reason it is not.
+pub fn identify_camera(
+    address: SocketAddr,
+    identity: &[u8],
+    timeout: Duration,
+) -> Result<String, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.subsec_nanos())
         .unwrap_or(1);
     let session_id = (nanos & 0xFFFF) as u16 | 1;
     let base_seq = ((nanos >> 8) & 0xFFF8) as u16;
-    let Ok(mut session) = CameraSession::connect_to(address, session_id, base_seq) else {
-        return false;
+    let mut session = CameraSession::connect_to(address, session_id, base_seq)
+        .map_err(|error| format!("could not open a datalink: {error}"))?;
+    let tcp = session.tcp_poke_status().to_string();
+    // A closed poke port is not this camera; do not sit out the full verify budget.
+    let budget = if tcp.starts_with("ready") {
+        timeout
+    } else {
+        timeout.min(Duration::from_millis(500))
     };
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + budget;
     let mut asked = false;
+    let mut opened = false;
     while Instant::now() < deadline {
-        let Ok(events) = session.poll() else {
-            return false;
-        };
+        let events = session
+            .poll()
+            .map_err(|error| format!("datalink poll failed: {error} tcp={tcp}"))?;
         for event in events {
             match event {
                 SessionEvent::Opened if !asked => {
                     asked = true;
+                    opened = true;
                     session.send(Command::GetWifiSsid);
                 }
                 SessionEvent::Frame(frame) if (frame.cmd_set, frame.cmd_id) == (0x07, 0x07) => {
-                    return frame.payload == identity;
+                    let camera = frame.payload.len() > 2 && frame.payload[0] == 0;
+                    if !camera {
+                        return Err(format!("ssid getter was not a camera tcp={tcp}"));
+                    }
+                    if identity.is_empty() || frame.payload == identity {
+                        return Ok(format!("identity matched tcp={tcp}"));
+                    }
+                    // BLE and UDP GetWifiSsid can disagree after a station join.
+                    return Ok(format!("handshake ok (ssid getter differed) tcp={tcp}"));
                 }
-                SessionEvent::Unreachable => return false,
+                SessionEvent::Unreachable => {
+                    return Err(format!("UDP handshake unreachable tcp={tcp}"));
+                }
                 _ => {}
             }
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    false
+    if opened {
+        // Station-mode cameras often never return 0x07/0x07.
+        return Ok(format!("handshake opened tcp={tcp}"));
+    }
+    Err(format!("no UDP handshake tcp={tcp}"))
+}
+
+/// True when [`identify_camera`] says this address is the camera.
+pub fn identity_matches(address: SocketAddr, identity: &[u8], timeout: Duration) -> bool {
+    identify_camera(address, identity, timeout).is_ok()
 }
 
 #[cfg(test)]
