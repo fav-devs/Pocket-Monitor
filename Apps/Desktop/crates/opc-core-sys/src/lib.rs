@@ -925,6 +925,12 @@ extern "C" {
     /// 0 already station, 1 access point, 2 no getter on this body, 3 unsupported reply.
     pub fn opc_station_role_decision(reply: *const u8, count: usize, allow_missing: i32) -> i32;
     pub fn opc_station_setter_accepts(reply: *const u8, count: usize, missing_query: i32) -> i32;
+    pub fn opc_station_accepts_missing_role_query(
+        model_id: i32,
+        reply: *const u8,
+        count: usize,
+    ) -> i32;
+    pub fn opc_station_has_preview(model_id: i32) -> i32;
     /// 0 joined, 1 try again, 2 refused.
     pub fn opc_station_join_decision(reply: *const u8, count: usize, attempt: i32) -> i32;
     pub fn opc_station_join_policy(

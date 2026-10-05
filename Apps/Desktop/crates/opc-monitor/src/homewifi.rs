@@ -60,9 +60,10 @@ impl SavedStation {
     }
 }
 
-/// Which bodies want video mode selected before they join (Pocket 4 family).
+/// Which bodies want video mode selected before they join (Pocket 3 / 4 / Nano).
+/// Mirrors `MulticamSupport.hasPreview` for tests that do not link the core.
 pub fn wants_video_mode(model_id: Option<i32>) -> bool {
-    matches!(model_id, Some(0x0021 | 0x0022))
+    matches!(model_id, Some(0x0019 | 0x0020 | 0x0021 | 0x0022))
 }
 
 /// Which bodies may answer the role query with "no such getter" (Pocket 3, Nano).
@@ -222,7 +223,9 @@ mod tests {
     #[test]
     fn model_gates_follow_the_phone_apps() {
         assert!(wants_video_mode(Some(0x0022)));
-        assert!(!wants_video_mode(Some(0x0020)));
+        assert!(wants_video_mode(Some(0x0020)));
+        assert!(wants_video_mode(Some(0x0019)));
+        assert!(!wants_video_mode(Some(0x0018)));
         assert!(allows_missing_role_query(Some(0x0020)));
         assert!(allows_missing_role_query(Some(0x0019)));
         assert!(!allows_missing_role_query(Some(0x0022)));

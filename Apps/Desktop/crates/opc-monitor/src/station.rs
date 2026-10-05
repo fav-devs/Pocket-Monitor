@@ -10,15 +10,16 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use opc_camera::station::{
-    join_decision, role_decision, setter_accepts, station_join, station_mode, station_video_mode,
-    station_wifi_work_mode, JoinPolicy, Provisioning, StationInput, StationState, StationStep,
+    accepts_missing_role_query, has_preview, join_decision, role_decision, setter_accepts,
+    station_join, station_mode, station_video_mode, station_wifi_work_mode, JoinPolicy,
+    Provisioning, StationInput, StationState, StationStep,
 };
 use opc_camera::{
     lan, pair_approval_ack, pair_set_pin, BleTransport, Command, DumlFrame, NotificationAssembler,
 };
 use opc_monitor::homewifi::{
     allows_missing_role_query, networks_from_ip_addr, networks_from_ipconfig, ssid_from_netsh,
-    wants_video_mode, SavedStation,
+    SavedStation,
 };
 
 fn log(message: &str) {
@@ -341,7 +342,7 @@ fn provision_connected<T: BleTransport>(
     let policy = JoinPolicy::from_core();
     let mut machine = Provisioning::new(
         policy,
-        wants_video_mode(model_id),
+        model_id.is_some_and(has_preview),
         allows_missing_role_query(model_id),
     );
     let started = Instant::now();
@@ -396,10 +397,12 @@ fn provision_connected<T: BleTransport>(
             StationStep::QueryRole => {
                 let frame = station_wifi_work_mode(seq).map_err(|e| e.to_string())?;
                 match link.exchange(&frame, 0x07, 0x39, timeout, progress)? {
-                    Some(reply) => StationInput::Role(role_decision(
-                        &reply.payload,
-                        machine.allow_missing_query(),
-                    )),
+                    Some(reply) => {
+                        let allow_missing = model_id
+                            .map(|id| accepts_missing_role_query(id, &reply.payload))
+                            .unwrap_or_else(|| machine.allow_missing_query());
+                        StationInput::Role(role_decision(&reply.payload, allow_missing))
+                    }
                     None => StationInput::Timeout,
                 }
             }

@@ -94,6 +94,23 @@ func opc_station_join_decision(
     }
 }
 
+/// Whether this body may answer the role getter with `e0` (Pocket 3, Nano).
+@_cdecl("opc_station_accepts_missing_role_query")
+func opc_station_accepts_missing_role_query(
+    _ modelId: Int32, _ reply: UnsafePointer<UInt8>?, _ count: Int
+) -> Int32 {
+    guard let reply, count >= 0 else { return 0 }
+    let model = CameraModel.resolve(modelId: Int(modelId), name: nil)
+    return MulticamSupport.acceptsMissingRoleQuery(
+        model, reply: Array(DesktopFacade.borrow(reply, count))) ? 1 : 0
+}
+
+/// Whether station join selects Video mode first (`MulticamSupport.hasPreview`).
+@_cdecl("opc_station_has_preview")
+func opc_station_has_preview(_ modelId: Int32) -> Int32 {
+    MulticamSupport.hasPreview(CameraModel.resolve(modelId: Int(modelId), name: nil)) ? 1 : 0
+}
+
 /// The join's bounded retry: attempts, the settle before the first join, the reply
 /// wait, and the pause between attempts, in seconds.
 @_cdecl("opc_station_join_policy")

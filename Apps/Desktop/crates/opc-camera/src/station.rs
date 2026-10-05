@@ -91,6 +91,21 @@ pub enum JoinDecision {
     Rejected,
 }
 
+/// Whether this body gets a captured Multiview preview, so station join selects
+/// Video mode first (Pocket 3 / 4 / Nano).
+pub fn has_preview(model_id: i32) -> bool {
+    // Safety: a plain value in.
+    unsafe { sys::opc_station_has_preview(model_id) != 0 }
+}
+
+/// Whether this body may answer the role getter with `e0` (Pocket 3, Nano).
+pub fn accepts_missing_role_query(model_id: i32, reply: &[u8]) -> bool {
+    // Safety: `reply` outlives the call.
+    unsafe {
+        sys::opc_station_accepts_missing_role_query(model_id, reply.as_ptr(), reply.len()) != 0
+    }
+}
+
 /// Reads a `0x07/0x47` reply the way the core does.
 pub fn join_decision(reply: &[u8], attempt: u32) -> JoinDecision {
     // Safety: `reply` outlives the call.
