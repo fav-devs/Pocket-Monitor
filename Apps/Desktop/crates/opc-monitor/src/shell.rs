@@ -828,8 +828,12 @@ impl Shell {
     }
 
     /// A zoom, as the body allows it: clamped to its stops, hopped out of D-Log2
-    /// first, refused while rolling in D-Log2.
+    /// first, refused while rolling in D-Log2. Unknown bodies keep the chip;
+    /// a known Nano / Action does not.
     fn zoom_write(&mut self, write: ZoomWrite, now: f64) -> Vec<Intent> {
+        if self.model_id >= 0 && !opc_camera::supports_zoom(self.model_id) {
+            return Vec::new();
+        }
         self.chrome_stale = true;
         let write = match write {
             ZoomWrite::Slider(factor) => ZoomWrite::Slider(self.zoom_rules.clamp(factor)),
@@ -3318,7 +3322,8 @@ impl Shell {
                     parts: ChromeParts {
                         exposure: self.prefs.show_exposure,
                         status: self.prefs.show_status,
-                        zoom: self.prefs.show_zoom,
+                        zoom: self.prefs.show_zoom
+                            && (self.model_id < 0 || opc_camera::supports_zoom(self.model_id)),
                         pad: self.prefs.show_pad,
                         modes: self.prefs.show_modes,
                     },

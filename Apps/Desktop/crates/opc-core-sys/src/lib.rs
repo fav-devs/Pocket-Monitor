@@ -631,6 +631,7 @@ extern "C" {
     pub fn opc_tracking_rules(out: *mut OpcTrackingRules) -> i32;
     pub fn opc_model_supports_tap_focus(model_id: i32) -> i32;
     pub fn opc_model_supports_focus_mode(model_id: i32) -> i32;
+    pub fn opc_model_supports_zoom(model_id: i32) -> i32;
 
     /// Capture settings: shooting modes, formats, exposure ladders and colour wheels.
     pub fn opc_shooting_mode_wire_byte(raw: i32, model_id: i32) -> i32;

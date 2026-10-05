@@ -102,6 +102,10 @@ private let PPS = hex("4401c17312240890")
         #expect(nano.usesNanoLiveViewGate)
         #expect(CameraModel.resolve(modelId: 0x22, name: nil).liveViewEnableReceiver == 0x08)
         #expect(!CameraModel.resolve(modelId: 0x22, name: nil).usesNanoLiveViewGate)
+        let action6 = CameraModel.resolve(modelId: 0x18, name: nil)
+        #expect(action6.liveViewEnableReceiver == 0x41)
+        #expect(!action6.usesNanoLiveViewGate)
+        #expect(!action6.sendsLiveViewPrepare)
     }
 }
 

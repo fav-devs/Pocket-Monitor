@@ -192,6 +192,20 @@ pub fn supports_focus_mode(model_id: i32) -> bool {
     model_id != 0x0019
 }
 
+/// Whether this body has the Pocket zoom chip and `0xB8` SETs. Nano is a fixed 1×
+/// prime; Action 6 uses a different encoding. Unknown bodies fail closed once the
+/// model id is known. Without the core linked, only the Nano's id is refused.
+#[cfg(opc_core_linked)]
+pub fn supports_zoom(model_id: i32) -> bool {
+    // Safety: a plain value in.
+    unsafe { opc_core_sys::opc_model_supports_zoom(model_id) != 0 }
+}
+
+#[cfg(not(opc_core_linked))]
+pub fn supports_zoom(model_id: i32) -> bool {
+    model_id != 0x0019
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

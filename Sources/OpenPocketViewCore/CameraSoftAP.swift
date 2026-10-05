@@ -449,9 +449,13 @@ extension CameraSoftAP {
     /// Pocket live-entry: `0x02/0x68` `08` immediately before `0x09/0xa8`
     /// (`mimo-disconnect-20260822-105228`). That pair starts a clean GOP
     /// (137 B VPS) instead of leftover TRAIL P-frames. Nano has no captured
-    /// 0x68 pair — skip it when the Nano gate is in use.
+    /// 0x68 pair; Action 6 Mimo never sent it either.
     public static func shouldSendLiveViewPrepare(usesNanoLiveViewGate: Bool) -> Bool {
         !usesNanoLiveViewGate
+    }
+
+    public static func shouldSendLiveViewPrepare(model: CameraModel) -> Bool {
+        model.sendsLiveViewPrepare
     }
 
     /// `0x02/0x0c` is gallery enter/exit, not live-start. Unconditional exit

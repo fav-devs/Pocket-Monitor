@@ -295,6 +295,12 @@ func opc_model_supports_tap_focus(_ modelId: Int32) -> Int32 {
     CameraModel.resolve(modelId: Int(modelId), name: nil).supportsTapFocus ? 1 : 0
 }
 
+/// Whether this body has the Pocket zoom chip and `0xB8` SETs.
+@_cdecl("opc_model_supports_zoom")
+func opc_model_supports_zoom(_ modelId: Int32) -> Int32 {
+    CameraModel.resolve(modelId: Int(modelId), name: nil).supportsZoom ? 1 : 0
+}
+
 // MARK: - Sticks, triggers and bodies
 
 /// A game controller's left stick onto the gimbal axes, with the phones' deadzone,
