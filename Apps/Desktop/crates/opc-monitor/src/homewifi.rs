@@ -70,43 +70,76 @@ pub fn allows_missing_role_query(model_id: Option<i32>) -> bool {
     matches!(model_id, Some(0x0020 | 0x0019))
 }
 
+fn ipv4_token(text: &str) -> Option<Ipv4Addr> {
+    text.trim().parse().ok()
+}
+
 /// The IPv4 networks in `ipconfig` output: each adapter's address with its mask. Only
 /// adapters with a default gateway count, which leaves out the camera's own network
 /// and anything virtual.
+///
+/// Dual-stack Windows lists an IPv6 gateway on the `Default Gateway` line and the
+/// IPv4 address on the next indented line. That continuation is a gateway too.
 pub fn networks_from_ipconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
     let mut networks = Vec::new();
     let mut address: Option<Ipv4Addr> = None;
     let mut mask: Option<Ipv4Addr> = None;
     let mut gateway = false;
+    let mut more_gateways = false;
     let value = |line: &str| -> Option<String> {
         line.split_once(':')
             .map(|(_, v)| v.trim().to_string())
             .filter(|v| !v.is_empty())
     };
+    let flush = |networks: &mut Vec<(Ipv4Addr, Ipv4Addr)>,
+                 address: &mut Option<Ipv4Addr>,
+                 mask: &mut Option<Ipv4Addr>,
+                 gateway: &mut bool,
+                 more_gateways: &mut bool| {
+        if let (Some(a), Some(m), true) = (*address, *mask, *gateway) {
+            networks.push((a, m));
+        }
+        *address = None;
+        *mask = None;
+        *gateway = false;
+        *more_gateways = false;
+    };
     for line in text.lines() {
         let trimmed = line.trim_start();
         let is_adapter_header = !line.starts_with(' ') && line.contains("adapter");
         if is_adapter_header {
-            if let (Some(a), Some(m), true) = (address, mask, gateway) {
-                networks.push((a, m));
-            }
-            address = None;
-            mask = None;
-            gateway = false;
+            flush(
+                &mut networks,
+                &mut address,
+                &mut mask,
+                &mut gateway,
+                &mut more_gateways,
+            );
             continue;
         }
         if trimmed.starts_with("IPv4 Address") {
-            address =
-                value(trimmed).and_then(|v| v.trim_end_matches("(Preferred)").trim().parse().ok());
+            more_gateways = false;
+            address = value(trimmed).and_then(|v| ipv4_token(v.trim_end_matches("(Preferred)")));
         } else if trimmed.starts_with("Subnet Mask") {
-            mask = value(trimmed).and_then(|v| v.parse().ok());
+            more_gateways = false;
+            mask = value(trimmed).and_then(|v| ipv4_token(&v));
         } else if trimmed.starts_with("Default Gateway") {
-            gateway = value(trimmed).is_some_and(|v| v.parse::<Ipv4Addr>().is_ok());
+            gateway = value(trimmed).is_some_and(|v| ipv4_token(&v).is_some());
+            more_gateways = !gateway;
+        } else if more_gateways && line.starts_with(' ') && !trimmed.contains(". .") {
+            if ipv4_token(trimmed).is_some() {
+                gateway = true;
+                more_gateways = false;
+            }
         }
     }
-    if let (Some(a), Some(m), true) = (address, mask, gateway) {
-        networks.push((a, m));
-    }
+    flush(
+        &mut networks,
+        &mut address,
+        &mut mask,
+        &mut gateway,
+        &mut more_gateways,
+    );
     networks
 }
 
@@ -226,6 +259,37 @@ Ethernet adapter vEthernet (WSL):
                 Ipv4Addr::new(192, 168, 1, 23),
                 Ipv4Addr::new(255, 255, 255, 0)
             )]
+        );
+    }
+
+    #[test]
+    fn ipconfig_reads_an_ipv4_gateway_under_an_ipv6_one() {
+        let text = "\
+Windows IP Configuration
+
+Unknown adapter Tailscale:
+
+   IPv4 Address. . . . . . . . . . . : 100.90.183.17
+   Subnet Mask . . . . . . . . . . . : 255.255.255.255
+   Default Gateway . . . . . . . . . :
+
+Ethernet adapter Ethernet:
+
+   IPv4 Address. . . . . . . . . . . : 192.168.56.1
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . :
+
+Wireless LAN adapter Wi-Fi:
+
+   IPv4 Address. . . . . . . . . . . : 10.0.0.58
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : fe80::e2db:d1ff:fef8:15ed%10
+                                       10.0.0.1
+";
+        assert_eq!(
+            networks_from_ipconfig(text),
+            [(Ipv4Addr::new(10, 0, 0, 58), Ipv4Addr::new(255, 255, 255, 0))],
+            "the Wi-Fi IPv4 gateway is on the line under the IPv6 one"
         );
     }
 
