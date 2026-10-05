@@ -337,16 +337,17 @@ role the phone apps use for their multi-camera stage — and then the viewfinder
 on your own Wi-Fi and links it there directly, with every control, while the PC stays
 online.
 
-Pair as usual. On the **Pairing complete** screen pick **Put the camera on my Wi-Fi
+Pair as usual. A camera already on this Wi-Fi skips SoftAP name and password and is
+found on the LAN. On the **Pairing complete** screen pick **Put the camera on my Wi-Fi
 instead**, type the network's name (the PC's own is filled in) and its password, and
 press **Join Wi-Fi**. Over Bluetooth the app then reads the camera's identity, asks its
 Wi-Fi role, switches it to station mode and reads the role back until the radio has
 turned, gives the radio ten seconds, and sends the join, up to three times as the core's
 policy allows. The password goes to the camera and is not kept on the PC. Then the app
-looks for the camera: every address on the PC's network is asked for the camera's poke
-port, and each that answers is opened as a datalink and asked for its Wi-Fi identity,
-which has to match what the camera said over Bluetooth. Only that match makes an
-address the camera's.
+looks for the camera: every address on the PC's network is asked on TCP 9004 (and 7001
+if that is quiet), and each that answers is opened as a datalink and asked for its Wi-Fi identity,
+which has to match what the camera said over Bluetooth. When that getter is silent, the
+handshake itself is enough.
 
 Once found, the network name, the identity and the address are remembered beside the
 saved-camera file, and every later launch looks there first, last address before the

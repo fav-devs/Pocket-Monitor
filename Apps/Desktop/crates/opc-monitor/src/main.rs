@@ -285,24 +285,37 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         (Some(addr), mid)
     } else {
         // A camera on the operator's own network is looked for there first: no Wi-Fi
-        // change, no Bluetooth.
-        if let Some(saved) = station::load() {
+        // change, no Bluetooth. This has to happen before joining the camera's own
+        // network, which would take the PC off the LAN the camera is already on.
+        let saved_station = station::load();
+        let identity = saved_station
+            .as_ref()
+            .map(|saved| saved.identity.clone())
+            .unwrap_or_default();
+        let last = saved_station.as_ref().and_then(|saved| saved.address);
+        if saved_station.is_some() {
             log_connection("looking for the camera on the saved home network");
-            if let Some(address) = station::find_camera(&saved.identity, saved.address) {
-                let mut remembered = saved.clone();
+        } else {
+            log_connection("looking for a camera already on this Wi-Fi");
+        }
+        let look = station::find_camera(&identity, last);
+        if let Some(address) = look.camera {
+            if let Some(mut remembered) = saved_station.clone() {
                 if let std::net::IpAddr::V4(v4) = address.ip() {
                     remembered.address = Some(v4);
                 }
                 let _ = station::save(&remembered);
-                relaunch_viewfinder_at(
-                    args,
-                    address,
-                    saved
-                        .model_id
-                        .or_else(|| model_id_str.and_then(|text| text.parse().ok())),
-                )?;
-                return Ok(());
             }
+            relaunch_viewfinder_at(
+                args,
+                address,
+                saved_station
+                    .and_then(|saved| saved.model_id)
+                    .or_else(|| model_id_str.and_then(|text| text.parse().ok())),
+            )?;
+            return Ok(());
+        }
+        if saved_station.is_some() {
             log_connection("camera not on the home network; trying its own Wi-Fi");
         }
         // A first pair creates a manual Windows WLAN profile. On later launches that

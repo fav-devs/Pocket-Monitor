@@ -116,19 +116,35 @@ pub fn current_ssid() -> Option<String> {
 
 // ---- The search -------------------------------------------------------------
 
-const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
+const PROBE_TIMEOUT: Duration = Duration::from_millis(400);
 const PROBE_PARALLEL: usize = 32;
 const PROBE_MOST: usize = 8;
-const VERIFY_TIMEOUT: Duration = Duration::from_secs(6);
+const VERIFY_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn probe_on(hosts: &[Ipv4Addr], port: u16) -> Vec<Ipv4Addr> {
+    lan::probe_hosts(hosts, port, PROBE_TIMEOUT, PROBE_PARALLEL, PROBE_MOST)
+}
+
+/// What a walk of this machine's networks found.
+pub struct LanFind {
+    pub camera: Option<SocketAddr>,
+}
 
 /// Where the camera with this identity answers: its last address first, then every
-/// host on this machine's networks that has the poke port open.
-pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr> {
+/// host on this machine's networks that has the datalink port — or the poke port —
+/// open. An empty `identity` accepts a body that answers the handshake.
+pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> LanFind {
     if let Some(address) = last {
         let candidate = SocketAddr::from((address, lan::DATALINK_PORT));
         log(&format!("trying the last address {candidate}"));
-        if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
-            return Some(candidate);
+        match lan::identify_camera(candidate, identity, VERIFY_TIMEOUT) {
+            Ok(why) => {
+                log(&format!("camera found at {candidate} ({why})"));
+                return LanFind {
+                    camera: Some(candidate),
+                };
+            }
+            Err(why) => log(&format!("{candidate} {why}")),
         }
     }
     let networks = local_networks();
@@ -143,25 +159,27 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
             continue;
         };
         log(&format!("searching {} hosts around {address}", hosts.len()));
-        let hits = lan::probe_hosts(
-            &hosts,
-            lan::POKE_PORT,
-            PROBE_TIMEOUT,
-            PROBE_PARALLEL,
-            PROBE_MOST,
-        );
+        let mut hits = probe_on(&hosts, lan::DATALINK_PORT);
+        for hit in probe_on(&hosts, lan::POKE_PORT) {
+            if !hits.contains(&hit) {
+                hits.push(hit);
+            }
+        }
+        log(&format!("{} hosts answered", hits.len()));
         for hit in hits {
             let candidate = SocketAddr::from((hit, lan::DATALINK_PORT));
-            if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
-                log(&format!("camera found at {candidate}"));
-                return Some(candidate);
+            match lan::identify_camera(candidate, identity, VERIFY_TIMEOUT) {
+                Ok(why) => {
+                    log(&format!("camera found at {candidate} ({why})"));
+                    return LanFind {
+                        camera: Some(candidate),
+                    };
+                }
+                Err(why) => log(&format!("{candidate} {why}")),
             }
-            log(&format!(
-                "{candidate} answers the poke but is not this camera"
-            ));
         }
     }
-    None
+    LanFind { camera: None }
 }
 
 // ---- Bluetooth --------------------------------------------------------------

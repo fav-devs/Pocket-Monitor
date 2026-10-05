@@ -34,7 +34,12 @@ const ERR: Color32 = Color32::from_rgb(220, 70, 70);
 #[derive(Debug)]
 enum BleCmd {
     Scan,
-    Pair(String),
+    Pair {
+        address: String,
+        /// BLE advertised name, used when the camera is already on a network and
+        /// does not answer the SoftAP SSID getter.
+        name: String,
+    },
     /// Put the camera on the operator's network.
     Station {
         address: String,
@@ -56,6 +61,7 @@ enum BleEvent {
     Credentials {
         ssid: String,
         password: String,
+        identity: Vec<u8>,
     },
     /// The camera took the network; `confirmed` is false when its reply never came and
     /// the LAN search has to say.
@@ -156,6 +162,8 @@ struct ConnectApp {
     search_rx: Option<mpsc::Receiver<Option<std::net::SocketAddr>>>,
     /// What to remember once the search finds the camera.
     pending_station: Option<SavedStation>,
+    /// SoftAP credentials from pairing, used if the camera is not already on this LAN.
+    pending_softap: Option<(String, String, Option<i32>)>,
 }
 
 impl ConnectApp {
@@ -183,14 +191,29 @@ impl ConnectApp {
             camera_address: String::new(),
             search_rx: None,
             pending_station: None,
+            pending_softap: None,
         }
     }
 
     /// Looks for the camera on this machine's networks, off the UI thread.
-    fn search_for(&mut self, identity: Vec<u8>, last: Option<std::net::Ipv4Addr>) {
+    /// `extra_tries` is for a station join whose DHCP address is still arriving.
+    fn search_for(
+        &mut self,
+        identity: Vec<u8>,
+        last: Option<std::net::Ipv4Addr>,
+        extra_tries: u32,
+    ) {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let _ = tx.send(station::find_camera(&identity, last));
+            let mut found = station::find_camera(&identity, last).camera;
+            for _ in 0..extra_tries {
+                if found.is_some() {
+                    break;
+                }
+                thread::sleep(Duration::from_secs(2));
+                found = station::find_camera(&identity, last).camera;
+            }
+            let _ = tx.send(found);
         });
         self.search_rx = Some(rx);
         self.screen = Screen::Searching("Finding the camera on your Wi-Fi\u{2026}".into());
@@ -379,7 +402,10 @@ impl ConnectApp {
                     self.camera_name = name.clone();
                     self.camera_address = addr.clone();
                     self.model_id = mid;
-                    let _ = self.tx.send(BleCmd::Pair(addr));
+                    let _ = self.tx.send(BleCmd::Pair {
+                        address: addr,
+                        name: name.clone(),
+                    });
                     self.screen = Screen::Pairing {
                         label: "Connecting\u{2026}".into(),
                         camera: name,
@@ -729,12 +755,22 @@ impl eframe::App for ConnectApp {
                         return;
                     }
                     (None, _) => {
-                        self.screen = Screen::Failed(
-                            "The camera joined, but this PC could not find it on the network. \
-                             Check that both are on the same Wi-Fi and that the router does not \
-                             isolate its clients, then try again."
-                                .into(),
-                        );
+                        if let Some((ssid, password, model_id)) = self.pending_softap.take() {
+                            self.screen = Screen::WifiReady {
+                                camera: self.camera_name.clone(),
+                                ssid,
+                                password,
+                                model_id,
+                                show_pass: false,
+                            };
+                        } else {
+                            self.screen = Screen::Failed(
+                                "The camera joined, but this PC could not find it on the network. \
+                                 Check that both are on the same Wi-Fi and that the router does not \
+                                 isolate its clients, then try again."
+                                    .into(),
+                            );
+                        }
                     }
                 }
             }
@@ -766,14 +802,33 @@ impl eframe::App for ConnectApp {
                     let camera = self.camera_name.clone();
                     self.screen = Screen::AwaitingApproval { camera };
                 }
-                BleEvent::Credentials { ssid, password } => {
-                    self.screen = Screen::WifiReady {
-                        camera: self.camera_name.clone(),
-                        ssid,
-                        password,
-                        model_id: self.model_id,
-                        show_pass: false,
-                    };
+                BleEvent::Credentials {
+                    ssid,
+                    password,
+                    identity,
+                } => {
+                    if !password.is_empty() {
+                        // Camera is hosting its own AP — go straight to Join & Connect.
+                        self.pending_softap = None;
+                        self.screen = Screen::WifiReady {
+                            camera: self.camera_name.clone(),
+                            ssid,
+                            password,
+                            model_id: self.model_id,
+                            show_pass: false,
+                        };
+                    } else {
+                        self.pending_softap = None;
+                        if self.pending_station.is_none() {
+                            self.pending_station = Some(SavedStation {
+                                ssid: station::current_ssid().unwrap_or(ssid),
+                                identity: identity.clone(),
+                                address: None,
+                                model_id: self.model_id,
+                            });
+                        }
+                        self.search_for(identity, None, 1);
+                    }
                 }
                 BleEvent::StationDone {
                     identity,
@@ -785,7 +840,7 @@ impl eframe::App for ConnectApp {
                     if !confirmed {
                         eprintln!("the camera did not confirm the join; searching anyway");
                     }
-                    self.search_for(identity, None);
+                    self.search_for(identity, None, 2);
                 }
                 BleEvent::StationReset => {
                     self.screen = Screen::Info {
@@ -973,7 +1028,7 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                 }
             }
 
-            BleCmd::Pair(address) => {
+            BleCmd::Pair { address, name: advertised } => {
                 if let Err(e) = transport.connect(&address) {
                     let _ = tx.send(BleEvent::Error(format!("Connect failed: {e}")));
                     continue;
@@ -1169,6 +1224,8 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                     continue;
                 }
                 let mut ssid = String::new();
+                let mut identity = Vec::new();
+                let mut got_softap_ssid = false;
                 let ssid_dl = Instant::now() + Duration::from_secs(10);
                 'ssid: loop {
                     cancel_check!('ssid);
@@ -1180,21 +1237,32 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                             if let Ok(s) = status_string(&f.payload) {
                                 if !s.is_empty() {
                                     ssid = s;
+                                    identity = f.payload.clone();
+                                    got_softap_ssid = true;
                                     return true;
                                 }
                             }
                         }
                         false
                     });
-                    if !ssid.is_empty() {
+                    if got_softap_ssid {
                         break 'ssid;
                     }
                     thread::sleep(Duration::from_millis(50));
                 }
-                if ssid.is_empty() {
-                    let _ = tx.send(BleEvent::Error(
-                        "Camera did not return a Wi-Fi name.".into(),
-                    ));
+
+                // Station-mode cameras do not answer 0x07/0x07; the BLE advertisement
+                // already carries the name. Search this LAN instead of failing.
+                if !got_softap_ssid {
+                    if ssid.is_empty() && !advertised.is_empty() {
+                        ssid = advertised.clone();
+                    }
+                    plog!("pair: no SoftAP SSID; searching LAN as {ssid}");
+                    let _ = tx.send(BleEvent::Credentials {
+                        ssid,
+                        password: String::new(),
+                        identity,
+                    });
                     let _ = transport.disconnect();
                     continue;
                 }
@@ -1243,7 +1311,11 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                 }
 
                 plog!("pair: done  ssid={ssid}");
-                let _ = tx.send(BleEvent::Credentials { ssid, password });
+                let _ = tx.send(BleEvent::Credentials {
+                    ssid,
+                    password,
+                    identity,
+                });
                 let _ = transport.disconnect();
             }
 
