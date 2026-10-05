@@ -105,9 +105,15 @@ fn main() -> ExitCode {
     let log_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("opc-monitor.log")));
-    let mut log = log_path
-        .as_deref()
-        .and_then(|p| std::fs::File::create(p).ok());
+    // Append: the viewfinder child used to truncate this file and wipe the parent
+    // pairing / LAN-search lines that explain a failed connect.
+    let mut log = log_path.as_deref().and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    });
     macro_rules! log {
         ($($t:tt)*) => {
             if let Some(ref mut f) = log {
@@ -116,7 +122,7 @@ fn main() -> ExitCode {
             }
         };
     }
-    log!("opc-monitor starting");
+    log!("opc-monitor starting pid={}", std::process::id());
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Catch panics and write them to the log before the process aborts.
