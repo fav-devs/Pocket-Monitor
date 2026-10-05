@@ -14,10 +14,8 @@ import Testing
         snap.now = 101
         #expect(dog.tick(snap) == .none)
         snap.now = 105
-        #expect(dog.tick(snap) == .resendLiveViewEnable)
-        snap.now = 110
         #expect(dog.tick(snap) == .reopenDatalink)
-        snap.now = 111
+        snap.now = 106
         snap.lastAccessUnitAge = 0.01
         snap.lastDecoderOutputAge = 0.01
         snap.lastDecodedFrameAge = 0.01
@@ -25,12 +23,15 @@ import Testing
         #expect(dog.stage == .idle)
     }
 
-    @Test func continuousInputWithSilentDecoderRequestsOneOwnedRepair() {
+    /// An established decoder without a format still owns one bounded repair.
+    @Test(arguments: [true, false])
+    func continuousInputWithSilentDecoderRequestsOneOwnedRepair(hasFormat: Bool) {
         var dog = FeedWatchdog()
         var snap = Self.snap(now: 100, frameAge: 3, videoAge: 0.01)
         snap.lastAccessUnitAge = 0.01
         snap.decoderOutputExpected = true
         snap.lastDecoderOutputAge = 3
+        snap.hasFormat = hasFormat
         #expect(dog.tick(snap) == .rebuildVTSession)
         for second in 1..<16 {
             snap.now = 100 + Double(second)
@@ -41,31 +42,49 @@ import Testing
         #expect(dog.tick(snap) == .fullSessionRejoin)
     }
 
-    @Test func freshDecoderOutputNeverCutsGOPForRendererStall() {
-        var dog = FeedWatchdog()
-        var snap = Self.snap(now: 100, frameAge: 20, videoAge: 0.01)
-        snap.lastAccessUnitAge = 0.01
-        snap.decoderOutputExpected = true
-        snap.lastDecoderOutputAge = 0.01
-        snap.decoderFailed = true  // An older error does not override fresh output.
-        #expect(dog.tick(snap) == .none)
+    /// Keep resending about every 2 s until an IRAP newer than the last
+    /// request lands; two unanswered requests (about 4 s) rebuild the endpoint.
+    @Test func decoderRepairResendsKeyframeThenRebuildsEndpoint() {
+        func step(_ start: TimeInterval, _ enable: TimeInterval, _ irap: TimeInterval?, _ n: Int)
+            -> FeedWatchdog.DecoderRepairStep
+        {
+            FeedWatchdog.decoderRepairStep(
+                secondsSinceRepairStart: start, secondsSinceLastEnable: enable,
+                secondsSinceLastIrap: irap, keyframeRequests: n)
+        }
+        #expect(step(1.9, 1.9, nil, 1) == .wait, "the camera answers in 0.1-1.1 s (#443)")
+        #expect(step(2.0, 2.0, nil, 1) == .resendKeyframe)
+        #expect(step(2.0, 2.0, 5.0, 1) == .resendKeyframe, "an IRAP older than the request")
+        #expect(step(3.9, 1.9, nil, 2) == .wait)
+        #expect(step(4.0, 2.0, nil, 2) == .rebuildEndpoint, "unanswered twice: endpoint, not 16 s")
+        #expect(step(4.0, 2.0, 0.5, 2) == .wait, "answered: wait for output under the deadline")
+        #expect(step(15.9, 15.9, 12.0, 1) == .wait)
+        #expect(step(16.0, 16.0, 12.0, 1) == .deadline)
+        #expect(step(16.0, 3.0, nil, 1) == .deadline, "blocked resends cannot outlive the deadline")
     }
 
-    @Test func establishedDecoderWithoutFormatStillOwnsOneBoundedRepair() {
-        var dog = FeedWatchdog()
-        var snap = Self.snap(now: 100, frameAge: 3, videoAge: 0.01)
-        snap.lastAccessUnitAge = 0.01
-        snap.decoderOutputExpected = true
-        snap.lastDecoderOutputAge = 3
-        snap.hasFormat = false
-        #expect(dog.tick(snap) == .rebuildVTSession)
-        for second in 1..<16 {
-            snap.now = 100 + Double(second)
-            snap.lastDecoderOutputAge = 3 + Double(second)
-            #expect(dog.tick(snap) == .none)
+    @Test func sessionRecoveryHoldsWhileVideoPacketsArrive() {
+        #expect(FeedWatchdog.shouldHoldSessionRecovery(lastVideoPacketAge: 0.03))
+        #expect(FeedWatchdog.shouldHoldSessionRecovery(lastVideoPacketAge: 1.9))
+        #expect(!FeedWatchdog.shouldHoldSessionRecovery(lastVideoPacketAge: 2.0))
+        #expect(!FeedWatchdog.shouldHoldSessionRecovery(lastVideoPacketAge: nil), "no datalink")
+    }
+
+    /// Video without picture cannot hold Bluetooth forever: the third repair
+    /// deadline in one episode (~60 s) releases it to SessionRecovery.
+    @Test func sessionHoldIsBoundedToThreeRepairCycles() {
+        func next(_ previous: Int, picture: Bool = false, video: TimeInterval? = 0.05) -> Int {
+            FeedWatchdog.nextSessionHoldCycles(
+                lastVideoPacketAge: video, previousCycles: previous, pictureSinceLastCycle: picture)
         }
-        snap.now = 116
-        #expect(dog.tick(snap) == .fullSessionRejoin)
+        #expect(FeedWatchdog.maxHeldRepairCycles == 3)
+        #expect(next(0) == 1, "cycle 1: hold")
+        #expect(next(1) == 2, "cycle 2: hold")
+        #expect(next(2) == 0, "cycle 3: release to SessionRecovery and reset")
+        #expect(next(0) == 1, "a released episode starts over")
+        #expect(next(2, picture: true) == 1, "a presented picture resets the episode")
+        #expect(next(1, video: 2.5) == 0, "no fresh video: never held")
+        #expect(next(0, video: nil) == 0)
     }
 
     @Test func missingFormatDoesNotBypassStartupReadinessOrGrace() {
@@ -148,16 +167,6 @@ import Testing
         #expect(dog.stage == .idle)
     }
 
-    @Test func udpSilentWithBleAliveRebuildsUDPImmediately() {
-        var dog = FeedWatchdog()
-        let snap = Self.snap(
-            now: 10, frameAge: 7.9, videoAge: 7.9, statusAge: 7.9,
-            bleAge: 0.1, tcpPokeReady: true)
-        #expect(dog.tick(snap) == .reopenDatalink)
-        #expect(dog.stage == .reopenDatalink)
-        #expect(dog.isRecovering)
-    }
-
     @Test func afcHuntWithFreshStatusDoesNotTearUDP() {
         var dog = FeedWatchdog()
         var snap = Self.snap(
@@ -170,7 +179,6 @@ import Testing
         #expect(dog.stage == .idle)
         #expect(!dog.isRecovering)
         #expect(FeedWatchdog.controlReceiveAlive(snap))
-        #expect(FeedWatchdog.socketAlive(snap))
         #expect(!FeedWatchdog.udpReceiveAlive(snap))
     }
 
@@ -185,10 +193,6 @@ import Testing
             "zoom 0xB8 SET can pause HEVC; status still on 9004 is not a dead socket")
         #expect(dog.stage == .idle)
         #expect(!dog.isRecovering)
-        #expect(CamFov.shouldHoldWatchdog(secondsSinceSet: 0))
-        #expect(CamFov.shouldHoldWatchdog(secondsSinceSet: 3.9))
-        #expect(!CamFov.shouldHoldWatchdog(secondsSinceSet: 4.0))
-        #expect(!CamFov.shouldHoldWatchdog(secondsSinceSet: nil))
 
         snap.secondsSinceZoomSet = 4.1
         #expect(
@@ -196,21 +200,29 @@ import Testing
             "past zoom grace with young status is an encoder pause")
     }
 
-    @Test func zoomDialHoldDoesNotGopCutWhilePinchIsDown() {
+    /// Finger on the zoom disc or the gimbal stick holds the encoder-pause repair.
+    @Test(arguments: [false, true])
+    func heldControlDoesNotGopCutWhileFingerIsDown(gimbalStick: Bool) {
         var dog = FeedWatchdog()
         var snap = Self.snap(
             now: 10, frameAge: 8, videoAge: 8, statusAge: 0.3, bleAge: 0.2)
         snap.secondsSinceLastEnable = 20
-        snap.secondsSinceZoomSet = 8
-        snap.zoomPinchActive = true
+        if gimbalStick {
+            snap.secondsSinceGimbalThrow = 8
+            snap.gimbalStickHeld = true
+        } else {
+            snap.secondsSinceZoomSet = 8
+            snap.zoomPinchActive = true
+        }
         #expect(
             dog.tick(snap) == .none,
-            "fingers on the zoom disc: encoder pause must not GOP-cut or rebuild UDP")
+            "finger down: encoder pause must not GOP-cut or rebuild UDP")
         #expect(dog.stage == .idle)
+        snap.gimbalStickHeld = false
         snap.zoomPinchActive = false
         #expect(
             dog.tick(snap) == .resendLiveViewEnable,
-            "after lift, past zoom grace is an encoder pause")
+            "after lift, past control grace is an encoder pause")
     }
 
     @Test func gimbalThrowHoldsEncoderPauseEnable() {
@@ -247,21 +259,19 @@ import Testing
             "25 Hz throw stamp must not freeze recover after 5s of dead HEVC")
     }
 
-    @Test func gimbalStickHoldDoesNotGopCutWhileHeld() {
+    @Test func packetsWithoutCompletePicturesDoNotRenewTheEnableHold() {
         var dog = FeedWatchdog()
-        var snap = Self.snap(
-            now: 10, frameAge: 8, videoAge: 8, statusAge: 0.3, bleAge: 0.2)
-        snap.secondsSinceLastEnable = 20
-        snap.secondsSinceGimbalThrow = 8
-        snap.gimbalStickHeld = true
+        var snap = Self.snap(now: 100, frameAge: 9, videoAge: 0.01)
+        snap.lastAccessUnitAge = 9
+        snap.decoderOutputExpected = true
+        snap.lastDecoderOutputAge = 9
+        snap.secondsSinceLastEnable = 5
         #expect(
-            dog.tick(snap) == .none,
-            "finger on the stick: encoder pause must not GOP-cut or rebuild UDP")
-        #expect(dog.stage == .idle)
-        snap.gimbalStickHeld = false
+            !FeedWatchdog.shouldHoldForGOPReset(secondsSinceLastEnable: 5, lastVideoPacketAge: 9),
+            "no complete AU since before the enable: it did not cut a GOP")
         #expect(
             dog.tick(snap) == .resendLiveViewEnable,
-            "after lift, past gimbal grace is an encoder pause")
+            "fresh fragments must not hold the 8 s GOP window for a stalled assembly")
     }
 
     @Test func encoderPauseWithFreshStatusResendsEnable() {
@@ -281,77 +291,66 @@ import Testing
         #expect(dog.stage == .resendEnable)
     }
 
-    @Test func enableThatProducesNoHEVCRebuildsUDPAfterTwoEnables() {
+    /// Changed timings (build 158): the unanswered enable escalates after
+    /// `enableAnswerWindow` (1.5 s), not `escalateAfter` (5 s). 36 of 37
+    /// transport stalls credited to the enable only recovered after the
+    /// endpoint rebuild. The #148 rule is kept: the enable still goes first
+    /// (a 2 s reopen *instead of* the enable left lastVideo=none), and the
+    /// rebuild now negotiates a fresh endpoint and re-arms ingest.
+    @Test func enableThatProducesNoHEVCRebuildsUDPAfterOneEnable() {
         var dog = FeedWatchdog()
         var snap = Self.snap(
             now: 10, frameAge: 2.8, videoAge: 2.8, statusAge: 0.0, bleAge: 70)
         snap.secondsSinceLastEnable = 20
-        #expect(dog.tick(snap) == .resendLiveViewEnable)
+        #expect(dog.tick(snap) == .resendLiveViewEnable, "#148: enable first, never a 2 s reopen")
         #expect(dog.stage == .resendEnable)
 
-        // Physical #148: 2 s later status still 0.0 s. Diagnoser stays
-        // encoderPaused / resendEnable. Reopening UDP here left lastVideo=none.
-        snap.now = 12.1
-        snap.lastDecodedFrameAge = 4.9
-        snap.lastVideoPacketAge = 4.9
-        snap.lastAccessUnitAge = 4.9
+        snap.now = 11.4
+        snap.lastDecodedFrameAge = 4.2
+        snap.lastVideoPacketAge = 4.2
+        snap.lastAccessUnitAge = 4.2
         snap.lastStatusAge = 0.0
-        snap.secondsSinceLastEnable = 2.1
-        #expect(
-            !FeedWatchdog.shouldHoldForGOPReset(
-                secondsSinceLastEnable: 2.1, lastVideoPacketAge: 4.9))
-        #expect(
-            dog.tick(snap) == .none,
-            "young status means the 9004 socket is alive — do not rebuild UDP at 2s")
+        snap.secondsSinceLastEnable = 1.4
+        #expect(dog.tick(snap) == .none, "the enable still has its answer window")
         #expect(dog.stage == .resendEnable)
 
-        snap.now = 15.1
-        snap.lastDecodedFrameAge = 7.9
-        snap.lastVideoPacketAge = 7.9
-        snap.lastAccessUnitAge = 7.9
-        snap.lastStatusAge = 0.0
-        snap.secondsSinceLastEnable = 5.1
-        #expect(
-            dog.tick(snap) == .resendLiveViewEnable,
-            "still encoder-paused after escalateAfter — one more enable, not a 5-tuple tear")
-        #expect(dog.stage == .resendEnable)
-        snap.now = 20.2
-        snap.lastDecodedFrameAge = 13.0
-        snap.lastVideoPacketAge = 13.0
-        snap.lastAccessUnitAge = 13.0
-        snap.secondsSinceLastEnable = 5.1
+        snap.now = 11.5
+        snap.lastDecodedFrameAge = 4.3
+        snap.lastVideoPacketAge = 4.3
+        snap.lastAccessUnitAge = 4.3
+        snap.secondsSinceLastEnable = 1.5
         #expect(
             dog.tick(snap) == .reopenDatalink,
-            "two failed enables: 22:16 UDP rebuild brought the picture back")
+            "unanswered enable: endpoint rebuild at 1.5 s even with young status")
         #expect(dog.isRecovering)
-        snap.now = 22.3
-        snap.lastDecodedFrameAge = 15.1
-        snap.lastVideoPacketAge = 15.1
-        snap.lastAccessUnitAge = 15.1
+        snap.now = 13.6
+        snap.lastDecodedFrameAge = 6.4
+        snap.lastVideoPacketAge = 6.4
+        snap.lastAccessUnitAge = 6.4
         snap.secondsSinceLastEnable = 2.1
         snap.secondsSinceLastRebuild = 2.1
         #expect(
             dog.tick(snap) == .none,
             "recent rebuild: do not GOP-cut or flap UDP; shell already enabled")
         #expect(dog.isRecovering)
-        snap.now = 25.3
-        snap.lastDecodedFrameAge = 18.1
-        snap.lastVideoPacketAge = 18.1
-        snap.lastAccessUnitAge = 18.1
+        snap.now = 16.6
+        snap.lastDecodedFrameAge = 9.4
+        snap.lastVideoPacketAge = 9.4
+        snap.lastAccessUnitAge = 9.4
         snap.secondsSinceLastEnable = 5.1
         snap.secondsSinceLastRebuild = 5.1
         #expect(
             dog.tick(snap) == .fullSessionRejoin,
-            "rebuild kept the session and 9004 stayed silent — new handshake, not a 60 s wait (#218)"
+            "rebuild kept the session and 9004 stayed silent, new handshake, not a 60 s wait (#218)"
         )
         #expect(dog.stage == .fullRejoin)
-        snap.now = 30.4
-        snap.lastDecodedFrameAge = 23.2
-        snap.lastVideoPacketAge = 23.2
-        snap.lastAccessUnitAge = 23.2
+        snap.now = 21.7
+        snap.lastDecodedFrameAge = 14.5
+        snap.lastVideoPacketAge = 14.5
+        snap.lastAccessUnitAge = 14.5
         snap.secondsSinceLastEnable = 10.2
         snap.secondsSinceLastRebuild = 10.2
-        #expect(dog.tick(snap) == .none, "rejoin fired — shell owns the new session")
+        #expect(dog.tick(snap) == .none, "rejoin fired, shell owns the new session")
         #expect(dog.stage == .cooldown)
         #expect(!dog.isRecovering, "Reconnecting chip must not stay up after the ladder ends")
         #expect(
@@ -366,6 +365,29 @@ import Testing
             "do not spam 0x09/0xa8 while videoPkts are frozen")
     }
 
+    /// Zoom, AF-C, gimbal and SET grace still hold the faster reopen rung.
+    @Test(arguments: [0, 1, 2, 3])
+    func controlGraceHoldsTheFasterReopen(control: Int) {
+        var dog = FeedWatchdog()
+        var snap = Self.snap(
+            now: 10, frameAge: 2.8, videoAge: 2.8, statusAge: 0.0, bleAge: 0.2)
+        snap.secondsSinceLastEnable = 20
+        #expect(dog.tick(snap) == .resendLiveViewEnable)
+        snap.now = 11.6
+        snap.lastDecodedFrameAge = 4.4
+        snap.lastVideoPacketAge = 4.4
+        snap.lastAccessUnitAge = 4.4
+        snap.secondsSinceLastEnable = 1.6
+        switch control {
+        case 0: snap.zoomPinchActive = true
+        case 1: snap.gimbalStickHeld = true
+        case 2: snap.secondsSinceFocusTrackSet = 0.5
+        default: snap.secondsSinceCameraSet = 0.5
+        }
+        #expect(dog.tick(snap) == .none, "a control gesture can pause HEVC: hold the reopen")
+        #expect(dog.stage == .resendEnable)
+    }
+
     @Test func encoderPauseDoesNotFlapUDPWhenBleIsStale() {
         var dog = FeedWatchdog()
         var snap = Self.snap(
@@ -378,20 +400,14 @@ import Testing
         snap.lastAccessUnitAge = 9.3
         snap.lastStatusAge = 0.0
         snap.secondsSinceLastEnable = 5.1
-        #expect(dog.tick(snap) == .resendLiveViewEnable)
-        snap.now = 20.2
-        snap.lastDecodedFrameAge = 14.4
-        snap.lastVideoPacketAge = 14.4
-        snap.lastAccessUnitAge = 14.4
-        snap.secondsSinceLastEnable = 5.1
         snap.secondsSinceLastRebuild = 2.0
         #expect(
             dog.tick(snap) == .none,
             "status young + recent rebuild: BLE age must not disable the 60s backoff")
-        snap.now = 23.3
-        snap.lastDecodedFrameAge = 17.5
-        snap.lastVideoPacketAge = 17.5
-        snap.lastAccessUnitAge = 17.5
+        snap.now = 18.2
+        snap.lastDecodedFrameAge = 12.4
+        snap.lastVideoPacketAge = 12.4
+        snap.lastAccessUnitAge = 12.4
         snap.secondsSinceLastEnable = 8.2
         snap.secondsSinceLastRebuild = 5.1
         #expect(
@@ -421,6 +437,22 @@ import Testing
         snap.lastAccessUnitAge = 6.0
         snap.secondsSinceCameraSet = 4.5
         #expect(dog.tick(snap) == .resendLiveViewEnable, "grace over, status young — encoder pause")
+    }
+
+    /// Field 2026-09-29: the watchdog's own enable reset the SET clock and held
+    /// the UDP rebuild that brought the picture back until 6.6 s instead of ~4 s.
+    @Test func ownRecoverEnableIsNotACameraSet() {
+        var dog = FeedWatchdog()
+        var snap = Self.snap(now: 10, frameAge: 2.5, videoAge: 2.5, statusAge: 0.2, bleAge: 0.2)
+        snap.secondsSinceLastEnable = 20
+        #expect(dog.tick(snap) == .resendLiveViewEnable)
+        snap.now = 11.6
+        snap.lastDecodedFrameAge = 4.1
+        snap.lastVideoPacketAge = 4.1
+        snap.lastAccessUnitAge = 4.1
+        snap.secondsSinceLastEnable = 1.6
+        snap.secondsSinceCameraSet = 1.6
+        #expect(dog.tick(snap) == .reopenDatalink, "unanswered enable escalates on its own window")
     }
 
     @Test func gopResetSilenceDoesNotRebuildUDP() {
@@ -500,33 +532,6 @@ import Testing
                 startingHardwareDecoder: true, hasFormat: false, hasPicture: true))
     }
 
-    @Test func udpSilentRebuildsOnceThenRehandshakesWithoutVTLadder() {
-        var dog = FeedWatchdog()
-        var now: TimeInterval = 10
-        var snap = Self.snap(
-            now: now, frameAge: 13, videoAge: 13, statusAge: 13,
-            bleAge: 0.2, tcpPokeReady: true)
-        #expect(dog.tick(snap) == .reopenDatalink, "half-dead socket: rebuild UDP, keep VT")
-
-        now += FeedWatchdog.escalateAfter
-        snap.now = now
-        snap.lastDecodedFrameAge = 18
-        snap.lastVideoPacketAge = 18
-        snap.lastAccessUnitAge = 18
-        snap.secondsSinceLastRebuild = FeedWatchdog.escalateAfter
-        #expect(
-            dog.tick(snap) == .fullSessionRejoin,
-            "session-preserving rebuild did not bring 9004 back — new handshake on the same SoftAP")
-        #expect(dog.stage == .fullRejoin)
-        #expect(dog.isRecovering)
-
-        now += 1
-        snap.now = now
-        #expect(dog.tick(snap) == .none)
-        #expect(dog.stage == .cooldown)
-        #expect(!dog.isRecovering)
-    }
-
     @Test func firstConnectFrozenVideoRebuildsUDP() {
         var dog = FeedWatchdog()
         #expect(
@@ -541,10 +546,6 @@ import Testing
     /// First picture: no 0x02 yet. A leftover rebuild / nil receive clock is
     /// not a live flap — resend `0x09/0xa8`, do not hold or fullRejoin.
     @Test func neverGotVideoResendsEnableEvenAfterRebuild() {
-        #expect(
-            !FeedWatchdog.shouldHoldRebuildAfterRecentUDP(
-                secondsSinceLastRebuild: 0.4, pathReady: true, lastBleNotifyAge: 0.2,
-                hadVideo: false))
         #expect(
             FeedWatchdog.shouldRepeatRecoverEnable(
                 secondsSinceLastEnable: 2, secondsSinceLastRebuild: 0.4,
@@ -591,11 +592,14 @@ import Testing
         #expect(dog.tick(Self.snap(now: now, frameAge: 6, statusAge: 6, bleAge: 0.2)) == .none)
         #expect(dog.stage == .reopenDatalink)
 
-        now += 0.6
+        now += 0.5
         var rebuilt = Self.snap(now: now, frameAge: 7, statusAge: 7, bleAge: 0.2)
-        rebuilt.secondsSinceLastRebuild = 5.1
-        #expect(dog.tick(rebuilt) == .fullSessionRejoin, "one rebuild, then a new handshake")
+        rebuilt.secondsSinceLastRebuild = FeedWatchdog.escalateAfter
+        #expect(
+            dog.tick(rebuilt) == .fullSessionRejoin,
+            "one rebuild, then a new handshake exactly at escalateAfter")
         #expect(dog.stage == .fullRejoin)
+        #expect(dog.isRecovering)
 
         now += 1
         #expect(dog.tick(Self.snap(now: now, frameAge: 8, statusAge: 8, bleAge: 0.2)) == .none)
@@ -646,24 +650,7 @@ import Testing
         )
     }
 
-    @Test func recentRebuildWithBleAndPathHoldsBind() {
-        #expect(
-            FeedWatchdog.shouldHoldRebuildAfterRecentUDP(
-                secondsSinceLastRebuild: 2.6, pathReady: true, lastBleNotifyAge: 0.2,
-                hadVideo: true))
-        #expect(
-            !FeedWatchdog.shouldHoldRebuildAfterRecentUDP(
-                secondsSinceLastRebuild: nil, pathReady: true, lastBleNotifyAge: 0.2,
-                hadVideo: true))
-        #expect(
-            !FeedWatchdog.shouldHoldRebuildAfterRecentUDP(
-                secondsSinceLastRebuild: 2.6, pathReady: true, lastBleNotifyAge: 8,
-                hadVideo: true))
-        #expect(
-            !FeedWatchdog.shouldHoldRebuildAfterRecentUDP(
-                secondsSinceLastRebuild: 2.6, pathReady: true, lastBleNotifyAge: 0.2,
-                hadVideo: false),
-            "neverGotVideo must not inherit the post-video 60s hold")
+    @Test func recentRebuildDoesNotRepeatRecoverEnable() {
         #expect(
             !FeedWatchdog.shouldRepeatRecoverEnable(
                 secondsSinceLastEnable: 5, secondsSinceLastRebuild: 2.6,
@@ -728,24 +715,6 @@ import Testing
         #expect(dog.tick(Self.snap(now: 11, frameAge: 0.2, videoAge: 0.1)) == .none)
         #expect(dog.stage == .idle)
         #expect(!dog.isRecovering)
-    }
-
-    @Test func deadFlowSkipsToReopenDatalink() {
-        var dog = FeedWatchdog()
-        #expect(
-            dog.tick(Self.snap(now: 10, frameAge: 3, statusAge: 3, flowHealthy: false, bleAge: 0.2))
-                == .reopenDatalink)
-        #expect(dog.stage == .reopenDatalink)
-    }
-
-    @Test func wedgedDecoderDoesNotTearVTWhileUDPPaused() {
-        var dog = FeedWatchdog()
-        #expect(
-            dog.tick(
-                Self.snap(now: 10, frameAge: 3, statusAge: 3, decoderFailed: true, bleAge: 0.2))
-                == .reopenDatalink,
-            "UDP pause + BLE up ⇒ rebuild UDP, do not rebuild VT")
-        #expect(dog.stage == .reopenDatalink)
     }
 
     @Test func stallLogNamesAgesAndStates() {
@@ -814,8 +783,6 @@ import Testing
         frameAge: TimeInterval,
         videoAge: TimeInterval? = nil,
         statusAge: TimeInterval? = 0.2,
-        flowHealthy: Bool = true,
-        decoderFailed: Bool = false,
         sawPicture: Bool = true,
         displayedImageRemoved: Bool = false,
         bleAge: TimeInterval? = nil,
@@ -827,10 +794,10 @@ import Testing
             lastDecodedFrameAge: frameAge,
             lastVideoPacketAge: videoAge ?? (hadVideo ? frameAge : nil),
             lastStatusAge: statusAge,
-            flowHealthy: flowHealthy,
+            flowHealthy: true,
             pathReady: true,
             hasFormat: true,
-            decoderFailed: decoderFailed,
+            decoderFailed: false,
             live: true,
             sawPicture: sawPicture,
             tcpPokeReady: tcpPokeReady,

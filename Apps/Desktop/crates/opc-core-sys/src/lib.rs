@@ -406,6 +406,7 @@ pub struct OpcWatchdogSnapshot {
     pub last_ble_notify_age: f64,
     pub seconds_since_last_rebuild: f64,
     pub seconds_since_last_enable: f64,
+    pub seconds_since_last_irap: f64,
     pub seconds_since_focus_track_set: f64,
     pub seconds_since_zoom_set: f64,
     pub seconds_since_gimbal_throw: f64,
@@ -436,6 +437,7 @@ impl Default for OpcWatchdogSnapshot {
             last_ble_notify_age: -1.0,
             seconds_since_last_rebuild: -1.0,
             seconds_since_last_enable: -1.0,
+            seconds_since_last_irap: -1.0,
             seconds_since_focus_track_set: -1.0,
             seconds_since_zoom_set: -1.0,
             seconds_since_gimbal_throw: -1.0,
@@ -1039,10 +1041,10 @@ mod layout {
 
     #[test]
     fn the_watchdog_snapshot_matches_the_header_file() {
-        assert_eq!(size_of::<OpcWatchdogSnapshot>(), 136);
+        assert_eq!(size_of::<OpcWatchdogSnapshot>(), 144);
         assert_eq!(align_of::<OpcWatchdogSnapshot>(), 8);
-        assert_eq!(offset_of!(OpcWatchdogSnapshot, flow_healthy), 96);
-        assert_eq!(offset_of!(OpcWatchdogSnapshot, repair_blocked), 132);
+        assert_eq!(offset_of!(OpcWatchdogSnapshot, flow_healthy), 104);
+        assert_eq!(offset_of!(OpcWatchdogSnapshot, repair_blocked), 140);
     }
 
     #[test]

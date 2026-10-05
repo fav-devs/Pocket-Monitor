@@ -324,6 +324,7 @@ typedef struct {
     double last_ble_notify_age;
     double seconds_since_last_rebuild;
     double seconds_since_last_enable;
+    double seconds_since_last_irap;
     double seconds_since_focus_track_set;
     double seconds_since_zoom_set;
     double seconds_since_gimbal_throw;

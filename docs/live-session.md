@@ -52,7 +52,7 @@ MainActor `conn.send` interleaved with the 40 Hz pump starved window ACK.
 Latest axes live in the wire lock; the pump emits, and lift sends one center.
 Head-track rest **lifts**
 (Mimo: `0x04/0x01` only while thrown). Streaming center at 25 Hz after
-catch-up paused HEVC at 15–30 s, then two `0x09/0xa8` and a UDP rebuild
+catch-up paused HEVC at 15–30 s, then one `0x09/0xa8` and a UDP rebuild
 looked like a dropped connection (status stayed young). A leftover throw
 below the linear snap (`y=-0.01`) is the same center stream — rest it.
 Head-track look is the SET-relative nose azimuth/elevation. Throw closes a

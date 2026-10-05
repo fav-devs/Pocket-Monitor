@@ -18,6 +18,7 @@ pub struct FeedHealth {
     last_decoded_frame: Option<f64>,
     last_status: Option<f64>,
     last_enable: Option<f64>,
+    last_irap: Option<f64>,
     last_rebuild: Option<f64>,
     last_camera_set: Option<f64>,
     last_zoom_set: Option<f64>,
@@ -49,6 +50,12 @@ impl FeedHealth {
     pub fn note_access_unit(&mut self, now: f64) {
         self.last_access_unit = Some(now);
         self.has_format = true;
+    }
+
+    /// An IRAP the decoder accepted. Newer than the last enable means that enable
+    /// was answered, so the GOP-reset window can end.
+    pub fn note_irap(&mut self, now: f64) {
+        self.last_irap = Some(now);
     }
 
     /// A picture actually reached the screen, which is not the same as one arriving.
@@ -124,6 +131,7 @@ impl FeedHealth {
         self.last_video_packet = None;
         self.last_access_unit = None;
         self.last_decoded_frame = None;
+        self.last_irap = None;
         self.note_rebuild(now);
     }
 
@@ -145,6 +153,7 @@ impl FeedHealth {
             last_ble_notify_age: -1.0,
             seconds_since_last_rebuild: Self::age(now, self.last_rebuild),
             seconds_since_last_enable: Self::age(now, self.last_enable),
+            seconds_since_last_irap: Self::age(now, self.last_irap),
             seconds_since_focus_track_set: Self::age(now, self.last_focus_track_set),
             seconds_since_zoom_set: Self::age(now, self.last_zoom_set),
             seconds_since_gimbal_throw: Self::age(now, self.last_gimbal_throw),
@@ -212,6 +221,18 @@ mod tests {
         let snapshot = health.snapshot(6.0, true);
         assert_eq!(snapshot.seconds_since_focus_track_set, 1.0);
         assert_eq!(snapshot.seconds_since_camera_set, 1.0);
+    }
+
+    #[test]
+    fn an_irap_ages_until_a_rebuild_forgets_it() {
+        let mut health = FeedHealth::new();
+        health.note_irap(10.0);
+        assert_eq!(health.snapshot(12.0, true).seconds_since_last_irap, 2.0);
+        health.note_datalink_rebuilt(20.0);
+        assert!(
+            health.snapshot(21.0, true).seconds_since_last_irap < 0.0,
+            "a rebuild starts a new GOP"
+        );
     }
 
     #[test]

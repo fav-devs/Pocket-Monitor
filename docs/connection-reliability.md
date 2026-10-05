@@ -50,7 +50,7 @@ logged (`feed: observe`). `FeedWatchdog.tick` still acts.
 
 | Owner | Production? | What it does |
 | --- | --- | --- |
-| `FeedWatchdog.tick` | **Yes** — iOS keepalive; Android JNI tick | 2 s no video → enable ×2 (status young) → one UDP rebuild → `fullSessionRejoin` (new handshake, same SoftAP, last frame held). Never tears VT. Holds 4 s after any tracked SET. |
+| `FeedWatchdog.tick` | **Yes** — iOS keepalive; Android JNI tick | 2 s no video → enable ×1 (status young) → one UDP rebuild if unanswered in 1.5 s → `fullSessionRejoin` (new handshake, same SoftAP, last frame held). Never tears VT. Holds 4 s after any tracked SET. |
 | `LinkDiagnoser` | **Observe only** | Classify → cheapest repair. SoftAP lost → rejoin; BLE lost → full reconnect; present stall → none. |
 | `CameraSoftAP.firstPictureStep` | **Yes**, runs **before** the watchdog | Can rejoin (new handshake) after a few failed enables. |
 | Keepalive / SET-timeout / foreground | **Yes**, gated | Extra UDP rebuilds only when status is stale (`statusFresh` false) and no repair is in flight. Do not cancel a live rebuild to start another. Watchdog UDP rebuild still force-enables; keepalive does not if HEVC had already existed. `still holding for IDR` is not a repair owner. |
@@ -103,8 +103,8 @@ Physical take 2026-08-28 (`es_iphone16`): first `feed: observe` was
 `lastVideo=nones` and `flip: skip udp notLive`.
 
 Repairs (this branch): skip parameter-set enable while UDP video is alive
-(debounce `escalateAfter`); encoder-pause sends two `0x09/0xa8` then one
-UDP rebuild (22:16 brought HEVC back; #148 was a 2 s-too-fast reopen).
+(debounce `escalateAfter`); encoder-pause sends one `0x09/0xa8` then one
+UDP rebuild if that enable is unanswered (22:16 brought HEVC back; #148 was a 2 s-too-fast reopen).
 Keepalive must not flap that socket while status is young. SET ACK
 timeout with young status is the same — do not rebuild UDP. After a
 keepalive rebuild, do not enable if HEVC had already existed. Sitting in

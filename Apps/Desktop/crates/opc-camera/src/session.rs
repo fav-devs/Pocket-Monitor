@@ -695,6 +695,9 @@ impl CameraSession {
                 if let Some(unit) = self.depacketizer.feed(datagram) {
                     self.diagnostic_access_units = self.diagnostic_access_units.saturating_add(1);
                     self.health.note_access_unit(now);
+                    if access_unit_is_irap(&unit) {
+                        self.health.note_irap(now);
+                    }
                     events.push(SessionEvent::Picture(unit));
                 }
             }
@@ -849,6 +852,31 @@ impl CameraSession {
         datagram.extend_from_slice(&frame);
         Ok(datagram)
     }
+}
+
+/// Whether this assembled access unit can refresh the decoder on its own.
+///
+/// Only the first coded slice is read: that NAL's type is the picture's type.
+fn access_unit_is_irap(access_unit: &[u8]) -> bool {
+    let mut index = 0;
+    while index + 4 < access_unit.len() {
+        let start = if access_unit[index..].starts_with(&[0, 0, 0, 1]) {
+            4
+        } else if access_unit[index..].starts_with(&[0, 0, 1]) {
+            3
+        } else {
+            index += 1;
+            continue;
+        };
+        let first = access_unit[index + start];
+        let nal_type = (first >> 1) & 0x3F;
+        if nal_type <= 31 {
+            // HEVC IRAP: BLA 16–18, IDR 19–20, CRA 21.
+            return (16..=21).contains(&nal_type);
+        }
+        index += start;
+    }
+    false
 }
 
 /// The subscription names the core says the HUD needs.
