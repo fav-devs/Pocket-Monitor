@@ -58,7 +58,15 @@ if (-not $ffmpeg) {
 if (-not $ffmpeg) { throw 'FFmpeg shared development files are not installed or discoverable. Set FFMPEG_DIR to their root.' }
 $ffmpegExe = Join-Path $ffmpeg.FullName 'bin\ffmpeg.exe'
 if (-not (Test-Path $ffmpegExe)) { throw "FFmpeg executable is missing from $($ffmpeg.FullName)." }
-$ffmpegConfiguration = (& $ffmpegExe -buildconf 2>&1 | Out-String)
+# ffmpeg prints its banner on stderr; PowerShell 5.1 treats that as terminating
+# when $ErrorActionPreference is Stop.
+$ffmpegPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    $ffmpegConfiguration = (& $ffmpegExe -buildconf 2>&1 | Out-String)
+} finally {
+    $ErrorActionPreference = $ffmpegPreference
+}
 if ($ffmpegConfiguration -match '(?m)(^|\s)--enable-(gpl|nonfree)(\s|$)') {
     throw 'Release builds must use an LGPL shared FFmpeg build without --enable-gpl or --enable-nonfree.'
 }
