@@ -239,7 +239,7 @@ impl ApplicationHandler for Demo {
             return;
         }
         let attributes = Window::default_attributes()
-            .with_title("OpenPocketCine — UI Demo")
+            .with_title("Pocket Monitor — UI Demo")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attributes) {
             Ok(w) => w,

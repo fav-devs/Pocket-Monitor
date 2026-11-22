@@ -120,6 +120,40 @@ impl BtleplugTransport {
     }
 }
 
+impl BtleplugTransport {
+    /// Every advertiser the radio hears, unfiltered, one line each. For the headless
+    /// harness: it says whether the radio sees anything at all.
+    pub fn scan_all(&mut self, seconds: f64) -> io::Result<Vec<String>> {
+        let adapter = self.get_adapter()?;
+        let peripherals = self.rt.block_on(async {
+            adapter
+                .start_scan(ScanFilter::default())
+                .await
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            tokio::time::sleep(Duration::from_secs_f64(seconds.max(3.0))).await;
+            let _ = adapter.stop_scan().await;
+            adapter
+                .peripherals()
+                .await
+                .map_err(|e| io::Error::other(e.to_string()))
+        })?;
+        let mut lines = Vec::new();
+        for p in peripherals {
+            if let Ok(Some(props)) = self.rt.block_on(p.properties()) {
+                lines.push(format!(
+                    "{}  name={:?}  rssi={:?}  services={:?}  mfr={:?}",
+                    p.id(),
+                    props.local_name.unwrap_or_default(),
+                    props.rssi,
+                    props.services,
+                    props.manufacturer_data.keys().collect::<Vec<_>>()
+                ));
+            }
+        }
+        Ok(lines)
+    }
+}
+
 impl BleTransport for BtleplugTransport {
     fn scan(&mut self, seconds: f64) -> io::Result<Vec<Discovered>> {
         let service_uuid = self.service_uuid;

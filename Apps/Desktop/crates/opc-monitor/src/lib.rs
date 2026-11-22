@@ -5,13 +5,17 @@
 //! `opc-camera`, and a test of the viewfinder's behaviour should not need a toolchain
 //! that can build it.
 
+pub mod appsettings;
 pub mod assists;
 pub mod homewifi;
+pub mod gesture;
+pub mod hand;
 pub mod library;
 pub mod luts;
 pub mod moves;
 pub mod pad;
 pub mod phone;
+pub mod presets;
 pub mod prefs;
 pub mod scopes;
 pub mod sheets;

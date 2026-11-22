@@ -268,6 +268,11 @@ pub enum Pick {
     MoveStop,
     MovePause,
     MoveResume,
+    /// Gimbal presets: keep the live pose in a slot, fly to it, empty it, and how long a recall takes.
+    PresetSave(usize),
+    PresetGo(usize),
+    PresetClear(usize),
+    PresetSeconds(f64),
     /// Smoothness as a percentage, 0 for the exact B.
     Smoothness(u8),
     /// Switch an assist tool on or off, as its toolbar chip would.
@@ -341,6 +346,7 @@ pub struct Context<'a> {
     pub luts: &'a LutMenu,
     pub lut_choice: &'a LutChoice,
     pub program: &'a Program,
+    pub presets: &'a crate::presets::Presets,
     /// The body's live pose, if it has reported one.
     pub live_pose: Option<Waypoint>,
     pub move_running: bool,
@@ -816,21 +822,44 @@ fn moves(context: Context) -> Built {
             .live_pose
             .map_or_else(|| "No gimbal attitude yet".to_string(), |pose| pose.label()),
     );
-    assemble(
-        "MOVES",
-        &[],
-        0,
-        vec![
-            point("Point A", Slot::A, program.a, false),
-            point("Point B", Slot::B, program.b, false),
-            point("Point C", Slot::C, program.c, true),
-            leg("A → B", Slot::A, program.duration_ab),
-            leg("B → C", Slot::B, program.duration_bc),
-            take,
-            smoothness,
-            live,
-        ],
-    )
+    let mut rows = vec![
+        point("Point A", Slot::A, program.a, false),
+        point("Point B", Slot::B, program.b, false),
+        point("Point C", Slot::C, program.c, true),
+        leg("A → B", Slot::A, program.duration_ab),
+        leg("B → C", Slot::B, program.duration_bc),
+        take,
+        smoothness,
+        live,
+    ];
+    // Presets: keys 1–6 fly to a slot in one timed move.
+    let mut recall = RowBuilder::new("Recall time");
+    for seconds in crate::presets::RECALL_SECONDS {
+        recall = recall.option(
+            format!("{seconds} s"),
+            (context.presets.seconds - seconds).abs() < 1e-9,
+            Pick::PresetSeconds(seconds),
+        );
+    }
+    rows.push(recall);
+    for (index, slot) in context.presets.slots.iter().enumerate() {
+        let label = slot.map_or_else(|| "empty".to_string(), |pose| pose.label());
+        let row = RowBuilder::new(&format!("Preset {} (key {})", index + 1, index + 1))
+            .option("Save here", false, Pick::PresetSave(index))
+            .option(
+                "Go",
+                false,
+                if slot.is_some() {
+                    Pick::PresetGo(index)
+                } else {
+                    Pick::Nothing
+                },
+            )
+            .option("Clear", false, Pick::PresetClear(index))
+            .option(label, slot.is_some(), Pick::Nothing);
+        rows.push(row);
+    }
+    assemble("MOVES", &[], 0, rows)
 }
 
 fn format(status: &Status, model_id: i32) -> Built {
@@ -1476,6 +1505,7 @@ mod tests {
             }),
             lut_choice: &CHOICE,
             program: PROGRAM.get_or_init(Program::default),
+            presets: PRESETS.get_or_init(crate::presets::Presets::default),
             live_pose: Some(Waypoint {
                 yaw: 12.0,
                 pitch: -3.0,
@@ -1574,6 +1604,7 @@ mod tests {
     }
 
     static PROGRAM: std::sync::OnceLock<Program> = std::sync::OnceLock::new();
+    static PRESETS: std::sync::OnceLock<crate::presets::Presets> = std::sync::OnceLock::new();
 
     #[test]
     fn the_waveform_sheet_offers_the_phones_options() {
@@ -1635,9 +1666,17 @@ mod tests {
                 "B → C",
                 "Take",
                 "Smoothness",
-                "Live"
+                "Live",
+                "Recall time",
+                "Preset 1 (key 1)",
+                "Preset 2 (key 2)",
+                "Preset 3 (key 3)",
+                "Preset 4 (key 4)",
+                "Preset 5 (key 5)",
+                "Preset 6 (key 6)"
             ]
         );
+        assert_eq!(built.pick(9, 0), Some(&Pick::PresetSave(0)));
         assert_eq!(built.pick(0, 0), Some(&Pick::SetPoint(Slot::A)));
         assert_eq!(built.pick(2, 1), Some(&Pick::ClearPoint(Slot::C)));
         assert_eq!(built.pick(3, 2), Some(&Pick::LegDuration(Slot::A, 4.0)));

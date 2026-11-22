@@ -20,14 +20,14 @@ use opc_monitor::homewifi::SavedStation;
 
 // ── palette ──────────────────────────────────────────────────────────────────
 
-const BG: Color32 = Color32::from_rgb(14, 14, 14);
-const SURFACE: Color32 = Color32::from_rgb(26, 26, 26);
-const BORDER: Color32 = Color32::from_rgb(50, 50, 50);
-const ACCENT: Color32 = Color32::from_rgb(255, 140, 0);
-const TEXT: Color32 = Color32::from_rgb(230, 230, 230);
-const DIM: Color32 = Color32::from_rgb(130, 130, 130);
-const SUCCESS: Color32 = Color32::from_rgb(80, 200, 120);
-const ERR: Color32 = Color32::from_rgb(220, 70, 70);
+pub(crate) const BG: Color32 = Color32::from_rgb(14, 14, 14);
+pub(crate) const SURFACE: Color32 = Color32::from_rgb(26, 26, 26);
+pub(crate) const BORDER: Color32 = Color32::from_rgb(50, 50, 50);
+pub(crate) const ACCENT: Color32 = Color32::from_rgb(255, 140, 0);
+pub(crate) const TEXT: Color32 = Color32::from_rgb(230, 230, 230);
+pub(crate) const DIM: Color32 = Color32::from_rgb(130, 130, 130);
+pub(crate) const SUCCESS: Color32 = Color32::from_rgb(80, 200, 120);
+pub(crate) const ERR: Color32 = Color32::from_rgb(220, 70, 70);
 
 // ── channels ─────────────────────────────────────────────────────────────────
 
@@ -466,7 +466,7 @@ impl ConnectApp {
                 );
                 ui.add_space(24.0);
                 ui.label(
-                    RichText::new("OpenPocketCine will join this network on your PC.")
+                    RichText::new("Pocket Monitor will join this network on your PC.")
                         .color(TEXT)
                         .font(FontId::proportional(14.0)),
                 );
@@ -825,7 +825,7 @@ impl eframe::App for ConnectApp {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
                     ui.add_space(48.0);
                     ui.label(
-                        RichText::new("OpenPocketCine")
+                        RichText::new("Pocket Monitor")
                             .font(FontId::proportional(28.0))
                             .color(TEXT),
                     );
@@ -909,7 +909,7 @@ fn cred_row(ui: &mut egui::Ui, label: &str, value: &str) {
         });
 }
 
-fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+pub(crate) fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(
             RichText::new(label)
@@ -922,7 +922,7 @@ fn accent_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
-fn ghost_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+pub(crate) fn ghost_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(
             RichText::new(label)
@@ -1320,6 +1320,106 @@ impl station::Progress for WorkerProgress<'_> {
     }
 }
 
+// ── headless harness ──────────────────────────────────────────────────────────
+
+/// `opc-monitor headless <scan|pair|station>`: the connection screen's worker driven from
+/// a terminal, every step printed. No window. `station` reads the network password from
+/// `OPC_WIFI_PASSWORD` so it never lands in a command line or a log.
+#[cfg(opc_core_linked)]
+pub fn headless(args: &[String]) -> Result<(), String> {
+    let gatt = GattMap::from_core().ok_or("Cannot read GATT map from core.")?;
+    let flag = |name: &str| {
+        args.iter()
+            .position(|a| a == &format!("--{name}"))
+            .and_then(|i| args.get(i + 1).cloned())
+    };
+    let seconds: f64 = flag("seconds").and_then(|s| s.parse().ok()).unwrap_or(8.0);
+    match args.first().map(String::as_str) {
+        Some("scan") => {
+            let mut transport = BtleplugTransport::new(&gatt).map_err(|e| e.to_string())?;
+            println!("scanning every BLE advertiser for {seconds}s…");
+            let lines = transport.scan_all(seconds).map_err(|e| e.to_string())?;
+            println!("{} advertisers heard", lines.len());
+            for line in lines {
+                println!("  {line}");
+            }
+            Ok(())
+        }
+        Some(mode @ ("pair" | "station")) => {
+            let (cmd_tx, cmd_rx) = mpsc::channel::<BleCmd>();
+            let (evt_tx, evt_rx) = mpsc::channel::<BleEvent>();
+            let worker = thread::spawn(move || ble_worker(Some(gatt), cmd_rx, evt_tx));
+            let _ = cmd_tx.send(BleCmd::Scan);
+            let ssid = flag("ssid");
+            let mut camera: Option<Discovered> = None;
+            let deadline = Instant::now() + Duration::from_secs(300);
+            let mut result = Err("timed out".to_string());
+            while Instant::now() < deadline {
+                let Ok(event) = evt_rx.recv_timeout(Duration::from_millis(500)) else {
+                    continue;
+                };
+                println!("event: {event:?}");
+                match event {
+                    BleEvent::Found(list) => {
+                        let Some(first) = list.into_iter().next() else {
+                            result = Err("no camera advertising".into());
+                            break;
+                        };
+                        println!("camera: {} @ {}", first.name, first.address);
+                        let address = first.address.clone();
+                        camera = Some(first);
+                        if mode == "pair" {
+                            let _ = cmd_tx.send(BleCmd::Pair(address));
+                        } else {
+                            let Some(ssid) = ssid.clone() else {
+                                result = Err("station needs --ssid".into());
+                                break;
+                            };
+                            let password = std::env::var("OPC_WIFI_PASSWORD")
+                                .map_err(|_| "set OPC_WIFI_PASSWORD".to_string())?;
+                            let model_id = camera
+                                .as_ref()
+                                .and_then(|c| c.advert.as_ref())
+                                .and_then(|a| a.model_id);
+                            let _ = cmd_tx.send(BleCmd::Station {
+                                address,
+                                ssid,
+                                password,
+                                model_id,
+                            });
+                        }
+                    }
+                    BleEvent::Credentials { .. } => {
+                        println!("pairing worked (credentials read; not printed)");
+                        result = Ok(());
+                        break;
+                    }
+                    BleEvent::StationDone { identity, confirmed } => {
+                        println!("station done; confirmed={confirmed}; searching the LAN…");
+                        match station::find_camera(&identity, None) {
+                            Some(addr) => {
+                                println!("FOUND camera on the LAN at {addr}");
+                                result = Ok(());
+                            }
+                            None => result = Err("camera not found on the LAN".into()),
+                        }
+                        break;
+                    }
+                    BleEvent::Error(message) => {
+                        result = Err(message);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let _ = cmd_tx.send(BleCmd::Cancel);
+            let _ = worker.join();
+            result
+        }
+        _ => Err("usage: opc-monitor headless scan [--seconds N] | pair | station --ssid NAME".into()),
+    }
+}
+
 // ── public entry point ────────────────────────────────────────────────────────
 
 /// Opens the connection screen and returns when the user connects, skips, or quits.
@@ -1350,14 +1450,14 @@ fn run_with(start_on_phones: bool) -> ConnectOutcome {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("OpenPocketCine")
+            .with_title("Pocket Monitor")
             .with_inner_size([520.0, 480.0])
             .with_resizable(false),
         ..Default::default()
     };
 
     let _ = eframe::run_native(
-        "OpenPocketCine",
+        "Pocket Monitor",
         options,
         Box::new(move |_cc| Ok(Box::new(app) as Box<dyn eframe::App>)),
     );

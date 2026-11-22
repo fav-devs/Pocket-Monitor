@@ -82,7 +82,7 @@ impl Waypoint {
         (other.yaw - self.yaw).hypot(other.pitch - self.pitch)
     }
 
-    fn lerp(&self, to: &Self, u: f64) -> Self {
+    pub fn lerp(&self, to: &Self, u: f64) -> Self {
         let t = u.clamp(0.0, 1.0);
         let pitch_delta = to.pitch - self.pitch;
         Self {

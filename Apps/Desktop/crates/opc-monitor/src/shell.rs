@@ -22,7 +22,9 @@ use crate::assists::{
 };
 use crate::library::{Library, MediaAction, Player};
 use crate::luts::{self, LutChoice, LutMenu};
-use crate::moves::{MoveEngine, Program, Waypoint};
+use crate::moves::{can_send, MoveEngine, Program, Waypoint};
+use crate::gesture::Gesture;
+use crate::presets::{self, Presets};
 use crate::pad::{PadAction, PadButton, REST as PAD_REST};
 use crate::prefs;
 use crate::scopes::{
@@ -339,6 +341,11 @@ pub struct Shell {
     /// Programmed moves: the points, the engine while a take runs, and the clock
     /// that says how fresh the last attitude is.
     program: Program,
+    presets: Presets,
+    preset_cursor: Option<usize>,
+    /// The second half of a recall that had to go in two steps: where to, how long, and when.
+    preset_followup: Option<(Waypoint, f64, f64)>,
+    presets_path: Option<std::path::PathBuf>,
     move_engine: Option<MoveEngine>,
     move_countdown: Option<Countdown>,
     attitude_seq: u32,
@@ -442,6 +449,10 @@ impl Shell {
             lut_menu: LutMenu::default(),
             lut_choice: LutChoice::Off,
             program: Program::default(),
+            presets: Presets::default(),
+            preset_cursor: None,
+            preset_followup: None,
+            presets_path: None,
             move_engine: None,
             move_countdown: None,
             attitude_seq: 0,
@@ -983,6 +994,7 @@ impl Shell {
 
     fn move_stop(&mut self) -> Vec<Intent> {
         self.move_countdown = None;
+        self.preset_followup = None;
         let mut intents = Vec::new();
         if let Some(engine) = self.move_engine.as_mut() {
             if engine.is_running() {
@@ -1084,6 +1096,7 @@ impl Shell {
             self.refresh_assists();
             self.sync_false_color();
         }
+        self.load_presets_beside(&path);
         self.prefs_path = Some(path);
         self
     }
@@ -1098,8 +1111,82 @@ impl Shell {
             self.lut_choice = saved.lut;
             self.refresh_assists();
         }
+        self.load_presets_beside(&path);
         self.prefs_path = Some(path);
         self
+    }
+
+    fn load_presets_beside(&mut self, prefs: &std::path::Path) {
+        let path = presets::path_beside(prefs);
+        if let Some(saved) = presets::load(&path) {
+            self.presets = saved;
+        }
+        self.presets_path = Some(path);
+    }
+
+    fn persist_presets(&self) {
+        if let Some(path) = &self.presets_path {
+            if let Err(error) = presets::save(path, &self.presets) {
+                eprintln!("could not save the gimbal presets: {error}");
+            }
+        }
+    }
+
+    pub fn presets(&self) -> &Presets {
+        &self.presets
+    }
+
+    /// Recalls a slot. A programmed take in progress is stopped first, as manual
+    /// control stops it. Near poses go as one timed move; a pose half a turn or more away
+    /// goes in two halves through the midpoint, so the firmware can never choose the
+    /// route through the missing pan sector.
+    fn preset_go(&mut self, slot: usize) -> Vec<Intent> {
+        let Some(target) = self.presets.slots.get(slot).copied().flatten() else {
+            self.set_notice("PRESET EMPTY");
+            return Vec::new();
+        };
+        let Some(live) = self.live_pose() else {
+            self.set_notice("NO GIMBAL ATTITUDE YET");
+            return Vec::new();
+        };
+        let mut intents = self.move_stop();
+        self.preset_followup = None;
+        let seconds = self.presets.seconds;
+        if can_send(&live, &target) {
+            intents.push(Intent::Send(target.timed_target(seconds)));
+        } else if live.is_reachable() && target.is_reachable() {
+            let middle = live.lerp(&target, 0.5);
+            let half = (seconds / 2.0).max(0.3);
+            if !(can_send(&live, &middle) && can_send(&middle, &target)) {
+                self.set_notice("PRESET CANNOT BE REACHED");
+                return intents;
+            }
+            intents.push(Intent::Send(middle.timed_target(half)));
+            self.preset_followup = Some((target, half, self.last_now + half + 0.3));
+        } else {
+            self.set_notice("PRESET CANNOT BE REACHED");
+            return intents;
+        }
+        self.preset_cursor = Some(slot);
+        self.set_notice(&format!("PRESET {}", slot + 1));
+        intents
+    }
+
+    /// Sends the second half of a two-step recall once the first has had time to land.
+    fn preset_followup_tick(&mut self, now: f64) -> Vec<Intent> {
+        let Some((target, seconds, due)) = self.preset_followup else {
+            return Vec::new();
+        };
+        if now < due {
+            return Vec::new();
+        }
+        self.preset_followup = None;
+        match self.live_pose() {
+            Some(live) if can_send(&live, &target) => {
+                vec![Intent::Send(target.timed_target(seconds))]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Everything that is remembered between runs, as it stands now.
@@ -1244,7 +1331,7 @@ impl Shell {
         let status = &self.hud.status;
         let toggles = self.toggles;
         format!(
-            "OpenPocketCine desktop {}\nuptime {now:.1} s\n{link}\nphase {phase}\nbody {model} (id {id})\nfirmware {fw}\nrenderer {renderer}\nrecovery {recovery}\nwindow {w}x{h}\nsource {src:?}\nformat {format}\ncolour mode {color:?} iso {iso:?}\nzoom {zoom:?} stops {stops:?}\nrecording {rec}\ntoggles {toggles:?}\nprefs {prefs:?}\nassists {assists:?}\nscopes {scopes:?}\ncamera component {component:?}\nvirtual camera {vcam}\nphone {phone:?}\n",
+            "Pocket Monitor desktop {}\nuptime {now:.1} s\n{link}\nphase {phase}\nbody {model} (id {id})\nfirmware {fw}\nrenderer {renderer}\nrecovery {recovery}\nwindow {w}x{h}\nsource {src:?}\nformat {format}\ncolour mode {color:?} iso {iso:?}\nzoom {zoom:?} stops {stops:?}\nrecording {rec}\ntoggles {toggles:?}\nprefs {prefs:?}\nassists {assists:?}\nscopes {scopes:?}\ncamera component {component:?}\nvirtual camera {vcam}\nphone {phone:?}\n",
             env!("CARGO_PKG_VERSION"),
             link = self.setup.link,
             phase = self.setup.phase,
@@ -1308,6 +1395,61 @@ impl Shell {
             return Vec::new();
         }
         self.zoom_write(ZoomWrite::Slider(next), now)
+    }
+
+    /// A webcam gesture: up recentres, down flips, left and right step through the
+    /// saved presets. Off the viewfinder, or with gestures not wanted, nothing happens.
+    pub fn gesture(&mut self, gesture: Gesture, now: f64) -> Vec<Intent> {
+        if self.screen != Screen::Viewfinder {
+            return Vec::new();
+        }
+        self.last_now = self.last_now.max(now);
+        match gesture {
+            Gesture::SwipeUp => {
+                self.set_notice("GESTURE: RECENTRE");
+                self.act(Action::Send(Command::GimbalRecenter), now)
+            }
+            Gesture::SwipeDown => {
+                self.set_notice("GESTURE: FLIP");
+                self.act(Action::Send(Command::GimbalFlip), now)
+            }
+            Gesture::Fist => {
+                self.set_notice("HAND: RECENTRE");
+                self.act(Action::Send(Command::GimbalRecenter), now)
+            }
+            Gesture::Two => {
+                self.set_notice("HAND: FLIP");
+                self.act(Action::Send(Command::GimbalFlip), now)
+            }
+            Gesture::Palm => {
+                self.set_notice("HAND: STOP");
+                let mut intents = self.move_stop();
+                intents.extend(self.act(Action::ClearTracking, now));
+                intents.push(Intent::Send(Command::GimbalTimedStop));
+                intents
+            }
+            Gesture::SwipeLeft | Gesture::SwipeRight | Gesture::Point => {
+                let filled: Vec<usize> = (0..presets::SLOTS)
+                    .filter(|&i| self.presets.slots[i].is_some())
+                    .collect();
+                if filled.is_empty() {
+                    self.set_notice("NO PRESETS SAVED");
+                    return Vec::new();
+                }
+                let forward = gesture != Gesture::SwipeLeft;
+                let next = match self.preset_cursor {
+                    Some(at) if forward => filled.iter().copied().find(|&i| i > at),
+                    Some(at) => filled.iter().rev().copied().find(|&i| i < at),
+                    None => None,
+                }
+                .unwrap_or(if forward {
+                    filled[0]
+                } else {
+                    filled[filled.len() - 1]
+                });
+                self.preset_go(next)
+            }
+        }
     }
 
     /// A controller button, on its way down.
@@ -1473,6 +1615,7 @@ impl Shell {
             luts: &self.lut_menu,
             lut_choice: &self.lut_choice,
             program: &self.program,
+            presets: &self.presets,
             live_pose: self.live_pose(),
             move_running: self.move_running(),
             move_paused: self.move_paused(),
@@ -1961,6 +2104,27 @@ impl Shell {
                 self.program.smoothness = f64::from(percent) / 100.0;
                 Vec::new()
             }
+            Pick::PresetSave(slot) => {
+                let pose = self.live_pose().filter(Waypoint::is_reachable);
+                if let (Some(cell), Some(pose)) = (self.presets.slots.get_mut(slot), pose) {
+                    *cell = Some(pose);
+                    self.persist_presets();
+                }
+                Vec::new()
+            }
+            Pick::PresetClear(slot) => {
+                if let Some(cell) = self.presets.slots.get_mut(slot) {
+                    *cell = None;
+                    self.persist_presets();
+                }
+                Vec::new()
+            }
+            Pick::PresetGo(slot) => self.preset_go(slot),
+            Pick::PresetSeconds(seconds) => {
+                self.presets.seconds = seconds;
+                self.persist_presets();
+                Vec::new()
+            }
             Pick::Nothing => Vec::new(),
         }
     }
@@ -2018,6 +2182,9 @@ impl Shell {
         }
         if self.screen != Screen::Viewfinder {
             return self.press_on_screen(key);
+        }
+        if let Key::Char(digit @ '1'..='6') = key {
+            return self.preset_go(digit as usize - '1' as usize);
         }
         if key == Key::Char('g') || key == Key::Char('G') {
             return self.open_library();
@@ -2652,6 +2819,16 @@ impl Shell {
                     self.library.toggle_checked(index);
                 } else {
                     self.library.select_index(index);
+                    // A tap on a clip is a request to watch it, as in Mimo: no Play or
+                    // Download bar to press second. Download stays in the player. A clip
+                    // already being fetched is not asked for again.
+                    let busy = self
+                        .library
+                        .selected_file()
+                        .is_some_and(|file| self.library.progress.contains_key(&file.path));
+                    if !busy {
+                        fired.extend(self.library_open_selected());
+                    }
                 }
                 self.chrome_stale = true;
             }
@@ -3152,6 +3329,7 @@ impl Shell {
             self.chrome_stale = true;
         }
         intents.extend(self.move_tick(now));
+        intents.extend(self.preset_followup_tick(now));
         if self.hud.countdown_fired(now) {
             self.hud.countdown = None;
             self.chrome_stale = true;

@@ -9,7 +9,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use opc_camera::DumlFrame;
 use opc_camera::{CameraSession, Command, Recovery, SessionEvent, SetOutcome, Status};
@@ -194,7 +194,7 @@ fn run(
     let mut access_unit_rate_started = Instant::now();
     let mut diagnostics_started = Instant::now();
 
-    loop {
+    'main: loop {
         loop {
             match commands.try_recv() {
                 Ok(ToCamera::Send(command)) => session.send(command),
@@ -210,8 +210,17 @@ fn run(
             Ok(polled) => polled,
             Err(error) => {
                 link_log!("UDP poll failed: {error}");
-                let _ = events.send(FromCamera::Lost(error.to_string()));
-                return;
+                match reconnect(&error.to_string(), remote, session_id, base_seq, commands, events, &mut log) {
+                    Some(fresh) => {
+                        session = fresh;
+                        if let Some(model_id) = model_id {
+                            session.set_model(model_id);
+                        }
+                        saw_picture = false;
+                        continue 'main;
+                    }
+                    None => return,
+                }
             }
         };
         // With a nonblocking UDP socket, avoid monopolising a core while no complete
@@ -313,10 +322,18 @@ fn run(
                 }
                 SessionEvent::Unreachable => {
                     link_log!("camera did not answer its UDP session handshake");
-                    let _ = events.send(FromCamera::Lost(
-                        "the camera did not answer — is this machine on its Wi-Fi?".to_string(),
-                    ));
-                    return;
+                    let reason = "the camera did not answer — is this machine on its Wi-Fi?";
+                    match reconnect(reason, remote, session_id, base_seq, commands, events, &mut log) {
+                        Some(fresh) => {
+                            session = fresh;
+                            if let Some(model_id) = model_id {
+                                session.set_model(model_id);
+                            }
+                            saw_picture = false;
+                            continue 'main;
+                        }
+                        None => return,
+                    }
                 }
                 // Status replies are already folded into the status decoder; only the
                 // media browser reads frames by hand.
@@ -331,6 +348,57 @@ fn run(
             };
             if events.send(message).is_err() {
                 return;
+            }
+        }
+    }
+}
+
+/// The link is gone: say so, then keep trying to open a fresh session every few
+/// seconds until the camera answers or the window closes. None means stop.
+fn reconnect(
+    reason: &str,
+    remote: Option<SocketAddr>,
+    session_id: u16,
+    base_seq: u16,
+    commands: &Receiver<ToCamera>,
+    events: &Sender<FromCamera>,
+    log: &mut Option<std::fs::File>,
+) -> Option<CameraSession> {
+    if events
+        .send(FromCamera::Lost(format!("{reason} — reconnecting")))
+        .is_err()
+    {
+        return None;
+    }
+    let mut attempt = 0u32;
+    loop {
+        // Wait, but stay responsive to the window closing.
+        for _ in 0..30 {
+            loop {
+                match commands.try_recv() {
+                    Ok(ToCamera::Stop) | Err(TryRecvError::Disconnected) => return None,
+                    Ok(_) => {}
+                    Err(TryRecvError::Empty) => break,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        attempt += 1;
+        let opened = match remote {
+            Some(address) => CameraSession::connect_to(address, session_id, base_seq),
+            None => CameraSession::connect(session_id, base_seq),
+        };
+        match opened {
+            Ok(session) => {
+                if let Some(file) = log.as_mut() {
+                    let _ = writeln!(file, "link: reconnect attempt {attempt}: session reopened");
+                }
+                return Some(session);
+            }
+            Err(error) => {
+                if let Some(file) = log.as_mut() {
+                    let _ = writeln!(file, "link: reconnect attempt {attempt} failed: {error}");
+                }
             }
         }
     }

@@ -1979,3 +1979,104 @@ fn the_audio_rows_read_the_body_and_the_gimbal_chip_follows_its_heartbeat() {
         "a stale repeat of FPV does not undo the operator's Follow"
     );
 }
+
+#[test]
+fn presets_are_saved_from_the_live_pose_and_recalled_by_key_or_swipe() {
+    use opc_monitor::gesture::Gesture;
+    use opc_monitor::sheets::Pick;
+    let mut shell = framed();
+    shell.set_phase(Phase::Live);
+    let pose = |yaw_tenth: i16, seq: u32| Status {
+        gimbal_yaw_tenth: Some(yaw_tenth),
+        gimbal_pitch_tenth: Some(0),
+        gimbal_native_pitch_tenth: Some(0),
+        gimbal_attitude_seq: seq,
+        ..Status::default()
+    };
+    shell.tick(0.0);
+    // An empty slot sends nothing.
+    shell.set_status(pose(100, 1));
+    assert!(sent(&shell.press(Key::Char('1'), 0.0)).is_empty());
+    // Save two poses, then move away.
+    shell.pick_for_test(Pick::PresetSave(0));
+    shell.set_status(pose(600, 2));
+    shell.pick_for_test(Pick::PresetSave(1));
+    shell.pick_for_test(Pick::PresetSeconds(4.0));
+    shell.set_status(pose(300, 3));
+    assert_eq!(shell.presets().slots[0].map(|p| p.yaw), Some(10.0));
+
+    // Key 1 flies to slot 1 in one timed move of the chosen length.
+    let commands = sent(&shell.press(Key::Char('1'), 1.0));
+    assert_eq!(
+        commands,
+        [Command::GimbalTimedTarget {
+            yaw_tenth: 100,
+            native_pitch_tenth: 0,
+            duration_tenths: 40
+        }]
+    );
+    // A swipe right steps on to slot 2; up recentres; down flips.
+    let next = sent(&shell.gesture(Gesture::SwipeRight, 5.0));
+    assert!(matches!(
+        next.as_slice(),
+        [Command::GimbalTimedTarget { yaw_tenth: 600, .. }]
+    ));
+    assert_eq!(
+        sent(&shell.gesture(Gesture::SwipeUp, 9.0)),
+        [Command::GimbalRecenter]
+    );
+    assert_eq!(
+        sent(&shell.gesture(Gesture::SwipeDown, 13.0)),
+        [Command::GimbalFlip]
+    );
+}
+
+#[test]
+fn a_far_preset_goes_in_two_halves_and_a_palm_stops_it() {
+    use opc_monitor::gesture::Gesture;
+    use opc_monitor::sheets::Pick;
+    let mut shell = framed();
+    shell.set_phase(Phase::Live);
+    let pose = |yaw_tenth: i16, seq: u32| Status {
+        gimbal_yaw_tenth: Some(yaw_tenth),
+        gimbal_pitch_tenth: Some(0),
+        gimbal_native_pitch_tenth: Some(0),
+        gimbal_attitude_seq: seq,
+        ..Status::default()
+    };
+    shell.tick(0.0);
+    shell.set_status(pose(-400, 1));
+    shell.pick_for_test(Pick::PresetSave(0));
+    shell.pick_for_test(Pick::PresetSeconds(4.0));
+    // Right round the other side: 220 degrees away, more than the firmware may be trusted with.
+    shell.set_status(pose(1800, 2));
+    let first = sent(&shell.press(Key::Char('1'), 1.0));
+    assert_eq!(
+        first,
+        [Command::GimbalTimedTarget {
+            yaw_tenth: 700,
+            native_pitch_tenth: 0,
+            duration_tenths: 20
+        }]
+    );
+    // Not yet time for the second half.
+    assert!(sent(&shell.tick(1.5)).is_empty());
+    // Once the body has arrived at the middle, the second half goes.
+    shell.set_status(pose(700, 3));
+    let second = sent(&shell.tick(3.5));
+    assert!(second.contains(&Command::GimbalTimedTarget {
+        yaw_tenth: -400,
+        native_pitch_tenth: 0,
+        duration_tenths: 20
+    }));
+
+    // A palm cancels a recall in flight: no second half follows.
+    shell.set_status(pose(1800, 4));
+    shell.press(Key::Char('1'), 10.0);
+    let stop = sent(&shell.gesture(Gesture::Palm, 10.5));
+    assert!(stop.contains(&Command::GimbalTimedStop));
+    shell.set_status(pose(700, 5));
+    assert!(!sent(&shell.tick(14.0))
+        .iter()
+        .any(|c| matches!(c, Command::GimbalTimedTarget { .. })));
+}

@@ -33,6 +33,8 @@ use opc_monitor::shell::{Intent, Shell, TouchPhase as Finger};
 /// A backlog longer than this means the window stalled. Predicted pictures cannot be
 /// thinned — they need the ones before them — so the only safe skip is to a keyframe.
 const BACKLOG_LIMIT: usize = 30;
+/// Decoded pictures that may wait to be shown before the oldest are skipped.
+const READY_LIMIT: usize = 3;
 
 /// How the viewfinder was asked to start.
 #[derive(Debug, Default)]
@@ -68,6 +70,12 @@ struct View {
     decoder: Option<Decoder>,
     pending: Vec<Unit>,
     latest: Option<OwnedPicture>,
+    /// Decoded pictures not yet shown, oldest first. One is shown per redraw so a burst
+    /// of frames plays out in order instead of all but the newest being skipped.
+    ready: std::collections::VecDeque<OwnedPicture>,
+    /// Decoded, shown and discarded counts, logged once a second.
+    pace: (u32, u32, u32, Instant),
+    last_draw: Instant,
     /// What the window presents until the first decoded picture arrives. Without this,
     /// winit leaves the newly created surface white and hides the connection state.
     placeholder: OwnedPicture,
@@ -90,6 +98,7 @@ struct View {
     last_scope_at: f64,
     /// A game controller, when the platform offers one.
     pad: Option<gilrs::Gilrs>,
+    gestures: Option<std::sync::mpsc::Receiver<opc_monitor::gesture::Gesture>>,
     last_pad_at: f64,
     /// Where the camera is, for a reconnect.
     remote: Option<std::net::SocketAddr>,
@@ -220,6 +229,7 @@ impl View {
             }
         };
         self.latest = None;
+        self.ready.clear();
         self.shell.set_phase(Phase::Waiting);
         self.shell.say("RECONNECTING");
     }
@@ -413,6 +423,7 @@ impl View {
                 }
                 FromPhone::Picture(bytes) => {
                     let keyframe = is_keyframe(&bytes);
+                    dump_unit(&bytes);
                     self.pending.push(Unit { keyframe, bytes });
                 }
                 FromPhone::Status(status) => {
@@ -446,6 +457,7 @@ impl View {
                     // The core marks keyframes; the depacketizer hands over whole access
                     // units, so the first NAL type is enough to know one.
                     let keyframe = is_keyframe(&bytes);
+                    dump_unit(&bytes);
                     self.pending.push(Unit { keyframe, bytes });
                 }
                 FromCamera::Frame(frame) => {
@@ -502,6 +514,7 @@ impl View {
                 // Everything queued was for the old decoder's state.
                 self.pending.clear();
                 self.latest = None;
+                self.ready.clear();
                 self.placeholder_presented = false;
             }
             Err(error) => {
@@ -527,6 +540,18 @@ impl View {
     /// Decodes everything waiting, keeping the newest picture.
     fn decode(&mut self) {
         if self.decoder.is_none() {
+            // Joining mid-stream, the first units are plain slices that name no codec.
+            // Guessing HEVC for them built a decoder that never produced a picture from
+            // an AVC stream, so wait for the first unit that carries parameter sets.
+            let Some(at) = self
+                .pending
+                .iter()
+                .position(|unit| codec_of(&unit.bytes).is_some())
+            else {
+                self.pending.clear();
+                return;
+            };
+            self.pending.drain(..at);
             let Some(unit) = self.pending.first() else {
                 return;
             };
@@ -582,13 +607,14 @@ impl View {
             loop {
                 match decoder.receive() {
                     Ok(Some(picture)) => {
-                        if !had_picture && self.latest.is_none() {
+                        if !had_picture && self.latest.is_none() && self.ready.is_empty() {
                             diagnostic(format_args!(
                                 "decoded first picture {}x{} keyframe={}",
                                 picture.width, picture.height, picture.is_keyframe
                             ));
                         }
-                        self.latest = Some(OwnedPicture::copy_from(&picture));
+                        self.pace.0 += 1;
+                        self.ready.push_back(OwnedPicture::copy_from(&picture));
                     }
                     Ok(None) => break,
                     Err(error) => {
@@ -604,7 +630,42 @@ impl View {
         if let Some(error) = failure {
             self.note_decode_failure(error);
         }
+        // Show one decoded picture per redraw; only a backlog past a few frames skips
+        // ahead, so latency stays low without dropping frames in ordinary bursts.
+        while self.ready.len() > READY_LIMIT {
+            self.ready.pop_front();
+            self.pace.2 += 1;
+        }
+        if let Some(picture) = self.ready.pop_front() {
+            self.latest = Some(picture);
+            self.pace.1 += 1;
+        }
+        if self.pace.3.elapsed() >= Duration::from_secs(1) {
+            diagnostic(format_args!(
+                "pace: decoded {} shown {} skipped {} queued {}",
+                self.pace.0,
+                self.pace.1,
+                self.pace.2,
+                self.ready.len()
+            ));
+            self.pace = (0, 0, 0, Instant::now());
+        }
         self.sample_scopes();
+    }
+
+    /// Webcam gestures, as they arrive.
+    fn poll_gestures(&mut self, now: f64) {
+        let Some(receiver) = self.gestures.as_ref() else {
+            return;
+        };
+        let seen: Vec<_> = receiver.try_iter().collect();
+        for gesture in seen {
+            for intent in self.shell.gesture(gesture, now) {
+                if let Intent::Send(command) = intent {
+                    self.send(command);
+                }
+            }
+        }
     }
 
     /// A connected game controller, on the phones' map. Polled once per frame.
@@ -746,6 +807,7 @@ impl View {
         self.decode();
         let now = self.now();
         self.poll_pad(now);
+        self.poll_gestures(now);
         self.poll_component_job();
         self.reconcile_vcam(now);
         let intents = self.shell.tick(now);
@@ -811,7 +873,7 @@ impl View {
             Ok(Presented::Shown) => {
                 if self.render_error.take().is_some() {
                     if let Some(window) = self.window.as_ref() {
-                        window.set_title("OpenPocketCine");
+                        window.set_title("Pocket Monitor");
                     }
                 }
                 self.placeholder_presented = showing_placeholder;
@@ -828,7 +890,7 @@ impl View {
                 if self.render_error.as_deref() != Some(message.as_str()) {
                     eprintln!("present failed: {message}");
                     if let Some(window) = self.window.as_ref() {
-                        window.set_title("OpenPocketCine — renderer failed");
+                        window.set_title("Pocket Monitor — renderer failed");
                     }
                     self.render_error = Some(message);
                 }
@@ -919,6 +981,23 @@ fn is_h264_configuration(access_unit: &[u8]) -> bool {
 /// The camera declares its codec in the first Annex-B NAL. Most Pockets send HEVC,
 /// but this Pocket 3's live stream is AVC (`67` SPS / `65` IDR), so the decoder must
 /// follow the bytes rather than a model assumption.
+/// With `OPC_DUMP_STREAM=<path>` set, appends every access unit to that file as a plain
+/// Annex-B stream, so ffprobe and ffplay can look at what the camera really sends.
+fn dump_unit(bytes: &[u8]) {
+    use std::io::Write;
+    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
+        std::sync::OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = std::env::var_os("OPC_DUMP_STREAM")?;
+        std::fs::File::create(path).ok().map(std::sync::Mutex::new)
+    });
+    if let Some(file) = file {
+        if let Ok(mut file) = file.lock() {
+            let _ = file.write_all(bytes);
+        }
+    }
+}
+
 fn codec_of(access_unit: &[u8]) -> Option<Codec> {
     let mut index = 0;
     while index + 4 < access_unit.len() {
@@ -950,7 +1029,7 @@ impl ApplicationHandler for View {
             return;
         }
         let attributes = Window::default_attributes()
-            .with_title("OpenPocketCine")
+            .with_title("Pocket Monitor")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => window,
@@ -1093,7 +1172,20 @@ impl ApplicationHandler for View {
                 self.carry_out(intents, event_loop);
                 self.pointer_control = false;
             }
-            WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::RedrawRequested => {
+                let started = Instant::now();
+                let gap = started.duration_since(self.last_draw);
+                self.last_draw = started;
+                self.draw();
+                let took = started.elapsed();
+                if took > Duration::from_millis(40) || gap > Duration::from_millis(100) {
+                    diagnostic(format_args!(
+                        "slow: draw took {} ms, {} ms since the last draw",
+                        took.as_millis(),
+                        gap.as_millis()
+                    ));
+                }
+            }
             _ => {}
         }
     }
@@ -1126,6 +1218,11 @@ pub fn run(options: Options) -> Result<(), String> {
         Some(target) => Feed::Phone(PhoneLink::open(target)),
         None => {
             let (session_id, base_seq) = fresh_session();
+            // A camera on the operator's own Wi-Fi serves its media there, not at the
+            // SoftAP address the library would otherwise fetch from.
+            if let Some(remote) = options.remote {
+                opc_media::model::set_host(&remote.ip().to_string());
+            }
             Feed::Camera(Link::open(
                 options.remote,
                 session_id,
@@ -1153,6 +1250,7 @@ pub fn run(options: Options) -> Result<(), String> {
             .map_err(|error| eprintln!("no game controller support: {error}"))
             .ok(),
         last_pad_at: f64::NEG_INFINITY,
+        gestures: crate::webcam::wanted().then(crate::webcam::start).flatten(),
         remote: options.remote,
         phone: options.phone.clone(),
         model_id: options.model_id,
@@ -1164,6 +1262,9 @@ pub fn run(options: Options) -> Result<(), String> {
         decoder: None,
         pending: Vec::new(),
         latest: None,
+        ready: std::collections::VecDeque::new(),
+        pace: (0, 0, 0, Instant::now()),
+        last_draw: Instant::now(),
         placeholder: OwnedPicture::black(1280, 720),
         placeholder_presented: false,
         render_error: None,

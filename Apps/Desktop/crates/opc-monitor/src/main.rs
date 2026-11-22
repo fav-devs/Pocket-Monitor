@@ -35,6 +35,52 @@ fn show_error(message: &str) {
 
 mod demo;
 
+/// A viewfinder that is not the focused window is a background process to Windows 11,
+/// which then coarsens its timers and can leave the picture frozen for most of a second
+/// at a time. A live monitor is never idle work: opt out of power throttling and ask for
+/// 1 ms timers.
+fn keep_timers_fast() {
+    #[cfg(target_os = "windows")]
+    {
+        #[repr(C)]
+        struct PowerThrottling {
+            version: u32,
+            control_mask: u32,
+            state_mask: u32,
+        }
+        #[link(name = "winmm")]
+        extern "system" {
+            fn timeBeginPeriod(period: u32) -> u32;
+        }
+        extern "system" {
+            fn GetCurrentProcess() -> *mut u8;
+            fn SetProcessInformation(
+                process: *mut u8,
+                class: i32,
+                info: *const PowerThrottling,
+                size: u32,
+            ) -> i32;
+        }
+        // ProcessPowerThrottling = 4; version 1; EXECUTION_SPEED = 1 controlled, state 0
+        // means "do not throttle".
+        let state = PowerThrottling {
+            version: 1,
+            control_mask: 1,
+            state_mask: 0,
+        };
+        // Safety: plain Win32 calls on the current process with a correctly sized struct.
+        unsafe {
+            SetProcessInformation(
+                GetCurrentProcess(),
+                4,
+                &state,
+                std::mem::size_of::<PowerThrottling>() as u32,
+            );
+            timeBeginPeriod(1);
+        }
+    }
+}
+
 #[cfg(opc_core_linked)]
 mod audio;
 #[cfg(opc_core_linked)]
@@ -49,13 +95,17 @@ mod media;
 mod station;
 #[cfg(opc_core_linked)]
 mod view;
+#[cfg(opc_core_linked)]
+mod webcam;
+#[cfg(opc_core_linked)]
+mod home;
 
 #[cfg(not(opc_core_linked))]
 const NO_CORE: &str = "this build has no Swift core linked, so it cannot open a camera. \
                        Build it with `just desktop-build`, which stages the core first.";
 
 const USAGE: &str = "\
-OpenPocketCine desktop viewfinder
+Pocket Monitor desktop viewfinder
 
 USAGE:
     opc-monitor view [--camera HOST:PORT] [--look NAME | --lut FILE] [--model ID]
@@ -101,6 +151,12 @@ rests the moment it comes up.";
 const SAVED_WIFI_FAST_PATH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 fn main() -> ExitCode {
+    keep_timers_fast();
+    if std::env::args().any(|arg| arg == "--gestures")
+        || opc_monitor::appsettings::load().gestures
+    {
+        std::env::set_var("OPC_GESTURES", "1");
+    }
     // Write a startup log beside the exe so silent crashes leave evidence.
     let log_path = std::env::current_exe()
         .ok()
@@ -138,20 +194,36 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("demo") => {
             log!("opening demo viewfinder");
-            demo::run()
+            back_to_home(demo::run())
+        }
+        Some("home") => {
+            log!("opening the home screen");
+            show_home()
+        }
+        Some("setup") => {
+            log!("opening camera setup");
+            view_camera(&["--setup".to_string()])
         }
         Some("view") => {
             log!("opening viewfinder");
             view_camera(&args[1..])
         }
         None => {
-            log!("opening viewfinder");
-            view_camera(&[])
+            if opc_monitor::appsettings::load().open_camera_at_launch {
+                log!("opening the remembered camera");
+                std::env::set_var("OPC_FROM_HOME", "1");
+                view_camera(&[])
+            } else {
+                log!("opening the home screen");
+                show_home()
+            }
         }
         Some("watch") => {
             log!("opening viewfinder on a phone");
             watch_phone(&args[1..])
         }
+        #[cfg(opc_core_linked)]
+        Some("headless") => connect::headless(&args[1..]),
         Some("keys") => {
             println!("{KEYS}");
             Ok(())
@@ -199,6 +271,99 @@ fn watch_phone(_args: &[String]) -> Result<(), String> {
     Err(NO_CORE.to_string())
 }
 
+/// When the viewfinder was opened from the home screen, closing it comes back here.
+#[cfg(opc_core_linked)]
+fn back_to_home<T>(result: T) -> T {
+    if std::env::var_os("OPC_FROM_HOME").is_some() {
+        respawn_home();
+    }
+    result
+}
+
+#[cfg(not(opc_core_linked))]
+fn back_to_home<T>(result: T) -> T {
+    result
+}
+
+#[cfg(opc_core_linked)]
+fn respawn_home() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe)
+            .arg("home")
+            .env_remove("OPC_FROM_HOME")
+            .spawn();
+    }
+}
+
+#[cfg(not(opc_core_linked))]
+fn show_home() -> Result<(), String> {
+    Err(NO_CORE.to_string())
+}
+
+/// The home screen, then whatever the operator picked there. Each choice runs in a fresh
+/// process because the home window uses up this one's event loop.
+#[cfg(opc_core_linked)]
+fn show_home() -> Result<(), String> {
+    use home::{HomeChoice, Known};
+
+    let known = Known {
+        lan: lan_camera::load(),
+        station: station::load(),
+        softap: load_saved_camera().map(|saved| (saved.ssid, saved.model_id)),
+    };
+    let choice = home::run(known);
+    // Whatever opens from here brings the operator back when it closes.
+    std::env::set_var("OPC_FROM_HOME", "1");
+    let spawn_self = |args: &[&str]| -> Result<(), String> {
+        std::process::Command::new(std::env::current_exe().map_err(|error| error.to_string())?)
+            .args(args)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("could not open that: {error}"))
+    };
+    let failed = |message: String| -> Result<(), String> {
+        show_error(&message);
+        respawn_home();
+        Ok(())
+    };
+    match choice {
+        HomeChoice::Quit => Ok(()),
+        HomeChoice::OpenAddress(address, model) => relaunch_viewfinder_at(&[], address, model),
+        HomeChoice::OpenStation => {
+            let Some(saved) = station::load() else {
+                return failed("That camera is no longer remembered.".to_string());
+            };
+            log_connection("home: looking for the camera on the saved home network");
+            match station::find_camera(&saved.identity, saved.address) {
+                Some(address) => {
+                    let mut remembered = saved.clone();
+                    if let std::net::IpAddr::V4(v4) = address.ip() {
+                        remembered.address = Some(v4);
+                    }
+                    let _ = station::save(&remembered);
+                    relaunch_viewfinder_at(&[], address, saved.model_id)
+                }
+                None => failed(format!(
+                    "Couldn't find the camera on {}. Check it is on and on the same Wi-Fi as this PC.",
+                    saved.ssid
+                )),
+            }
+        }
+        HomeChoice::OpenSoftAp => {
+            let Some(saved) = load_saved_camera() else {
+                return failed("That camera is no longer remembered.".to_string());
+            };
+            match join_saved_camera_wifi(&saved.ssid) {
+                Ok(()) => relaunch_viewfinder(&[], saved.model_id),
+                Err(error) => failed(format!("Couldn't join the camera's Wi-Fi: {error}")),
+            }
+        }
+        HomeChoice::Setup => spawn_self(&["setup"]),
+        HomeChoice::Phones => spawn_self(&["watch"]),
+        HomeChoice::Demo => spawn_self(&["demo"]),
+    }
+}
+
 /// `watch NAME` is `view --phone NAME`; bare `watch` opens the connection screen on the
 /// list of phones sharing, which a saved camera would otherwise skip past.
 #[cfg(opc_core_linked)]
@@ -218,8 +383,8 @@ fn watch_phone(args: &[String]) -> Result<(), String> {
             port,
             passcode,
         } => relaunch_phone_viewfinder(args, &name, &addresses, port, &passcode),
-        ConnectOutcome::Quit
-        | ConnectOutcome::Skip
+        ConnectOutcome::Quit => back_to_home(Ok(())),
+        ConnectOutcome::Skip
         | ConnectOutcome::Connected { .. }
         | ConnectOutcome::StationReady { .. } => Ok(()),
     }
@@ -250,7 +415,7 @@ fn view_camera(args: &[String]) -> Result<(), String> {
             .map(str::to_string)
             .or_else(|| std::env::var("OPC_PHONE_PASSCODE").ok())
             .unwrap_or_default();
-        return view::run(view::Options {
+        return back_to_home(view::run(view::Options {
             remote: None,
             lut,
             model_id: None,
@@ -261,13 +426,15 @@ fn view_camera(args: &[String]) -> Result<(), String> {
                 port,
                 passcode,
             }),
-        });
+        }));
     }
 
     // If the caller gave --camera, skip the connection screen and go straight to the feed.
     let remote_str = flag(args, "camera");
     let model_id_str = flag(args, "model");
 
+    // `setup` skips the shortcuts to a remembered camera and goes straight to pairing.
+    let setup = args.iter().any(|argument| argument == "--setup");
     let (remote, model_id) = if let Some(text) = remote_str {
         let addr = text
             .parse()
@@ -276,11 +443,32 @@ fn view_camera(args: &[String]) -> Result<(), String> {
             Some(t) => Some(t.parse().map_err(|_| format!("`{t}` is not a model id"))?),
             None => None,
         };
+        // Remember a LAN camera so the next plain launch finds it without flags.
+        if let std::net::SocketAddr::V4(v4) = addr {
+            if !v4.ip().is_loopback() && *v4.ip() != std::net::Ipv4Addr::new(192, 168, 2, 1) {
+                lan_camera::save(*v4.ip(), mid);
+            }
+        }
         (Some(addr), mid)
     } else {
         // A camera on the operator's own network is looked for there first: no Wi-Fi
         // change, no Bluetooth.
-        if let Some(saved) = station::load() {
+        if let Some((ip, saved_model)) = lan_camera::load().filter(|_| !setup) {
+            let poke = std::net::SocketAddr::from((ip, 7001));
+            if std::net::TcpStream::connect_timeout(&poke, std::time::Duration::from_millis(1500))
+                .is_ok()
+            {
+                log_connection(&format!("remembered camera answers at {ip}"));
+                relaunch_viewfinder_at(
+                    args,
+                    std::net::SocketAddr::from((ip, 9004)),
+                    saved_model.or_else(|| model_id_str.and_then(|text| text.parse().ok())),
+                )?;
+                return Ok(());
+            }
+            log_connection("remembered camera address did not answer");
+        }
+        if let Some(saved) = station::load().filter(|_| !setup) {
             log_connection("looking for the camera on the saved home network");
             if let Some(address) = station::find_camera(&saved.identity, saved.address) {
                 let mut remembered = saved.clone();
@@ -302,7 +490,7 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         // A first pair creates a manual Windows WLAN profile. On later launches that
         // profile is all the authority Windows needs to join the camera SoftAP, so do
         // not wake Bluetooth or ask the operator to pair again.
-        if let Some(saved) = load_saved_camera() {
+        if let Some(saved) = load_saved_camera().filter(|_| !setup) {
             match join_saved_camera_wifi(&saved.ssid) {
                 Ok(()) => {
                     relaunch_viewfinder(
@@ -321,7 +509,7 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         // eframe's pairing window consumes this process's sole winit event loop.
         // Start the actual viewfinder in a fresh process after setup closes.
         let paired_model = match connect::run() {
-            ConnectOutcome::Quit => return Ok(()),
+            ConnectOutcome::Quit => return back_to_home(Ok(())),
             ConnectOutcome::Skip => None,
             ConnectOutcome::Phone {
                 name,
@@ -360,13 +548,13 @@ fn view_camera(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
 
-    view::run(view::Options {
+    back_to_home(view::run(view::Options {
         remote,
         lut,
         model_id,
         still,
         phone: None,
-    })
+    }))
 }
 
 /// The non-secret half of a paired desktop camera. Windows owns the WLAN profile and
@@ -648,4 +836,45 @@ fn load_lut(args: &[String]) -> Result<Option<opc_render::Lut>, String> {
         });
     }
     Ok(None)
+}
+
+/// A camera remembered by address alone, from a `--camera` run. The Bluetooth-paired
+/// station file needs an identity this path never learns, so it has a file of its own.
+#[cfg(opc_core_linked)]
+mod lan_camera {
+    use std::net::Ipv4Addr;
+    use std::path::PathBuf;
+
+    fn path() -> Option<PathBuf> {
+        let root = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+        Some(root.join("OpenPocketCine").join("desktop-lan-camera-v1.txt"))
+    }
+
+    pub fn save(ip: Ipv4Addr, model: Option<i32>) {
+        let Some(path) = path() else { return };
+        if let Some(folder) = path.parent() {
+            let _ = std::fs::create_dir_all(folder);
+        }
+        let model = model.map(|m| m.to_string()).unwrap_or_default();
+        let _ = std::fs::write(path, format!("{ip}
+{model}
+"));
+    }
+
+    pub fn forget() {
+        if let Some(path) = path() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    pub fn load() -> Option<(Ipv4Addr, Option<i32>)> {
+        let text = std::fs::read_to_string(path()?).ok()?;
+        let mut lines = text.lines();
+        let ip = lines.next()?.trim().parse().ok()?;
+        let model = lines.next().and_then(|l| l.trim().parse().ok());
+        Some((ip, model))
+    }
 }
