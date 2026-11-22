@@ -1,7 +1,8 @@
-// A release operator build is a normal Windows app, not a terminal program. Startup,
-// connection and crash diagnostics still go to `opc-monitor.log` beside the executable.
+// Every Windows build is a normal app, not a terminal program, dev builds included.
+// Startup, connection and crash diagnostics go to `opc-monitor.log` beside the
+// executable. Build with `--features console` to get a terminal for eprintln output.
 #![cfg_attr(
-    all(target_os = "windows", not(debug_assertions)),
+    all(target_os = "windows", not(feature = "console")),
     windows_subsystem = "windows"
 )]
 

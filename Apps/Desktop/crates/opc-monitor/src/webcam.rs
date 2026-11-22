@@ -49,15 +49,27 @@ fn ffmpeg() -> Option<PathBuf> {
     None
 }
 
+/// FFmpeg is a console program: without this Windows opens a terminal window for it.
+fn quiet(command: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 /// The first video device DirectShow lists, unless `OPC_WEBCAM` names one.
 fn device(ffmpeg: &PathBuf) -> Option<String> {
     if let Ok(name) = std::env::var("OPC_WEBCAM") {
         return Some(name);
     }
-    let output = Command::new(ffmpeg)
-        .args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"])
-        .output()
-        .ok()?;
+    let output = quiet(
+        Command::new(ffmpeg).args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]),
+    )
+    .output()
+    .ok()?;
     let text = String::from_utf8_lossy(&output.stderr);
     // Cameras that are software, including this app's own virtual camera, are never
     // the operator's webcam: reading them would feed our own picture back in.
@@ -87,15 +99,16 @@ pub fn start() -> Option<Receiver<Gesture>> {
     })?;
     let (sender, receiver) = channel();
     std::thread::spawn(move || {
-        let child = Command::new(&ffmpeg)
+        let mut command = Command::new(&ffmpeg);
+        command
             .args(["-loglevel", "quiet", "-f", "dshow", "-framerate", "15", "-i"])
             .arg(format!("video={device}"))
             .args(["-vf", &format!("scale={WIDTH}:{HEIGHT},format=rgb24")])
             .args(["-f", "rawvideo", "-"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .stdin(Stdio::null())
-            .spawn();
+            .stdin(Stdio::null());
+        let child = quiet(&mut command).spawn();
         let Ok(mut child) = child else {
             eprintln!("gestures: could not start ffmpeg");
             return;
