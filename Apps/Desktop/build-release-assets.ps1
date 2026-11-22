@@ -26,7 +26,7 @@ foreach ($name in 'opc-monitor.exe', 'opc_vcam_win.dll', 'OpenPocketCineDesktop.
 
 $cargo = Get-Content (Join-Path $desktop 'Cargo.toml') -Raw
 $version = if ($cargo -match '(?m)^version\s*=\s*"([^"]+)"') { $Matches[1] } else { throw 'No workspace version in Cargo.toml.' }
-$assetName = "OpenPocketCine-$version-windows-x64"
+$assetName = "PocketMonitor-$version-windows-x64"
 $portableRoot = Join-Path $dist $assetName
 $zip = Join-Path $dist "$assetName.zip"
 
@@ -50,7 +50,7 @@ if (-not $PortableOnly) {
 }
 
 $assets = @(Get-Item $zip)
-$installer = Join-Path $dist "OpenPocketCine-Setup-$version.exe"
+$installer = Join-Path $dist "PocketMonitor-Setup-$version.exe"
 if (Test-Path $installer) { $assets += Get-Item $installer }
 $assets += @(Get-ChildItem $dist -File | Where-Object {
     $_.Name -match '^ffmpeg-.*-source\.zip$' -or $_.Name -eq 'FFmpeg-BUILD-PROVENANCE.md'

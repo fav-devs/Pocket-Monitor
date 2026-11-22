@@ -1,4 +1,4 @@
-; OpenPocketCine viewfinder — Windows installer.
+; Pocket Monitor — Windows installer.
 ;
 ; Compiled by build-installer.ps1 with Inno Setup 6 after build-release.ps1 has staged
 ; the executable and every runtime DLL in target\release. The installer puts them in
@@ -18,20 +18,20 @@
 
 [Setup]
 AppId={{6F0B4C1E-8D7A-4F3B-9C2E-5A1D7E9B3C41}
-AppName=OpenPocketCine
+AppName=Pocket Monitor
 AppVersion={#AppVersion}
-AppVerName=OpenPocketCine {#AppVersion}
-AppPublisher=OpenPocketCine contributors
+AppVerName=Pocket Monitor {#AppVersion}
+AppPublisher=Pocket Monitor contributors
 AppPublisherURL=https://github.com/fav-devs/OpenPocketCine
 AppSupportURL=https://github.com/fav-devs/OpenPocketCine/issues
 DefaultDirName={autopf}\OpenPocketCine
-DefaultGroupName=OpenPocketCine
+DefaultGroupName=Pocket Monitor
 DisableProgramGroupPage=yes
 OutputDir={#OutDir}
-OutputBaseFilename=OpenPocketCine-Setup-{#AppVersion}
+OutputBaseFilename=PocketMonitor-Setup-{#AppVersion}
 SetupIconFile=viewfinder.ico
 UninstallDisplayIcon={app}\viewfinder.ico
-UninstallDisplayName=OpenPocketCine
+UninstallDisplayName=Pocket Monitor
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -47,7 +47,7 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#Staged}\opc-monitor.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -64,12 +64,12 @@ Source: "..\..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversio
 Source: "..\..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\OpenPocketCine"; Filename: "{app}\opc-monitor.exe"; Parameters: "view"; IconFilename: "{app}\viewfinder.ico"; WorkingDir: "{app}"
-Name: "{group}\Uninstall OpenPocketCine"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\OpenPocketCine"; Filename: "{app}\opc-monitor.exe"; Parameters: "view"; IconFilename: "{app}\viewfinder.ico"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\Pocket Monitor"; Filename: "{app}\opc-monitor.exe"; IconFilename: "{app}\viewfinder.ico"; WorkingDir: "{app}"
+Name: "{group}\Uninstall Pocket Monitor"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Pocket Monitor"; Filename: "{app}\opc-monitor.exe"; IconFilename: "{app}\viewfinder.ico"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\opc-monitor.exe"; Parameters: "view"; Description: "{cm:LaunchProgram,OpenPocketCine}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\opc-monitor.exe"; Description: "{cm:LaunchProgram,Pocket Monitor}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; The operator's settings and media cache stay; only what the installer put down goes.

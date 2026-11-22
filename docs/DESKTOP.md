@@ -163,7 +163,7 @@ otherwise. Anything that calls the core fails at link rather than running a stub
 
 `Apps/Desktop/build-installer.ps1` runs `build-release.ps1`, then compiles
 `installer/OpenPocketCine.iss` with Inno Setup 6 (`winget install JRSoftware.InnoSetup`)
-into `Apps/Desktop/dist/OpenPocketCine-Setup-<version>.exe`. The setup puts the
+into `Apps/Desktop/dist/PocketMonitor-Setup-<version>.exe`. The setup puts the
 executable and every runtime DLL in Program Files, registers the virtual camera source
 (`opc_vcam_win.dll`) as the Output tab's Install would, adds a Start menu entry and an
 optional desktop shortcut, and unregisters the camera on uninstall. It asks for

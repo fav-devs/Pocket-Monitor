@@ -47,4 +47,4 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 & $iscc "/DStaged=$staged" "/DAppVersion=$version" "/DOutDir=$dist" (Join-Path $desktop 'installer\OpenPocketCine.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed.' }
 
-Write-Host "Built $(Join-Path $dist "OpenPocketCine-Setup-$version.exe")"
+Write-Host "Built $(Join-Path $dist "PocketMonitor-Setup-$version.exe")"

@@ -22,8 +22,8 @@ just desktop-check
 
 The packaging command writes these ignored artifacts under `Apps/Desktop/dist/`:
 
-- `OpenPocketCine-Setup-X.Y.Z.exe` — installer; registers the optional virtual camera.
-- `OpenPocketCine-X.Y.Z-windows-x64.zip` — portable application and runtime DLLs.
+- `PocketMonitor-Setup-X.Y.Z.exe` — installer; registers the optional virtual camera.
+- `PocketMonitor-X.Y.Z-windows-x64.zip` — portable application and runtime DLLs.
 - `SHA256SUMS.txt` — SHA-256 for every published binary asset.
 
 The build is currently unsigned. Release notes and the README must say so until Authenticode
