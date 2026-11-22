@@ -5,6 +5,15 @@ use std::path::{Path, PathBuf};
 
 use crate::gesture::GestureMap;
 
+/// Where gestures are read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GestureSource {
+    /// The picture coming from the camera itself.
+    CameraFeed,
+    /// A webcam on this PC.
+    Webcam,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppSettings {
     /// Webcam gestures on whenever the viewfinder opens.
@@ -13,6 +22,7 @@ pub struct AppSettings {
     pub open_camera_at_launch: bool,
     /// What each webcam gesture does.
     pub gesture_map: GestureMap,
+    pub gesture_source: GestureSource,
 }
 
 impl Default for AppSettings {
@@ -21,6 +31,7 @@ impl Default for AppSettings {
             gestures: false,
             open_camera_at_launch: false,
             gesture_map: GestureMap::default(),
+            gesture_source: GestureSource::CameraFeed,
         }
     }
 }
@@ -30,9 +41,13 @@ const HEADER: &str = "openpocketcine-desktop-app-v1";
 impl AppSettings {
     pub fn to_text(&self) -> String {
         format!(
-            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\n{}",
+            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\ngesture_source={}\n{}",
             u8::from(self.gestures),
             u8::from(self.open_camera_at_launch),
+            match self.gesture_source {
+                GestureSource::CameraFeed => "camera",
+                GestureSource::Webcam => "webcam",
+            },
             self.gesture_map.to_lines()
         )
     }
@@ -49,6 +64,13 @@ impl AppSettings {
                 Some(("gestures", value)) => settings.gestures = value == "1",
                 Some(("open_camera_at_launch", value)) => {
                     settings.open_camera_at_launch = value == "1"
+                }
+                Some(("gesture_source", value)) => {
+                    settings.gesture_source = if value == "webcam" {
+                        GestureSource::Webcam
+                    } else {
+                        GestureSource::CameraFeed
+                    }
                 }
                 _ => settings.gesture_map.read_line(line),
             }
@@ -105,6 +127,7 @@ mod tests {
                 );
                 map
             },
+            gesture_source: GestureSource::Webcam,
         };
         assert_eq!(AppSettings::parse(&settings.to_text()), settings);
         assert_eq!(AppSettings::parse("junk"), AppSettings::default());

@@ -99,6 +99,7 @@ struct View {
     /// A game controller, when the platform offers one.
     pad: Option<gilrs::Gilrs>,
     gestures: Option<std::sync::mpsc::Receiver<opc_monitor::gesture::Gesture>>,
+    feed_gestures: Option<FeedGestures>,
     last_pad_at: f64,
     /// Where the camera is, for a reconnect.
     remote: Option<std::net::SocketAddr>,
@@ -653,12 +654,16 @@ impl View {
         self.sample_scopes();
     }
 
-    /// Webcam gestures, as they arrive.
+    /// Gestures, from the PC's webcam or from the camera's own picture.
     fn poll_gestures(&mut self, now: f64) {
-        let Some(receiver) = self.gestures.as_ref() else {
-            return;
-        };
-        let seen: Vec<_> = receiver.try_iter().collect();
+        let mut seen: Vec<opc_monitor::gesture::Gesture> = Vec::new();
+        if let Some(receiver) = self.gestures.as_ref() {
+            seen.extend(receiver.try_iter());
+        }
+        if let (Some(feed), Some(picture)) = (self.feed_gestures.as_mut(), self.latest.as_ref()) {
+            let pose = opc_monitor::moves::Waypoint::from_status(self.shell.status());
+            seen.extend(feed.read(picture, pose, now));
+        }
         for gesture in seen {
             for intent in self.shell.gesture(gesture, now) {
                 if let Intent::Send(command) = intent {
@@ -1250,7 +1255,15 @@ pub fn run(options: Options) -> Result<(), String> {
             .map_err(|error| eprintln!("no game controller support: {error}"))
             .ok(),
         last_pad_at: f64::NEG_INFINITY,
-        gestures: crate::webcam::wanted().then(crate::webcam::start).flatten(),
+        gestures: (crate::webcam::wanted()
+            && opc_monitor::appsettings::load().gesture_source
+                == opc_monitor::appsettings::GestureSource::Webcam)
+            .then(crate::webcam::start)
+            .flatten(),
+        feed_gestures: (crate::webcam::wanted()
+            && opc_monitor::appsettings::load().gesture_source
+                == opc_monitor::appsettings::GestureSource::CameraFeed)
+            .then(FeedGestures::new),
         remote: options.remote,
         phone: options.phone.clone(),
         model_id: options.model_id,
@@ -1331,4 +1344,76 @@ fn fresh_session() -> (u16, u16) {
     let session_id = (nanos & 0xFFFF) as u16 | 1;
     let base_seq = ((nanos >> 8) & 0xFFF8) as u16;
     (session_id, base_seq)
+}
+
+
+/// Gestures read from the camera's own picture: the operator stands in front of the
+/// lens. The gimbal moving shifts the whole scene, so swipes are ignored while it moves
+/// and for a moment after; held hand poses do not depend on that.
+struct FeedGestures {
+    tracker: opc_monitor::gesture::Tracker,
+    holder: opc_monitor::hand::Holder,
+    last_read: f64,
+    last_pose: Option<(f64, f64)>,
+    moving_until: f64,
+}
+
+impl FeedGestures {
+    fn new() -> Self {
+        Self {
+            tracker: opc_monitor::gesture::Tracker::new(true),
+            holder: opc_monitor::hand::Holder::default(),
+            last_read: f64::NEG_INFINITY,
+            last_pose: None,
+            moving_until: 0.0,
+        }
+    }
+
+    fn read(
+        &mut self,
+        picture: &opc_decode::OwnedPicture,
+        pose: Option<opc_monitor::moves::Waypoint>,
+        now: f64,
+    ) -> Vec<opc_monitor::gesture::Gesture> {
+        use opc_monitor::gesture::{Gesture, HEIGHT as GH, WIDTH as GW};
+        use opc_monitor::hand::{self, Pose};
+
+        if now - self.last_read < 1.0 / 15.0 {
+            return Vec::new();
+        }
+        self.last_read = now;
+        if let Some(pose) = pose {
+            if let Some((yaw, pitch)) = self.last_pose {
+                if (pose.yaw - yaw).abs() > 0.3 || (pose.pitch - pitch).abs() > 0.3 {
+                    self.moving_until = now + 1.0;
+                }
+            }
+            self.last_pose = Some((pose.yaw, pose.pitch));
+        }
+        let frame = opc_monitor::scopes::small_rgb(picture, hand::WIDTH, hand::HEIGHT);
+        let mut grey = vec![0u8; GW * GH];
+        for y in 0..GH {
+            for x in 0..GW {
+                let at = ((y * hand::HEIGHT / GH) * hand::WIDTH + x * hand::WIDTH / GW) * 3;
+                grey[y * GW + x] = ((u16::from(frame[at])
+                    + u16::from(frame[at + 1])
+                    + u16::from(frame[at + 2]))
+                    / 3) as u8;
+            }
+        }
+        let mut found = Vec::new();
+        let swipe = self.tracker.feed(&grey, now);
+        if now >= self.moving_until {
+            found.extend(swipe);
+        }
+        if let Some(pose) = self.holder.feed(hand::classify(&frame), now) {
+            found.push(match pose {
+                Pose::Fist => Gesture::Fist,
+                Pose::Point => Gesture::Point,
+                Pose::Two => Gesture::Two,
+                Pose::Palm => Gesture::Palm,
+            });
+        }
+        found
+    }
 }
