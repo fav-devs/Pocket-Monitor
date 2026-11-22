@@ -8,6 +8,25 @@ use serde::{Deserialize, Serialize};
 
 /// The camera's SoftAP address. Every body the shells know serves media here.
 pub const HOST: &str = "192.168.2.1";
+
+static HOST_OVERRIDE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Where the camera serves media from. It is the SoftAP address unless the camera is on
+/// the operator's own Wi-Fi, where `set_host` has named the address it was found at.
+pub fn host() -> String {
+    HOST_OVERRIDE
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .unwrap_or_else(|| HOST.to_string())
+}
+
+/// Serve media from `address` instead of the SoftAP address.
+pub fn set_host(address: &str) {
+    if let Ok(mut guard) = HOST_OVERRIDE.write() {
+        *guard = Some(address.to_string());
+    }
+}
 pub const PORT: u16 = 80;
 
 /// Handles at or above this are videos, and on a two-store body, the internal store.
@@ -243,7 +262,7 @@ pub fn is_proxy_path(path: &str) -> bool {
 /// `http://192.168.2.1/v2?storage=N&path=DCIM/…`. The separators inside `path=` stay
 /// as they are: the camera answers `404` to a percent-encoded slash.
 pub fn path_url(storage: i64, path: &str) -> String {
-    format!("http://{HOST}/v2?storage={storage}&path={path}")
+    format!("http://{}/v2?storage={storage}&path={path}", host())
 }
 
 /// `/v2?storage=` from the handle's internal bit. Pocket 3 is the single-microSD

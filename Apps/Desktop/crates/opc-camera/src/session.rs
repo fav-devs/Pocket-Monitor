@@ -221,7 +221,7 @@ impl CameraSession {
         let SocketAddr::V4(address) = remote else {
             return (None, "skipped (non-IPv4 peer)".to_string());
         };
-        if *address.ip() != Ipv4Addr::new(192, 168, 2, 1) || address.port() != 9004 {
+        if address.port() != 9004 {
             return (None, "skipped (non-standard camera peer)".to_string());
         }
         let target = SocketAddr::new(IpAddr::V4(*address.ip()), TCP_POKE_PORT);
