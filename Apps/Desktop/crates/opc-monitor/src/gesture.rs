@@ -27,6 +27,165 @@ pub enum Gesture {
     Two,
 }
 
+impl Gesture {
+    pub const ALL: [Gesture; 8] = [
+        Gesture::SwipeLeft,
+        Gesture::SwipeRight,
+        Gesture::SwipeUp,
+        Gesture::SwipeDown,
+        Gesture::Palm,
+        Gesture::Fist,
+        Gesture::Point,
+        Gesture::Two,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Gesture::SwipeLeft => "Swipe left",
+            Gesture::SwipeRight => "Swipe right",
+            Gesture::SwipeUp => "Swipe up",
+            Gesture::SwipeDown => "Swipe down",
+            Gesture::Palm => "Open palm",
+            Gesture::Fist => "Fist",
+            Gesture::Point => "One finger",
+            Gesture::Two => "Two fingers",
+        }
+    }
+
+    /// How to make it.
+    pub fn how(self) -> &'static str {
+        match self {
+            Gesture::SwipeLeft => "Sweep your hand to your left, quickly, in front of the webcam",
+            Gesture::SwipeRight => "Sweep your hand to your right, quickly",
+            Gesture::SwipeUp => "Sweep your hand upward",
+            Gesture::SwipeDown => "Sweep your hand downward",
+            Gesture::Palm => "Hold up a flat hand, fingers spread, for one second",
+            Gesture::Fist => "Hold up a closed fist for one second",
+            Gesture::Point => "Hold up one finger for one second",
+            Gesture::Two => "Hold up two fingers for one second",
+        }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|g| *g == self).unwrap_or(0)
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Gesture::SwipeLeft => "swipe_left",
+            Gesture::SwipeRight => "swipe_right",
+            Gesture::SwipeUp => "swipe_up",
+            Gesture::SwipeDown => "swipe_down",
+            Gesture::Palm => "palm",
+            Gesture::Fist => "fist",
+            Gesture::Point => "point",
+            Gesture::Two => "two",
+        }
+    }
+}
+
+/// What a gesture can be set to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GestureAction {
+    Nothing,
+    Recenter,
+    Flip,
+    NextPreset,
+    PreviousPreset,
+    /// Stop a move or recall in flight and let go of tracking.
+    Stop,
+    /// Start or stop recording.
+    Record,
+}
+
+impl GestureAction {
+    pub const ALL: [GestureAction; 7] = [
+        GestureAction::Nothing,
+        GestureAction::Recenter,
+        GestureAction::Flip,
+        GestureAction::NextPreset,
+        GestureAction::PreviousPreset,
+        GestureAction::Stop,
+        GestureAction::Record,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GestureAction::Nothing => "Do nothing",
+            GestureAction::Recenter => "Recentre the gimbal",
+            GestureAction::Flip => "Flip (selfie)",
+            GestureAction::NextPreset => "Next preset",
+            GestureAction::PreviousPreset => "Previous preset",
+            GestureAction::Stop => "Stop everything",
+            GestureAction::Record => "Start / stop recording",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            GestureAction::Nothing => "nothing",
+            GestureAction::Recenter => "recenter",
+            GestureAction::Flip => "flip",
+            GestureAction::NextPreset => "next_preset",
+            GestureAction::PreviousPreset => "previous_preset",
+            GestureAction::Stop => "stop",
+            GestureAction::Record => "record",
+        }
+    }
+}
+
+/// Which action each gesture does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GestureMap([GestureAction; 8]);
+
+impl Default for GestureMap {
+    fn default() -> Self {
+        let mut map = Self([GestureAction::Nothing; 8]);
+        map.set(Gesture::SwipeLeft, GestureAction::PreviousPreset);
+        map.set(Gesture::SwipeRight, GestureAction::NextPreset);
+        map.set(Gesture::SwipeUp, GestureAction::Recenter);
+        map.set(Gesture::SwipeDown, GestureAction::Flip);
+        map.set(Gesture::Palm, GestureAction::Stop);
+        map.set(Gesture::Fist, GestureAction::Recenter);
+        map.set(Gesture::Point, GestureAction::NextPreset);
+        map.set(Gesture::Two, GestureAction::Flip);
+        map
+    }
+}
+
+impl GestureMap {
+    pub fn get(&self, gesture: Gesture) -> GestureAction {
+        self.0[gesture.index()]
+    }
+
+    pub fn set(&mut self, gesture: Gesture, action: GestureAction) {
+        self.0[gesture.index()] = action;
+    }
+
+    /// One `gesture.NAME=action` line each.
+    pub fn to_lines(&self) -> String {
+        Gesture::ALL
+            .iter()
+            .map(|g| format!("gesture.{}={}\n", g.key(), self.get(*g).key()))
+            .collect()
+    }
+
+    /// Reads one line of [`Self::to_lines`]; anything else is ignored.
+    pub fn read_line(&mut self, line: &str) {
+        let Some((key, value)) = line
+            .strip_prefix("gesture.")
+            .and_then(|rest| rest.split_once('='))
+        else {
+            return;
+        };
+        let gesture = Gesture::ALL.iter().find(|g| g.key() == key);
+        let action = GestureAction::ALL.iter().find(|a| a.key() == value);
+        if let (Some(gesture), Some(action)) = (gesture, action) {
+            self.set(*gesture, *action);
+        }
+    }
+}
+
 /// Per-pixel brightness change that counts as motion.
 const PIXEL_DELTA: i16 = 28;
 /// Fraction of the picture that must be moving for a frame to count.
@@ -168,6 +327,22 @@ mod tests {
             now += 0.05;
         }
         seen
+    }
+
+    #[test]
+    fn the_map_survives_its_lines_and_ignores_junk() {
+        let mut map = GestureMap::default();
+        map.set(Gesture::Fist, GestureAction::Record);
+        map.set(Gesture::SwipeUp, GestureAction::Nothing);
+        let mut read = GestureMap::default();
+        for line in map.to_lines().lines() {
+            read.read_line(line);
+        }
+        read.read_line("gesture.palm=launch_missiles");
+        read.read_line("gesture.unknown=flip");
+        read.read_line("nonsense");
+        assert_eq!(read, map);
+        assert_eq!(GestureMap::default().get(Gesture::Palm), GestureAction::Stop);
     }
 
     #[test]

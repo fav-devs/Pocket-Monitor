@@ -3,12 +3,16 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::gesture::GestureMap;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppSettings {
     /// Webcam gestures on whenever the viewfinder opens.
     pub gestures: bool,
     /// Skip the home screen and open the remembered camera straight away at launch.
     pub open_camera_at_launch: bool,
+    /// What each webcam gesture does.
+    pub gesture_map: GestureMap,
 }
 
 impl Default for AppSettings {
@@ -16,6 +20,7 @@ impl Default for AppSettings {
         Self {
             gestures: false,
             open_camera_at_launch: false,
+            gesture_map: GestureMap::default(),
         }
     }
 }
@@ -25,9 +30,10 @@ const HEADER: &str = "openpocketcine-desktop-app-v1";
 impl AppSettings {
     pub fn to_text(&self) -> String {
         format!(
-            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\n",
+            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\n{}",
             u8::from(self.gestures),
-            u8::from(self.open_camera_at_launch)
+            u8::from(self.open_camera_at_launch),
+            self.gesture_map.to_lines()
         )
     }
 
@@ -44,7 +50,7 @@ impl AppSettings {
                 Some(("open_camera_at_launch", value)) => {
                     settings.open_camera_at_launch = value == "1"
                 }
-                _ => {}
+                _ => settings.gesture_map.read_line(line),
             }
         }
         settings
@@ -91,6 +97,14 @@ mod tests {
         let settings = AppSettings {
             gestures: true,
             open_camera_at_launch: true,
+            gesture_map: {
+                let mut map = GestureMap::default();
+                map.set(
+                    crate::gesture::Gesture::Fist,
+                    crate::gesture::GestureAction::Record,
+                );
+                map
+            },
         };
         assert_eq!(AppSettings::parse(&settings.to_text()), settings);
         assert_eq!(AppSettings::parse("junk"), AppSettings::default());

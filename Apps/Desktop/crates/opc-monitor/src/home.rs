@@ -13,6 +13,7 @@ use eframe::egui::{self, Align, FontId, Layout, RichText, Stroke, Vec2};
 
 use crate::connect::{accent_button, ghost_button, ACCENT, BG, BORDER, DIM, ERR, SUCCESS, SURFACE, TEXT};
 use opc_monitor::appsettings::{self, AppSettings};
+use opc_monitor::gesture::{Gesture, GestureAction, GestureMap};
 use opc_monitor::homewifi::SavedStation;
 
 /// A camera the app remembers.
@@ -308,6 +309,16 @@ impl eframe::App for HomeApp {
                             if accent_button(ui, "Pair a camera over Bluetooth").clicked() {
                                 choice = Some(HomeChoice::Setup);
                             }
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "This is how the camera is told your Wi-Fi password, so it needs a \
+                                     Bluetooth LE adapter in this PC. No luck? Put the camera on your \
+                                     Wi-Fi from your phone instead, then connect by address below.",
+                                )
+                                .font(FontId::proportional(12.0))
+                                .color(DIM),
+                            );
                             ui.add_space(14.0);
                             ui.label(
                                 RichText::new("Or connect by address")
@@ -375,6 +386,76 @@ impl eframe::App for HomeApp {
                                 &mut self.settings.open_camera_at_launch,
                                 "Open my camera straight away when the app starts",
                             );
+                            ui.add_space(8.0);
+                            egui::CollapsingHeader::new(
+                                RichText::new("Gesture guide and controls")
+                                    .font(FontId::proportional(13.0))
+                                    .color(TEXT),
+                            )
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(
+                                        "Face the webcam with a plain background and good light. Sweeps need \
+                                         a quick, clear movement; poses are held for about a second, with the \
+                                         hand up and fingers pointing up and closer to the lens than your face. \
+                                         Choose what each one does:",
+                                    )
+                                    .font(FontId::proportional(12.0))
+                                    .color(DIM),
+                                );
+                                ui.add_space(6.0);
+                                egui::Grid::new("gesture-map")
+                                    .num_columns(2)
+                                    .spacing([16.0, 10.0])
+                                    .show(ui, |ui| {
+                                        for gesture in Gesture::ALL {
+                                            ui.vertical(|ui| {
+                                                ui.label(
+                                                    RichText::new(gesture.label())
+                                                        .font(FontId::proportional(13.0))
+                                                        .color(TEXT),
+                                                );
+                                                ui.label(
+                                                    RichText::new(gesture.how())
+                                                        .font(FontId::proportional(11.0))
+                                                        .color(DIM),
+                                                );
+                                            });
+                                            let current = self.settings.gesture_map.get(gesture);
+                                            egui::ComboBox::from_id_salt(gesture.label())
+                                                .selected_text(current.label())
+                                                .width(190.0)
+                                                .show_ui(ui, |ui| {
+                                                    for action in GestureAction::ALL {
+                                                        if ui
+                                                            .selectable_label(
+                                                                current == action,
+                                                                action.label(),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            self.settings
+                                                                .gesture_map
+                                                                .set(gesture, action);
+                                                        }
+                                                    }
+                                                });
+                                            ui.end_row();
+                                        }
+                                    });
+                                ui.add_space(6.0);
+                                if ghost_button(ui, "Reset gestures to defaults").clicked() {
+                                    self.settings.gesture_map = GestureMap::default();
+                                }
+                                ui.label(
+                                    RichText::new(
+                                        "Recording by gesture can fire by accident: give it to a held pose, \
+                                         not a swipe. Changes apply the next time the viewfinder opens.",
+                                    )
+                                    .font(FontId::proportional(11.0))
+                                    .color(DIM),
+                                );
+                            });
                             if self.settings != before {
                                 appsettings::save(&self.settings);
                             }

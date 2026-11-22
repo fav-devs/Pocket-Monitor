@@ -23,7 +23,7 @@ use crate::assists::{
 use crate::library::{Library, MediaAction, Player};
 use crate::luts::{self, LutChoice, LutMenu};
 use crate::moves::{can_send, MoveEngine, Program, Waypoint};
-use crate::gesture::Gesture;
+use crate::gesture::{Gesture, GestureAction, GestureMap};
 use crate::presets::{self, Presets};
 use crate::pad::{PadAction, PadButton, REST as PAD_REST};
 use crate::prefs;
@@ -343,6 +343,7 @@ pub struct Shell {
     program: Program,
     presets: Presets,
     preset_cursor: Option<usize>,
+    gesture_map: GestureMap,
     /// The second half of a recall that had to go in two steps: where to, how long, and when.
     preset_followup: Option<(Waypoint, f64, f64)>,
     presets_path: Option<std::path::PathBuf>,
@@ -451,6 +452,7 @@ impl Shell {
             program: Program::default(),
             presets: Presets::default(),
             preset_cursor: None,
+            gesture_map: GestureMap::default(),
             preset_followup: None,
             presets_path: None,
             move_engine: None,
@@ -1097,6 +1099,7 @@ impl Shell {
             self.sync_false_color();
         }
         self.load_presets_beside(&path);
+        self.gesture_map = crate::appsettings::load().gesture_map;
         self.prefs_path = Some(path);
         self
     }
@@ -1404,31 +1407,29 @@ impl Shell {
             return Vec::new();
         }
         self.last_now = self.last_now.max(now);
-        match gesture {
-            Gesture::SwipeUp => {
+        match self.gesture_map.get(gesture) {
+            GestureAction::Nothing => Vec::new(),
+            GestureAction::Recenter => {
                 self.set_notice("GESTURE: RECENTRE");
                 self.act(Action::Send(Command::GimbalRecenter), now)
             }
-            Gesture::SwipeDown => {
+            GestureAction::Flip => {
                 self.set_notice("GESTURE: FLIP");
                 self.act(Action::Send(Command::GimbalFlip), now)
             }
-            Gesture::Fist => {
-                self.set_notice("HAND: RECENTRE");
-                self.act(Action::Send(Command::GimbalRecenter), now)
-            }
-            Gesture::Two => {
-                self.set_notice("HAND: FLIP");
-                self.act(Action::Send(Command::GimbalFlip), now)
-            }
-            Gesture::Palm => {
-                self.set_notice("HAND: STOP");
+            GestureAction::Stop => {
+                self.set_notice("GESTURE: STOP");
                 let mut intents = self.move_stop();
                 intents.extend(self.act(Action::ClearTracking, now));
                 intents.push(Intent::Send(Command::GimbalTimedStop));
                 intents
             }
-            Gesture::SwipeLeft | Gesture::SwipeRight | Gesture::Point => {
+            GestureAction::Record => {
+                self.set_notice("GESTURE: RECORD");
+                let command = self.record_command();
+                self.act(Action::Send(command), now)
+            }
+            action @ (GestureAction::NextPreset | GestureAction::PreviousPreset) => {
                 let filled: Vec<usize> = (0..presets::SLOTS)
                     .filter(|&i| self.presets.slots[i].is_some())
                     .collect();
@@ -1436,7 +1437,7 @@ impl Shell {
                     self.set_notice("NO PRESETS SAVED");
                     return Vec::new();
                 }
-                let forward = gesture != Gesture::SwipeLeft;
+                let forward = action == GestureAction::NextPreset;
                 let next = match self.preset_cursor {
                     Some(at) if forward => filled.iter().copied().find(|&i| i > at),
                     Some(at) => filled.iter().rev().copied().find(|&i| i < at),
