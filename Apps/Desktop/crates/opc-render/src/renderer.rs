@@ -1099,7 +1099,15 @@ fn record_frame(
         targets.framebuffers[PASS_BLIT],
         target_extent,
         pipelines.pipelines[PASS_BLIT],
-        &[1.0, 0.0],
+        // 10 asks the shader for Catmull-Rom: drawn larger than decoded, bilinear is soft.
+        &[
+            1.0,
+            if width > picture.width || height > picture.height {
+                10.0
+            } else {
+                0.0
+            },
+        ],
         Some(fit),
     );
 
