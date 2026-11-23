@@ -143,6 +143,13 @@ Viewfinder keys
 
   Z zebra      P peaking      L colour cube      M mirror      H hide the chrome
 
+  1 - 6        fly to gimbal preset      K    moves, presets and hand-control settings
+  J            gestures on / off         Y    hand view: see what the hand tracker sees
+
+Hands (gestures on): pinch and drag the right hand for the gimbal stick, the left for
+zoom (up in, down out); hold a peace sign 2.5 s to start or stop recording; open and
+close a hand three times to track your face.
+
 Two arrows at once pan diagonally. The gimbal keeps moving while a key is held and
 rests the moment it comes up.";
 
