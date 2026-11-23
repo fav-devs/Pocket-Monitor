@@ -270,6 +270,8 @@ pub enum Pick {
     MoveResume,
     /// Gimbal presets: keep the live pose in a slot, fly to it, empty it, and how long a recall takes.
     PresetSave(usize),
+    /// Gesture control: off, or reading the camera's picture or the PC's webcam.
+    Gestures(Option<crate::appsettings::GestureSource>),
     PresetGo(usize),
     PresetClear(usize),
     PresetSeconds(f64),
@@ -347,6 +349,7 @@ pub struct Context<'a> {
     pub lut_choice: &'a LutChoice,
     pub program: &'a Program,
     pub presets: &'a crate::presets::Presets,
+    pub gestures: Option<crate::appsettings::GestureSource>,
     /// The body's live pose, if it has reported one.
     pub live_pose: Option<Waypoint>,
     pub move_running: bool,
@@ -859,6 +862,21 @@ fn moves(context: Context) -> Built {
             .option(label, slot.is_some(), Pick::Nothing);
         rows.push(row);
     }
+    use crate::appsettings::GestureSource;
+    rows.push(
+        RowBuilder::new("Gestures (key J)")
+            .option("Off", context.gestures.is_none(), Pick::Gestures(None))
+            .option(
+                "Camera picture",
+                context.gestures == Some(GestureSource::CameraFeed),
+                Pick::Gestures(Some(GestureSource::CameraFeed)),
+            )
+            .option(
+                "PC webcam",
+                context.gestures == Some(GestureSource::Webcam),
+                Pick::Gestures(Some(GestureSource::Webcam)),
+            ),
+    );
     assemble("MOVES", &[], 0, rows)
 }
 
@@ -1506,6 +1524,7 @@ mod tests {
             lut_choice: &CHOICE,
             program: PROGRAM.get_or_init(Program::default),
             presets: PRESETS.get_or_init(crate::presets::Presets::default),
+            gestures: None,
             live_pose: Some(Waypoint {
                 yaw: 12.0,
                 pitch: -3.0,
@@ -1673,7 +1692,8 @@ mod tests {
                 "Preset 3 (key 3)",
                 "Preset 4 (key 4)",
                 "Preset 5 (key 5)",
-                "Preset 6 (key 6)"
+                "Preset 6 (key 6)",
+                "Gestures (key J)"
             ]
         );
         assert_eq!(built.pick(9, 0), Some(&Pick::PresetSave(0)));

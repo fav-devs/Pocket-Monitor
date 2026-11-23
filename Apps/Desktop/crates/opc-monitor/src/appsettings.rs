@@ -89,11 +89,18 @@ pub fn path() -> PathBuf {
 }
 
 pub fn load() -> AppSettings {
-    std::fs::read_to_string(path()).map_or_else(|_| AppSettings::default(), |t| AppSettings::parse(&t))
+    load_at(&path())
+}
+
+pub fn load_at(path: &Path) -> AppSettings {
+    std::fs::read_to_string(path).map_or_else(|_| AppSettings::default(), |t| AppSettings::parse(&t))
 }
 
 pub fn save(settings: &AppSettings) {
-    let path = path();
+    save_at(&path(), settings);
+}
+
+pub fn save_at(path: &Path, settings: &AppSettings) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

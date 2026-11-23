@@ -12,7 +12,7 @@ use std::time::Duration;
 use eframe::egui::{self, Align, FontId, Layout, RichText, Stroke, Vec2};
 
 use crate::connect::{accent_button, ghost_button, ACCENT, BG, BORDER, DIM, ERR, SUCCESS, SURFACE, TEXT};
-use opc_monitor::appsettings::{self, AppSettings, GestureSource};
+use opc_monitor::appsettings::{self, AppSettings};
 use opc_monitor::gesture::{Gesture, GestureAction, GestureMap};
 use opc_monitor::homewifi::SavedStation;
 
@@ -369,29 +369,10 @@ impl eframe::App for HomeApp {
                         Self::heading(ui, "Settings");
                         Self::card(ui, |ui| {
                             let before = self.settings;
-                            ui.checkbox(&mut self.settings.gestures, "Gesture control");
-                            if self.settings.gestures {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new("Watch")
-                                            .font(FontId::proportional(12.0))
-                                            .color(DIM),
-                                    );
-                                    ui.radio_value(
-                                        &mut self.settings.gesture_source,
-                                        GestureSource::CameraFeed,
-                                        "the camera's picture",
-                                    );
-                                    ui.radio_value(
-                                        &mut self.settings.gesture_source,
-                                        GestureSource::Webcam,
-                                        "my PC's webcam",
-                                    );
-                                });
-                            }
                             ui.label(
                                 RichText::new(
-                                    "Swipe to recentre, flip or step presets; hold a fist, palm or fingers. \
+                                    "Turn gestures on and off in the viewfinder with J; the source is on the Moves sheet (K). \
+                                     Swipe to recentre, flip or step presets; hold a fist, palm or fingers. \
                                      Nothing is recorded.",
                                 )
                                 .font(FontId::proportional(12.0))

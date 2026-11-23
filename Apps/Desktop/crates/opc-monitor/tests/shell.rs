@@ -2080,3 +2080,14 @@ fn a_far_preset_goes_in_two_halves_and_a_palm_stops_it() {
         .iter()
         .any(|c| matches!(c, Command::GimbalTimedTarget { .. })));
 }
+
+#[test]
+fn j_turns_gestures_on_and_off_in_the_viewfinder() {
+    use opc_monitor::appsettings::GestureSource;
+    let mut shell = framed();
+    assert_eq!(shell.gestures(), None);
+    assert!(shell.press(Key::Char('j'), 0.0).is_empty());
+    assert_eq!(shell.gestures(), Some(GestureSource::CameraFeed));
+    assert!(shell.press(Key::Char('J'), 1.0).is_empty());
+    assert_eq!(shell.gestures(), None);
+}

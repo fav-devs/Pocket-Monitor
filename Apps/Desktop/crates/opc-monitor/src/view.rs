@@ -98,8 +98,10 @@ struct View {
     last_scope_at: f64,
     /// A game controller, when the platform offers one.
     pad: Option<gilrs::Gilrs>,
-    gestures: Option<std::sync::mpsc::Receiver<opc_monitor::gesture::Gesture>>,
+    gestures: Option<crate::webcam::Webcam>,
     feed_gestures: Option<FeedGestures>,
+    /// A webcam was asked for since gestures last pointed at it.
+    webcam_tried: bool,
     last_pad_at: f64,
     /// Where the camera is, for a reconnect.
     remote: Option<std::net::SocketAddr>,
@@ -656,9 +658,29 @@ impl View {
 
     /// Gestures, from the PC's webcam or from the camera's own picture.
     fn poll_gestures(&mut self, now: f64) {
+        use opc_monitor::appsettings::GestureSource;
+        // The viewfinder's switch decides what runs: start or stop to match.
+        let wanted = self.shell.gestures();
+        if wanted != Some(GestureSource::Webcam) && self.gestures.is_some() {
+            self.gestures = None;
+        }
+        if wanted == Some(GestureSource::Webcam) && self.gestures.is_none() {
+            // `start` finds a webcam or says why not; ask once per switch.
+            if !self.webcam_tried {
+                self.webcam_tried = true;
+                self.gestures = crate::webcam::start();
+            }
+        } else if wanted != Some(GestureSource::Webcam) {
+            self.webcam_tried = false;
+        }
+        if wanted == Some(GestureSource::CameraFeed) {
+            self.feed_gestures.get_or_insert_with(FeedGestures::new);
+        } else {
+            self.feed_gestures = None;
+        }
         let mut seen: Vec<opc_monitor::gesture::Gesture> = Vec::new();
-        if let Some(receiver) = self.gestures.as_ref() {
-            seen.extend(receiver.try_iter());
+        if let Some(webcam) = self.gestures.as_ref() {
+            seen.extend(webcam.receiver.try_iter());
         }
         if let (Some(feed), Some(picture)) = (self.feed_gestures.as_mut(), self.latest.as_ref()) {
             let pose = opc_monitor::moves::Waypoint::from_status(self.shell.status());
@@ -1262,15 +1284,9 @@ pub fn run(options: Options) -> Result<(), String> {
             .map_err(|error| eprintln!("no game controller support: {error}"))
             .ok(),
         last_pad_at: f64::NEG_INFINITY,
-        gestures: (crate::webcam::wanted()
-            && opc_monitor::appsettings::load().gesture_source
-                == opc_monitor::appsettings::GestureSource::Webcam)
-            .then(crate::webcam::start)
-            .flatten(),
-        feed_gestures: (crate::webcam::wanted()
-            && opc_monitor::appsettings::load().gesture_source
-                == opc_monitor::appsettings::GestureSource::CameraFeed)
-            .then(FeedGestures::new),
+        gestures: None,
+        feed_gestures: None,
+        webcam_tried: false,
         remote: options.remote,
         phone: options.phone.clone(),
         model_id: options.model_id,

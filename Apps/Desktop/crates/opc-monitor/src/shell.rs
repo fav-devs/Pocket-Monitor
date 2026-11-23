@@ -348,6 +348,8 @@ pub struct Shell {
     presets: Presets,
     preset_cursor: Option<usize>,
     gesture_map: GestureMap,
+    /// Gesture control: off, or where it reads from. Switched in the viewfinder.
+    gestures: Option<crate::appsettings::GestureSource>,
     /// The second half of a recall that had to go in two steps: where to, how long, and when.
     preset_followup: Option<(Waypoint, f64, f64)>,
     presets_path: Option<std::path::PathBuf>,
@@ -460,6 +462,7 @@ impl Shell {
             presets: Presets::default(),
             preset_cursor: None,
             gesture_map: GestureMap::default(),
+            gestures: None,
             preset_followup: None,
             presets_path: None,
             move_engine: None,
@@ -1106,7 +1109,10 @@ impl Shell {
             self.sync_false_color();
         }
         self.load_presets_beside(&path);
-        self.gesture_map = crate::appsettings::load().gesture_map;
+        let settings = crate::appsettings::load();
+        self.gesture_map = settings.gesture_map;
+        let asked = std::env::var_os("OPC_GESTURES").is_some_and(|value| value != "0");
+        self.gestures = (settings.gestures || asked).then_some(settings.gesture_source);
         self.prefs_path = Some(path);
         self
     }
@@ -1235,6 +1241,31 @@ impl Shell {
     }
 
     /// The controller's name while one is connected.
+    /// Gesture control as the viewfinder has it: off, or where it reads from.
+    pub fn gestures(&self) -> Option<crate::appsettings::GestureSource> {
+        self.gestures
+    }
+
+    /// Switches gesture control and remembers it for the next launch.
+    fn set_gestures(&mut self, mode: Option<crate::appsettings::GestureSource>) {
+        use crate::appsettings::{self, GestureSource};
+        self.gestures = mode;
+        if let Some(prefs) = self.prefs_path.as_ref() {
+            let file = appsettings::path_beside(prefs);
+            let mut settings = appsettings::load_at(&file);
+            settings.gestures = mode.is_some();
+            if let Some(source) = mode {
+                settings.gesture_source = source;
+            }
+            appsettings::save_at(&file, &settings);
+        }
+        self.set_notice(match mode {
+            None => "Gestures off",
+            Some(GestureSource::CameraFeed) => "Gestures on: watching the camera's picture",
+            Some(GestureSource::Webcam) => "Gestures on: watching the PC webcam",
+        });
+    }
+
     /// Whether the hand view is switched on (key `Y`).
     pub fn hand_overlay(&self) -> bool {
         self.hand_overlay
@@ -1642,6 +1673,7 @@ impl Shell {
             lut_choice: &self.lut_choice,
             program: &self.program,
             presets: &self.presets,
+            gestures: self.gestures,
             live_pose: self.live_pose(),
             move_running: self.move_running(),
             move_paused: self.move_paused(),
@@ -2146,6 +2178,10 @@ impl Shell {
                 Vec::new()
             }
             Pick::PresetGo(slot) => self.preset_go(slot),
+            Pick::Gestures(mode) => {
+                self.set_gestures(mode);
+                Vec::new()
+            }
             Pick::PresetSeconds(seconds) => {
                 self.presets.seconds = seconds;
                 self.persist_presets();
@@ -2208,6 +2244,17 @@ impl Shell {
         }
         if self.screen != Screen::Viewfinder {
             return self.press_on_screen(key);
+        }
+        if matches!(key, Key::Char('j' | 'J')) {
+            let source = self
+                .prefs_path
+                .as_ref()
+                .map_or(crate::appsettings::GestureSource::CameraFeed, |prefs| {
+                    crate::appsettings::load_at(&crate::appsettings::path_beside(prefs))
+                        .gesture_source
+                });
+            self.set_gestures(if self.gestures.is_some() { None } else { Some(source) });
+            return Vec::new();
         }
         if let Key::Char(digit @ '1'..='6') = key {
             return self.preset_go(digit as usize - '1' as usize);

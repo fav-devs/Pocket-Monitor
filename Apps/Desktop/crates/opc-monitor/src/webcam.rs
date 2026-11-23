@@ -15,8 +15,16 @@ use opc_monitor::hand::{self, Holder, Pose, HEIGHT, WIDTH};
 const GREY_W: usize = opc_monitor::gesture::WIDTH;
 const GREY_H: usize = opc_monitor::gesture::HEIGHT;
 
-pub fn wanted() -> bool {
-    std::env::var_os("OPC_GESTURES").is_some_and(|value| value != "0")
+/// The running webcam reader. Dropping it stops ffmpeg and so the camera light.
+pub struct Webcam {
+    pub receiver: std::sync::mpsc::Receiver<Gesture>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Webcam {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 fn ffmpeg() -> Option<PathBuf> {
@@ -88,7 +96,7 @@ fn device(ffmpeg: &PathBuf) -> Option<String> {
 }
 
 /// Starts the capture thread. None if FFmpeg or a webcam is not there.
-pub fn start() -> Option<Receiver<Gesture>> {
+pub fn start() -> Option<Webcam> {
     let ffmpeg = ffmpeg().or_else(|| {
         eprintln!("gestures: ffmpeg not found");
         None
@@ -98,6 +106,8 @@ pub fn start() -> Option<Receiver<Gesture>> {
         None
     })?;
     let (sender, receiver) = channel();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
     std::thread::spawn(move || {
         let mut command = Command::new(&ffmpeg);
         command
@@ -122,6 +132,9 @@ pub fn start() -> Option<Receiver<Gesture>> {
         let mut frame = vec![0u8; WIDTH * HEIGHT * 3];
         let mut grey = vec![0u8; GREY_W * GREY_H];
         while out.read_exact(&mut frame).is_ok() {
+            if stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
             let now = started.elapsed().as_secs_f64();
             // The sweep reader works on a small grey picture sampled from the frame.
             for y in 0..GREY_H {
@@ -150,5 +163,5 @@ pub fn start() -> Option<Receiver<Gesture>> {
         }
         let _ = child.kill();
     });
-    Some(receiver)
+    Some(Webcam { receiver, stop })
 }
