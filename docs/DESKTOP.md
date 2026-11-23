@@ -144,7 +144,7 @@ cargo run -p opc-watcher -- join "Studio iPhone" --seconds 30 --dump feed.h265 -
 cargo run -p opc-watcher -- decode feed.h265 --out stills --look Contrast --frames 10
 ```
 
-`watch` opens the window. Keys: **L** cube, **Z** zebra, **P** peaking, **M** mirror,
+`watch` opens the window. Keys: **L** cube, **Z** zebra, **P** peaking, **M** mirror, **Y** hand view (gesture debug overlay),
 **S** still, **Esc** quit.
 
 `--dump` writes the received access units straight to disk. The host emits Annex-B with

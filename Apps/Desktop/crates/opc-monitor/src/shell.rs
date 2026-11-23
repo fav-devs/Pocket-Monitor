@@ -279,6 +279,10 @@ pub struct Shell {
     notice: Option<(String, f64)>,
     /// Where the operator tapped to focus, as seen, and when the reticle goes away.
     focus_marker: Option<((f64, f64), f64)>,
+    /// The hand view: on by `Y`, fed by the camera-picture gesture reader.
+    hand_overlay: bool,
+    hand_reading: bool,
+    hand_seen: Option<(crate::hand::Hand, f32)>,
     /// The scopes: options, the last sample of the picture, the axis for the body's
     /// colour mode, the readings, and where the operator parked each plate.
     scope_options: ScopeOptions,
@@ -412,6 +416,9 @@ impl Shell {
             format_pin: None,
             notice: None,
             focus_marker: None,
+            hand_overlay: false,
+            hand_reading: false,
+            hand_seen: None,
             tracking: None,
             tracking_rules: opc_camera::tracking_rules(),
             tracking_cleared_at: None,
@@ -1228,6 +1235,24 @@ impl Shell {
     }
 
     /// The controller's name while one is connected.
+    /// Whether the hand view is switched on (key `Y`).
+    pub fn hand_overlay(&self) -> bool {
+        self.hand_overlay
+    }
+
+    /// What the picture reader sees this frame, and how far the pose is through its hold.
+    /// `reading` is false when nothing is reading the picture (gestures off, or a webcam).
+    pub fn set_hand(&mut self, reading: bool, seen: Option<(crate::hand::Hand, f32)>) {
+        if !self.hand_overlay {
+            return;
+        }
+        if reading != self.hand_reading || seen != self.hand_seen {
+            self.hand_reading = reading;
+            self.hand_seen = seen;
+            self.chrome_stale = true;
+        }
+    }
+
     pub fn set_gamepad(&mut self, name: Option<String>) {
         if self.setup.gamepad != name {
             self.setup.gamepad = name;
@@ -3159,6 +3184,12 @@ impl Shell {
                 self.chrome_stale = true;
                 Vec::new()
             }
+            (Screen::Viewfinder, Key::Char('y' | 'Y')) => {
+                self.hand_overlay = !self.hand_overlay;
+                self.hand_seen = None;
+                self.chrome_stale = true;
+                Vec::new()
+            }
             (_, Key::Char('z' | 'Z')) => self.act(Action::ToggleZebra, 0.0),
             (_, Key::Char('p' | 'P')) => self.act(Action::TogglePeaking, 0.0),
             (_, Key::Char('l' | 'L')) => self.act(Action::ToggleGrade, 0.0),
@@ -3567,6 +3598,10 @@ impl Shell {
                 }
             }
 
+            if self.hand_overlay {
+                self.draw_hand(&mut canvas, fit);
+            }
+
             self.chrome = Some(Rgba {
                 width: canvas.width,
                 height: canvas.height,
@@ -3578,6 +3613,67 @@ impl Shell {
             self.chrome_pending_intents.extend(fired);
         }
         self.chrome.as_ref()
+    }
+
+    /// The hand view: the blob's box, the palm circle, the fingertips and the pose with
+    /// its hold bar, over the picture the reader is looking at.
+    fn draw_hand(&self, canvas: &mut opc_ui::Canvas, fit: opc_ui::Fit) {
+        const HAND: opc_ui::canvas::Colour = [64, 255, 128, 255];
+        const TIP: opc_ui::canvas::Colour = [255, 196, 0, 255];
+        const SOFT: opc_ui::canvas::Colour = [64, 255, 128, 90];
+        let (w, h) = (crate::hand::WIDTH as f64, crate::hand::HEIGHT as f64);
+        let mirror = self.toggles.mirror;
+        let map = |x: f32, y: f32| {
+            let mut u = f64::from(x) / w;
+            if mirror {
+                u = 1.0 - u;
+            }
+            (
+                (fit.x + u * fit.width) as i64,
+                (fit.y + f64::from(y) / h * fit.height) as i64,
+            )
+        };
+        let (x0, y0) = (fit.x as i64 + 12, fit.y as i64 + 12);
+        if !self.hand_reading {
+            canvas.label(
+                x0,
+                y0,
+                "HAND VIEW: turn on gesture control, watching the camera picture",
+                2,
+                opc_ui::canvas::WHITE,
+            );
+            return;
+        }
+        let Some((hand, hold)) = self.hand_seen.as_ref() else {
+            canvas.label(x0, y0, "HAND VIEW: no hand found", 2, opc_ui::canvas::WHITE);
+            return;
+        };
+        let (l, t, r, b) = hand.bounds;
+        let (bx0, by0) = map(l, t);
+        let (bx1, by1) = map(r, b);
+        let (bx, bw) = (bx0.min(bx1), (bx0 - bx1).unsigned_abs() as u32);
+        canvas.stroke(bx, by0, bw.max(2), (by1 - by0).max(2) as u32, 2, HAND);
+        let (px, py) = map(hand.palm.0, hand.palm.1);
+        let radius = (f64::from(hand.palm.2) / w * fit.width) as i64;
+        canvas.ring(px, py, radius, (radius - 2).max(0), SOFT);
+        for &(tx, ty) in &hand.tips {
+            let (tx, ty) = map(tx, ty);
+            canvas.circle(tx, ty, 6, TIP);
+        }
+        let name = match hand.pose {
+            Some(crate::hand::Pose::Fist) => "FIST",
+            Some(crate::hand::Pose::Point) => "POINT",
+            Some(crate::hand::Pose::Two) => "TWO",
+            Some(crate::hand::Pose::Palm) => "PALM",
+            None => "NOT A POSE",
+        };
+        let text = format!("{name}  {} finger(s)", hand.tips.len());
+        let label_y = (by0 - 24).max(fit.y as i64 + 4);
+        let used = canvas.label(bx, label_y, &text, 2, opc_ui::canvas::WHITE);
+        // The hold bar: full means the gesture fires.
+        let bar = (f64::from(used) * f64::from(hold.clamp(0.0, 1.0))) as u32;
+        canvas.fill(bx - 4, label_y + 20, used, 4, [255, 255, 255, 60]);
+        canvas.fill(bx - 4, label_y + 20, bar, 4, if *hold >= 1.0 { TIP } else { HAND });
     }
 
     /// Whether the chrome is being drawn at all.

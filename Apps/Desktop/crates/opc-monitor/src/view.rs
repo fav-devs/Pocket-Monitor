@@ -664,6 +664,13 @@ impl View {
             let pose = opc_monitor::moves::Waypoint::from_status(self.shell.status());
             seen.extend(feed.read(picture, pose, now));
         }
+        if self.shell.hand_overlay() {
+            let shown = self
+                .feed_gestures
+                .as_ref()
+                .and_then(|feed| feed.hand.clone().map(|hand| (hand, feed.hold(now))));
+            self.shell.set_hand(self.feed_gestures.is_some(), shown);
+        }
         for gesture in seen {
             for intent in self.shell.gesture(gesture, now) {
                 if let Intent::Send(command) = intent {
@@ -1356,6 +1363,8 @@ struct FeedGestures {
     last_read: f64,
     last_pose: Option<(f64, f64)>,
     moving_until: f64,
+    /// The latest hand found, for the hand view.
+    hand: Option<opc_monitor::hand::Hand>,
 }
 
 impl FeedGestures {
@@ -1366,7 +1375,13 @@ impl FeedGestures {
             last_read: f64::NEG_INFINITY,
             last_pose: None,
             moving_until: 0.0,
+            hand: None,
         }
+    }
+
+    /// How far the pose in view is through its hold, 0 to 1.
+    fn hold(&self, now: f64) -> f32 {
+        self.holder.progress(now).map_or(0.0, |(_, done)| done)
     }
 
     fn read(
@@ -1406,7 +1421,11 @@ impl FeedGestures {
         if now >= self.moving_until {
             found.extend(swipe);
         }
-        if let Some(pose) = self.holder.feed(hand::classify(&frame), now) {
+        self.hand = hand::analyse(&frame);
+        if let Some(pose) = self
+            .holder
+            .feed(self.hand.as_ref().and_then(|hand| hand.pose), now)
+        {
             found.push(match pose {
                 Pose::Fist => Gesture::Fist,
                 Pose::Point => Gesture::Point,

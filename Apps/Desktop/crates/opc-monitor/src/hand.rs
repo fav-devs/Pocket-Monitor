@@ -35,8 +35,26 @@ fn is_skin(r: u8, g: u8, b: u8) -> bool {
     (77.0..=127.0).contains(&cb) && (133.0..=173.0).contains(&cr) && y > 50.0
 }
 
+/// What the detector found in one frame, in `WIDTH * HEIGHT` pixels: for the overlay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hand {
+    /// The blob's bounding box: left, top, right, bottom.
+    pub bounds: (f32, f32, f32, f32),
+    /// The palm circle: centre x, centre y, radius.
+    pub palm: (f32, f32, f32),
+    /// Fingertips counted.
+    pub tips: Vec<(f32, f32)>,
+    /// The pose they make, if it is one we name.
+    pub pose: Option<Pose>,
+}
+
 /// The pose in one `WIDTH * HEIGHT` RGB frame, if a hand is showing one.
 pub fn classify(rgb: &[u8]) -> Option<Pose> {
+    analyse(rgb)?.pose
+}
+
+/// The hand in one frame with its geometry, or `None` when no hand-sized skin is there.
+pub fn analyse(rgb: &[u8]) -> Option<Hand> {
     if rgb.len() != WIDTH * HEIGHT * 3 {
         return None;
     }
@@ -109,7 +127,7 @@ pub fn classify(rgb: &[u8]) -> Option<Pose> {
         })
         .collect();
     let side = RAYS / 12; // a finger's valleys are within ±30°
-    let mut fingers = 0;
+    let mut tips = Vec::new();
     for k in 0..RAYS {
         let r = profile[k];
         let angle = k as f32 / RAYS as f32 * 360.0;
@@ -124,16 +142,31 @@ pub fn classify(rgb: &[u8]) -> Option<Pose> {
             .iter()
             .all(|&sign| (2..=side as i32).map(|d| at(sign * d)).fold(f32::MAX, f32::min) < 0.75 * r);
         if top && valleys {
-            fingers += 1;
+            let a = angle.to_radians();
+            tips.push((cx + a.cos() * r, cy - a.sin() * r));
         }
     }
-    match fingers {
+    let pose = match tips.len() {
         0 => Some(Pose::Fist),
         1 => Some(Pose::Point),
         2 => Some(Pose::Two),
         4 | 5 => Some(Pose::Palm),
         _ => None, // three, or a smear: not a pose we name
+    };
+    let (mut left, mut top, mut right, mut bottom) = (f32::MAX, f32::MAX, 0.0f32, 0.0f32);
+    for &i in &blob {
+        let (x, y) = ((i % WIDTH) as f32, (i / WIDTH) as f32);
+        left = left.min(x);
+        top = top.min(y);
+        right = right.max(x);
+        bottom = bottom.max(y);
     }
+    Some(Hand {
+        bounds: (left, top, right, bottom),
+        palm: (cx, cy, palm),
+        tips,
+        pose,
+    })
 }
 
 fn biggest_blob(mask: &[bool]) -> Option<Vec<usize>> {
@@ -178,6 +211,13 @@ pub struct Holder {
 }
 
 impl Holder {
+    /// The pose being held and how far through the hold it is, 0 to 1.
+    pub fn progress(&self, now: f64) -> Option<(Pose, f32)> {
+        let (pose, since) = self.current?;
+        let done = if self.fired { 1.0 } else { ((now - since) / HOLD).clamp(0.0, 1.0) };
+        Some((pose, done as f32))
+    }
+
     pub fn feed(&mut self, seen: Option<Pose>, now: f64) -> Option<Pose> {
         match (seen, self.current) {
             (Some(pose), Some((held, since))) if pose == held => {
@@ -258,6 +298,19 @@ mod tests {
             classify(&hand(&[-48.0, -24.0, 0.0, 24.0, 48.0])),
             Some(Pose::Palm)
         );
+    }
+
+    #[test]
+    fn the_hand_view_gets_the_palm_and_the_tips() {
+        let found = analyse(&hand(&[-12.0, 12.0])).expect("a hand");
+        assert_eq!(found.pose, Some(Pose::Two));
+        assert_eq!(found.tips.len(), 2);
+        let (cx, cy, radius) = found.palm;
+        assert!((cx - 80.0).abs() < 6.0 && (cy - 55.0).abs() < 8.0 && radius > 8.0);
+        let (left, top, right, _) = found.bounds;
+        assert!(left < 80.0 && right > 80.0 && top < 40.0);
+        assert!(found.tips.iter().all(|&(_, y)| y < cy));
+        assert_eq!(analyse(&blank()), None);
     }
 
     #[test]
