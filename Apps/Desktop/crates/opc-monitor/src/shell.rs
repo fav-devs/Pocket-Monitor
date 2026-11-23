@@ -2248,6 +2248,12 @@ impl Shell {
         if self.screen != Screen::Viewfinder {
             return self.press_on_screen(key);
         }
+        if matches!(key, Key::Char('y' | 'Y')) {
+            self.hand_overlay = !self.hand_overlay;
+            self.hand_seen = None;
+            self.chrome_stale = true;
+            return Vec::new();
+        }
         if matches!(key, Key::Char('j' | 'J')) {
             let source = self
                 .prefs_path
@@ -3231,12 +3237,6 @@ impl Shell {
             (Screen::Player, Key::Space) => self.player_toggle(),
             (_, Key::Char('h' | 'H')) => {
                 self.chrome_visible = !self.chrome_visible;
-                self.chrome_stale = true;
-                Vec::new()
-            }
-            (Screen::Viewfinder, Key::Char('y' | 'Y')) => {
-                self.hand_overlay = !self.hand_overlay;
-                self.hand_seen = None;
                 self.chrome_stale = true;
                 Vec::new()
             }

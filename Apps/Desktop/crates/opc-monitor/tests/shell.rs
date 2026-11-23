@@ -2091,3 +2091,13 @@ fn j_turns_gestures_on_and_off_in_the_viewfinder() {
     assert!(shell.press(Key::Char('J'), 1.0).is_empty());
     assert_eq!(shell.gestures(), None);
 }
+
+#[test]
+fn y_shows_the_hand_view_in_the_viewfinder() {
+    let mut shell = framed();
+    assert!(!shell.hand_overlay());
+    assert!(shell.press(Key::Char('y'), 0.0).is_empty());
+    assert!(shell.hand_overlay());
+    assert!(shell.press(Key::Char('Y'), 1.0).is_empty());
+    assert!(!shell.hand_overlay());
+}

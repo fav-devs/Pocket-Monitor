@@ -35,6 +35,26 @@ fn is_skin(r: u8, g: u8, b: u8) -> bool {
     (77.0..=127.0).contains(&cb) && (133.0..=173.0).contains(&cr) && y > 50.0
 }
 
+/// The small grey picture the sweep reader differences, with everything that is not skin
+/// coloured blacked out: a sweep is a hand moving, not the light changing or the camera
+/// swaying. `rgb` is `WIDTH * HEIGHT`; `out` is `out_w * out_h`.
+pub fn skin_grey(rgb: &[u8], out: &mut [u8], out_w: usize, out_h: usize) {
+    if rgb.len() != WIDTH * HEIGHT * 3 || out.len() != out_w * out_h {
+        return;
+    }
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let at = ((y * HEIGHT / out_h) * WIDTH + x * WIDTH / out_w) * 3;
+            let (r, g, b) = (rgb[at], rgb[at + 1], rgb[at + 2]);
+            out[y * out_w + x] = if is_skin(r, g, b) {
+                ((u16::from(r) + u16::from(g) + u16::from(b)) / 3) as u8
+            } else {
+                0
+            };
+        }
+    }
+}
+
 /// What the detector found in one frame, in `WIDTH * HEIGHT` pixels: for the overlay.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hand {
@@ -311,6 +331,16 @@ mod tests {
         assert!(left < 80.0 && right > 80.0 && top < 40.0);
         assert!(found.tips.iter().all(|&(_, y)| y < cy));
         assert_eq!(analyse(&blank()), None);
+    }
+
+    #[test]
+    fn only_skin_shows_up_for_the_sweep_reader() {
+        let mut grey = vec![9u8; 64 * 48];
+        skin_grey(&blank(), &mut grey, 64, 48);
+        assert!(grey.iter().all(|&v| v == 0), "a dark scene is empty");
+        skin_grey(&hand(&[0.0]), &mut grey, 64, 48);
+        let lit = grey.iter().filter(|&&v| v > 0).count();
+        assert!(lit > 50 && lit < 64 * 48 / 2);
     }
 
     #[test]

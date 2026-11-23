@@ -136,16 +136,8 @@ pub fn start() -> Option<Webcam> {
                 break;
             }
             let now = started.elapsed().as_secs_f64();
-            // The sweep reader works on a small grey picture sampled from the frame.
-            for y in 0..GREY_H {
-                for x in 0..GREY_W {
-                    let at = ((y * HEIGHT / GREY_H) * WIDTH + x * WIDTH / GREY_W) * 3;
-                    grey[y * GREY_W + x] = ((u16::from(frame[at])
-                        + u16::from(frame[at + 1])
-                        + u16::from(frame[at + 2]))
-                        / 3) as u8;
-                }
-            }
+            // The sweep reader works on the skin-coloured motion only.
+            hand::skin_grey(&frame, &mut grey, GREY_W, GREY_H);
             let swipe = tracker.feed(&grey, now);
             let held = holder.feed(hand::classify(&frame), now);
             let held = held.map(|pose| match pose {

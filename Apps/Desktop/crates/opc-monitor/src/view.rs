@@ -1458,15 +1458,7 @@ impl FeedGestures {
         }
         let frame = opc_monitor::scopes::small_rgb(picture, hand::WIDTH, hand::HEIGHT);
         let mut grey = vec![0u8; GW * GH];
-        for y in 0..GH {
-            for x in 0..GW {
-                let at = ((y * hand::HEIGHT / GH) * hand::WIDTH + x * hand::WIDTH / GW) * 3;
-                grey[y * GW + x] = ((u16::from(frame[at])
-                    + u16::from(frame[at + 1])
-                    + u16::from(frame[at + 2]))
-                    / 3) as u8;
-            }
-        }
+        hand::skin_grey(&frame, &mut grey, GW, GH);
         let mut found = Vec::new();
         let swipe = self.tracker.feed(&grey, now);
         if now >= self.moving_until {
