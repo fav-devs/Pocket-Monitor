@@ -121,12 +121,35 @@ const PROBE_PARALLEL: usize = 32;
 const PROBE_MOST: usize = 8;
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(6);
 
+/// How long the search keeps trying: a camera that has just joined needs a moment to be
+/// given an address, and its datalink a moment more to start.
+const SEARCH_FOR: Duration = Duration::from_secs(45);
+
 /// Where the camera with this identity answers: its last address first, then every
-/// host on this machine's networks that has the poke port open.
+/// host on this machine's networks that has the poke port open. It keeps looking for
+/// [`SEARCH_FOR`]. If no host reports exactly this identity but exactly one camera
+/// opens a session, that is the one: the Wi-Fi name it reports can change once it is
+/// on the operator's network.
 pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr> {
+    let started = Instant::now();
+    let mut round = 0;
+    loop {
+        round += 1;
+        if let Some(found) = search_once(identity, last, round) {
+            return Some(found);
+        }
+        if started.elapsed() >= SEARCH_FOR {
+            log("gave up looking for the camera");
+            return None;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn search_once(identity: &[u8], last: Option<Ipv4Addr>, round: u32) -> Option<SocketAddr> {
     if let Some(address) = last {
         let candidate = SocketAddr::from((address, lan::DATALINK_PORT));
-        log(&format!("trying the last address {candidate}"));
+        log(&format!("round {round}: trying the last address {candidate}"));
         if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
             return Some(candidate);
         }
@@ -135,6 +158,8 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
     if networks.is_empty() {
         log("no IPv4 network to search");
     }
+    // Cameras that opened a session but reported a different name.
+    let mut others = Vec::new();
     for (address, mask) in networks {
         let Some(hosts) = lan::subnet_hosts(address, mask) else {
             log(&format!(
@@ -142,7 +167,10 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
             ));
             continue;
         };
-        log(&format!("searching {} hosts around {address}", hosts.len()));
+        log(&format!(
+            "round {round}: searching {} hosts around {address}",
+            hosts.len()
+        ));
         let hits = lan::probe_hosts(
             &hosts,
             lan::POKE_PORT,
@@ -152,14 +180,28 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
         );
         for hit in hits {
             let candidate = SocketAddr::from((hit, lan::DATALINK_PORT));
-            if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
-                log(&format!("camera found at {candidate}"));
-                return Some(candidate);
+            match lan::read_identity(candidate, VERIFY_TIMEOUT) {
+                Some(reported) if reported == identity => {
+                    log(&format!("camera found at {candidate}"));
+                    return Some(candidate);
+                }
+                Some(reported) => {
+                    log(&format!(
+                        "{candidate} is a camera but reports {} bytes, not the {} expected",
+                        reported.len(),
+                        identity.len()
+                    ));
+                    others.push(candidate);
+                }
+                None => log(&format!(
+                    "{candidate} answers the poke but opened no session"
+                )),
             }
-            log(&format!(
-                "{candidate} answers the poke but is not this camera"
-            ));
         }
+    }
+    if let [only] = others.as_slice() {
+        log(&format!("taking {only}: the one camera on the network"));
+        return Some(*only);
     }
     None
 }

@@ -730,9 +730,10 @@ impl eframe::App for ConnectApp {
                     }
                     (None, _) => {
                         self.screen = Screen::Failed(
-                            "The camera joined, but this PC could not find it on the network. \
-                             Check that both are on the same Wi-Fi and that the router does not \
-                             isolate its clients, then try again."
+                            "The camera joined, but this PC could not find it on the network after \
+                             45 seconds. Check that both are on the same Wi-Fi and that the router \
+                             does not isolate its clients, and that no other app is connected to \
+                             the camera, then try again. Details are in opc-monitor.log."
                                 .into(),
                         );
                     }
@@ -1335,6 +1336,22 @@ pub fn headless(args: &[String]) -> Result<(), String> {
     };
     let seconds: f64 = flag("seconds").and_then(|s| s.parse().ok()).unwrap_or(8.0);
     match args.first().map(String::as_str) {
+        Some("identity") => {
+            let ip: std::net::Ipv4Addr = args
+                .get(1)
+                .and_then(|text| text.parse().ok())
+                .ok_or("usage: headless identity <camera ip>")?;
+            let address = std::net::SocketAddr::from((ip, opc_camera::lan::DATALINK_PORT));
+            match opc_camera::lan::read_identity(address, Duration::from_secs(8)) {
+                Some(payload) => {
+                    let hex: Vec<String> = payload.iter().map(|b| format!("{b:02x}")).collect();
+                    println!("identity payload: {}", hex.join(" "));
+                    println!("as text: {}", String::from_utf8_lossy(&payload));
+                    Ok(())
+                }
+                None => Err("the camera opened no session or did not answer".into()),
+            }
+        }
         Some("scan") => {
             let mut transport = BtleplugTransport::new(&gatt).map_err(|e| e.to_string())?;
             println!("scanning every BLE advertiser for {seconds}s…");
