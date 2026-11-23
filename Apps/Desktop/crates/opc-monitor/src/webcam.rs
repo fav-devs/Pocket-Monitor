@@ -9,11 +9,13 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Instant;
 
-use opc_monitor::gesture::{Gesture, Tracker};
-use opc_monitor::hand::{self, Holder, Pose, HEIGHT, WIDTH};
+use opc_monitor::gesture::Gesture;
+use opc_monitor::hand::{pose_of, Holder, Pose, Sweep};
+use opc_monitor::handnet::HandNet;
 
-const GREY_W: usize = opc_monitor::gesture::WIDTH;
-const GREY_H: usize = opc_monitor::gesture::HEIGHT;
+/// The size ffmpeg scales the webcam to for the hand model.
+const WIDTH: usize = 480;
+const HEIGHT: usize = 270;
 
 /// The running webcam reader. Dropping it stops ffmpeg and so the camera light.
 pub struct Webcam {
@@ -111,7 +113,7 @@ pub fn start() -> Option<Webcam> {
     std::thread::spawn(move || {
         let mut command = Command::new(&ffmpeg);
         command
-            .args(["-loglevel", "quiet", "-f", "dshow", "-framerate", "15", "-i"])
+            .args(["-loglevel", "quiet", "-f", "dshow", "-framerate", "20", "-i"])
             .arg(format!("video={device}"))
             .args(["-vf", &format!("scale={WIDTH}:{HEIGHT},format=rgb24")])
             .args(["-f", "rawvideo", "-"])
@@ -126,21 +128,26 @@ pub fn start() -> Option<Webcam> {
         let Some(mut out) = child.stdout.take() else {
             return;
         };
-        let mut tracker = Tracker::new(true);
+        let mut net = match HandNet::new() {
+            Ok(net) => net,
+            Err(error) => {
+                eprintln!("gestures: the hand model would not load: {error}");
+                let _ = child.kill();
+                return;
+            }
+        };
+        let mut sweep = Sweep::new(true);
         let mut holder = Holder::default();
         let started = Instant::now();
         let mut frame = vec![0u8; WIDTH * HEIGHT * 3];
-        let mut grey = vec![0u8; GREY_W * GREY_H];
         while out.read_exact(&mut frame).is_ok() {
             if stopped.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
             }
             let now = started.elapsed().as_secs_f64();
-            // The sweep reader works on the skin-coloured motion only.
-            hand::skin_grey(&frame, &mut grey, GREY_W, GREY_H);
-            let swipe = tracker.feed(&grey, now);
-            let held = holder.feed(hand::classify(&frame), now);
-            let held = held.map(|pose| match pose {
+            let hand = net.detect(&frame, WIDTH, HEIGHT);
+            let swipe = sweep.feed(hand.as_ref(), now);
+            let held = holder.feed(hand.as_ref().and_then(pose_of), now).map(|pose| match pose {
                 Pose::Fist => Gesture::Fist,
                 Pose::Point => Gesture::Point,
                 Pose::Two => Gesture::Two,

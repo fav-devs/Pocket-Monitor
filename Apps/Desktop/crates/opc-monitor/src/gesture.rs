@@ -1,10 +1,8 @@
-//! Hand-wave gestures from a webcam, with no model and no network: frame differencing
-//! finds where things are moving, and a quick, mostly straight sweep of that motion is
-//! a swipe. Frames are small grey pictures; the camera capture lives in the binary.
-//!
-//! This reads big, deliberate hand sweeps held in front of the lens. It does not read
-//! finger poses (palm, fist, point): that needs a landmark model, which is a separate
-//! step.
+//! Hand-wave gestures from frame differencing, with no model: where things are moving,
+//! and a quick, mostly straight sweep of that motion is a swipe. Frames are small grey
+//! pictures. The viewfinder now reads hands with the landmark model in [`crate::handnet`]
+//! and [`crate::hand`]; this reader stays for pictures that model cannot be run on, and
+//! owns the [`Gesture`] names and the actions they map to.
 
 use std::collections::VecDeque;
 
@@ -55,11 +53,11 @@ impl Gesture {
     /// How to make it.
     pub fn how(self) -> &'static str {
         match self {
-            Gesture::SwipeLeft => "Sweep your hand to your left, quickly, in front of the webcam",
+            Gesture::SwipeLeft => "Sweep your hand to your left, quickly, in view of the camera",
             Gesture::SwipeRight => "Sweep your hand to your right, quickly",
             Gesture::SwipeUp => "Sweep your hand upward",
             Gesture::SwipeDown => "Sweep your hand downward",
-            Gesture::Palm => "Hold up a flat hand, fingers spread, for one second",
+            Gesture::Palm => "Hold up an open hand, four fingers out, for about a second",
             Gesture::Fist => "Hold up a closed fist for one second",
             Gesture::Point => "Hold up one finger for one second",
             Gesture::Two => "Hold up two fingers for one second",

@@ -35,6 +35,13 @@ uuid = "1"
 gilrs = "0.11"
 cpal = "0.15"
 
+# Hand tracking models run through ONNX Runtime: on the GPU through DirectML on Windows.
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.10", features = ["directml"] }
+
+[target.'cfg(not(windows))'.dependencies]
+ort = "=2.0.0-rc.10"
+
 [features]
 # Keep a terminal attached on Windows, for reading eprintln output while developing.
 console = []

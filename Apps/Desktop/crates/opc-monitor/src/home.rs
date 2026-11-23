@@ -392,10 +392,10 @@ impl eframe::App for HomeApp {
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(
-                                        "Face the webcam with a plain background and good light. Sweeps need \
-                                         a quick, clear movement; poses are held for about a second, with the \
-                                         hand up and fingers pointing up and closer to the lens than your face. \
-                                         Choose what each one does:",
+                                        "A hand-tracking model finds your hand and every finger joint, at any \
+                                         angle and against any background, on your GPU. Sweeps need a quick, \
+                                         clear movement of the palm; poses are held for about a second. \
+                                         Press Y in the viewfinder to see what it sees. Choose what each one does:",
                                     )
                                     .font(FontId::proportional(12.0))
                                     .color(DIM),

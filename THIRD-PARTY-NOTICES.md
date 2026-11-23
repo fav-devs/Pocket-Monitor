@@ -123,3 +123,14 @@ SOFTWARE.
 Bundled under `ios/OpenPocketCine/Resources/` for in-app monitoring looks (D-Log / D-Log2 / D-Log M
 → Rec.709). Redistributed for identification of the camera color science; not affiliated with DJI.
 Unofficial copies and vivid variants are not committed.
+
+## Hand tracking models and runtime (Desktop)
+
+- **MediaPipe palm detection and hand landmark models**, Copyright Google LLC, Apache License 2.0,
+  as converted to ONNX by the OpenCV Zoo (<https://github.com/opencv/opencv_zoo>). Built into the
+  Desktop app; see `Apps/Desktop/crates/opc-monitor/assets/hand/NOTICE.md` and the licence beside it.
+- **ONNX Runtime**, Copyright Microsoft Corporation, MIT License, linked through the `ort` crate.
+- **DirectML** (`DirectML.dll`), Microsoft, redistributable under the DirectML licence; runs the
+  models on the GPU on Windows.
+
+The models run on the PC only. No camera picture or hand data leaves the machine.

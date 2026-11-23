@@ -690,11 +690,16 @@ impl View {
             seen.extend(feed.read(picture, pose, now));
         }
         if self.shell.hand_overlay() {
-            let shown = self
-                .feed_gestures
-                .as_ref()
-                .and_then(|feed| feed.hand.clone().map(|hand| (hand, feed.hold(now))));
-            self.shell.set_hand(self.feed_gestures.is_some(), shown);
+            match self.feed_gestures.as_ref() {
+                Some(feed) => {
+                    let shown = feed.hand.clone().map(|hand| {
+                        let pose = opc_monitor::hand::pose_of(&hand);
+                        (hand, pose, feed.hold(now))
+                    });
+                    self.shell.set_hand(&feed.status, shown);
+                }
+                None => self.shell.set_hand("", None),
+            }
         }
         for gesture in seen {
             for intent in self.shell.gesture(gesture, now) {
@@ -1406,27 +1411,35 @@ fn fresh_session() -> (u16, u16) {
 
 
 /// Gestures read from the camera's own picture: the operator stands in front of the
-/// lens. The gimbal moving shifts the whole scene, so swipes are ignored while it moves
-/// and for a moment after; held hand poses do not depend on that.
+/// lens. The hand model runs on its own thread, so the picture never waits for it. The
+/// gimbal moving shifts the whole scene, so sweeps are ignored while it moves and for
+/// a moment after; held poses do not depend on that.
 struct FeedGestures {
-    tracker: opc_monitor::gesture::Tracker,
+    worker: opc_monitor::handnet::HandWorker,
     holder: opc_monitor::hand::Holder,
-    last_read: f64,
+    sweep: opc_monitor::hand::Sweep,
+    last_sent: f64,
     last_pose: Option<(f64, f64)>,
     moving_until: f64,
     /// The latest hand found, for the hand view.
-    hand: Option<opc_monitor::hand::Hand>,
+    hand: Option<opc_monitor::handnet::Hand>,
+    /// What the model runs on and how long it takes, for the hand view.
+    status: String,
+    provider: &'static str,
 }
 
 impl FeedGestures {
     fn new() -> Self {
         Self {
-            tracker: opc_monitor::gesture::Tracker::new(true),
+            worker: opc_monitor::handnet::HandWorker::start(),
             holder: opc_monitor::hand::Holder::default(),
-            last_read: f64::NEG_INFINITY,
+            sweep: opc_monitor::hand::Sweep::new(true),
+            last_sent: f64::NEG_INFINITY,
             last_pose: None,
             moving_until: 0.0,
             hand: None,
+            status: "loading the hand model".to_string(),
+            provider: "",
         }
     }
 
@@ -1441,13 +1454,10 @@ impl FeedGestures {
         pose: Option<opc_monitor::moves::Waypoint>,
         now: f64,
     ) -> Vec<opc_monitor::gesture::Gesture> {
-        use opc_monitor::gesture::{Gesture, HEIGHT as GH, WIDTH as GW};
-        use opc_monitor::hand::{self, Pose};
+        use opc_monitor::gesture::Gesture;
+        use opc_monitor::hand::{pose_of, Pose};
+        use opc_monitor::handnet::Update;
 
-        if now - self.last_read < 1.0 / 15.0 {
-            return Vec::new();
-        }
-        self.last_read = now;
         if let Some(pose) = pose {
             if let Some((yaw, pitch)) = self.last_pose {
                 if (pose.yaw - yaw).abs() > 0.3 || (pose.pitch - pitch).abs() > 0.3 {
@@ -1456,25 +1466,47 @@ impl FeedGestures {
             }
             self.last_pose = Some((pose.yaw, pose.pitch));
         }
-        let frame = opc_monitor::scopes::small_rgb(picture, hand::WIDTH, hand::HEIGHT);
-        let mut grey = vec![0u8; GW * GH];
-        hand::skin_grey(&frame, &mut grey, GW, GH);
-        let mut found = Vec::new();
-        let swipe = self.tracker.feed(&grey, now);
-        if now >= self.moving_until {
-            found.extend(swipe);
+        // Offer a frame at about 20 a second; one is dropped if the model is still busy.
+        if now - self.last_sent >= 1.0 / 20.0 && picture.width > 0 && picture.height > 0 {
+            let width = 480usize;
+            let height = ((width as u64 * u64::from(picture.height)
+                / u64::from(picture.width)) as usize)
+                .max(2);
+            let rgb = opc_monitor::scopes::small_rgb(picture, width, height);
+            if self.worker.submit(rgb, width, height) {
+                self.last_sent = now;
+            }
         }
-        self.hand = hand::analyse(&frame);
-        if let Some(pose) = self
-            .holder
-            .feed(self.hand.as_ref().and_then(|hand| hand.pose), now)
-        {
-            found.push(match pose {
-                Pose::Fist => Gesture::Fist,
-                Pose::Point => Gesture::Point,
-                Pose::Two => Gesture::Two,
-                Pose::Palm => Gesture::Palm,
-            });
+        let mut found = Vec::new();
+        for update in self.worker.updates() {
+            match update {
+                Update::Ready(provider) => {
+                    self.provider = provider;
+                    self.status = provider.to_string();
+                }
+                Update::Failed(error) => {
+                    self.status = format!("model failed: {error}");
+                }
+                Update::Seen(hand, ms) => {
+                    if !self.provider.is_empty() {
+                        self.status = format!("{} {ms:.0} ms", self.provider);
+                    }
+                    let swipe = self.sweep.feed(hand.as_ref(), now);
+                    if now >= self.moving_until {
+                        found.extend(swipe);
+                    }
+                    let seen = hand.as_ref().and_then(pose_of);
+                    if let Some(pose) = self.holder.feed(seen, now) {
+                        found.push(match pose {
+                            Pose::Fist => Gesture::Fist,
+                            Pose::Point => Gesture::Point,
+                            Pose::Two => Gesture::Two,
+                            Pose::Palm => Gesture::Palm,
+                        });
+                    }
+                    self.hand = hand;
+                }
+            }
         }
         found
     }

@@ -281,8 +281,9 @@ pub struct Shell {
     focus_marker: Option<((f64, f64), f64)>,
     /// The hand view: on by `Y`, fed by the camera-picture gesture reader.
     hand_overlay: bool,
-    hand_reading: bool,
-    hand_seen: Option<(crate::hand::Hand, f32)>,
+    /// What the hand reader says about itself; empty when nothing is reading.
+    hand_status: String,
+    hand_seen: Option<(crate::handnet::Hand, Option<crate::hand::Pose>, f32)>,
     /// The scopes: options, the last sample of the picture, the axis for the body's
     /// colour mode, the readings, and where the operator parked each plate.
     scope_options: ScopeOptions,
@@ -421,7 +422,7 @@ impl Shell {
             notice: None,
             focus_marker: None,
             hand_overlay: false,
-            hand_reading: false,
+            hand_status: String::new(),
             hand_seen: None,
             tracking: None,
             tracking_rules: opc_camera::tracking_rules(),
@@ -1274,14 +1275,19 @@ impl Shell {
         self.hand_overlay
     }
 
-    /// What the picture reader sees this frame, and how far the pose is through its hold.
-    /// `reading` is false when nothing is reading the picture (gestures off, or a webcam).
-    pub fn set_hand(&mut self, reading: bool, seen: Option<(crate::hand::Hand, f32)>) {
+    /// What the picture reader reports this frame: a line about itself (empty when
+    /// nothing is reading), the hand it sees with the pose it makes, and how far through
+    /// the hold that pose is.
+    pub fn set_hand(
+        &mut self,
+        status: &str,
+        seen: Option<(crate::handnet::Hand, Option<crate::hand::Pose>, f32)>,
+    ) {
         if !self.hand_overlay {
             return;
         }
-        if reading != self.hand_reading || seen != self.hand_seen {
-            self.hand_reading = reading;
+        if status != self.hand_status || seen != self.hand_seen {
+            self.hand_status = status.to_string();
             self.hand_seen = seen;
             self.chrome_stale = true;
         }
@@ -3666,65 +3672,82 @@ impl Shell {
         self.chrome.as_ref()
     }
 
-    /// The hand view: the blob's box, the palm circle, the fingertips and the pose with
-    /// its hold bar, over the picture the reader is looking at.
+    /// The hand view: the 21 landmarks and the skeleton joining them, the pose they
+    /// make and how far through its hold it is, over the picture being read.
     fn draw_hand(&self, canvas: &mut opc_ui::Canvas, fit: opc_ui::Fit) {
-        const HAND: opc_ui::canvas::Colour = [64, 255, 128, 255];
+        use crate::handnet::{BONES, TIPS};
+        const BONE: opc_ui::canvas::Colour = [64, 255, 128, 255];
+        const JOINT: opc_ui::canvas::Colour = [255, 255, 255, 255];
         const TIP: opc_ui::canvas::Colour = [255, 196, 0, 255];
-        const SOFT: opc_ui::canvas::Colour = [64, 255, 128, 90];
-        let (w, h) = (crate::hand::WIDTH as f64, crate::hand::HEIGHT as f64);
+        const BOX: opc_ui::canvas::Colour = [64, 255, 128, 110];
         let mirror = self.toggles.mirror;
-        let map = |x: f32, y: f32| {
-            let mut u = f64::from(x) / w;
-            if mirror {
-                u = 1.0 - u;
-            }
+        let map = |(x, y): (f32, f32)| {
+            let u = if mirror { 1.0 - f64::from(x) } else { f64::from(x) };
             (
                 (fit.x + u * fit.width) as i64,
-                (fit.y + f64::from(y) / h * fit.height) as i64,
+                (fit.y + f64::from(y) * fit.height) as i64,
             )
         };
         let (x0, y0) = (fit.x as i64 + 12, fit.y as i64 + 12);
-        if !self.hand_reading {
-            canvas.label(
-                x0,
-                y0,
-                "HAND VIEW: turn on gesture control, watching the camera picture",
-                2,
-                opc_ui::canvas::WHITE,
-            );
-            return;
-        }
-        let Some((hand, hold)) = self.hand_seen.as_ref() else {
-            canvas.label(x0, y0, "HAND VIEW: no hand found", 2, opc_ui::canvas::WHITE);
+        let status = if self.hand_status.is_empty() {
+            "HAND VIEW: turn on gestures (J) and watch the camera picture (Moves sheet, K)"
+                .to_string()
+        } else if self.hand_seen.is_some() {
+            format!("HAND VIEW  {}", self.hand_status)
+        } else {
+            format!("HAND VIEW  {}  no hand", self.hand_status)
+        };
+        canvas.label(x0, y0, &status, 2, opc_ui::canvas::WHITE);
+        let Some((hand, pose, hold)) = self.hand_seen.as_ref() else {
             return;
         };
-        let (l, t, r, b) = hand.bounds;
-        let (bx0, by0) = map(l, t);
-        let (bx1, by1) = map(r, b);
-        let (bx, bw) = (bx0.min(bx1), (bx0 - bx1).unsigned_abs() as u32);
-        canvas.stroke(bx, by0, bw.max(2), (by1 - by0).max(2) as u32, 2, HAND);
-        let (px, py) = map(hand.palm.0, hand.palm.1);
-        let radius = (f64::from(hand.palm.2) / w * fit.width) as i64;
-        canvas.ring(px, py, radius, (radius - 2).max(0), SOFT);
-        for &(tx, ty) in &hand.tips {
-            let (tx, ty) = map(tx, ty);
-            canvas.circle(tx, ty, 6, TIP);
+        let (l, t, r, b) = hand.bounds();
+        let (pad_x, pad_y) = ((r - l) * 0.12, (b - t) * 0.12);
+        let (bx0, by0) = map((l - pad_x, t - pad_y));
+        let (bx1, by1) = map((r + pad_x, b + pad_y));
+        let bx = bx0.min(bx1);
+        canvas.stroke(
+            bx,
+            by0,
+            (bx0 - bx1).unsigned_abs().max(2) as u32,
+            (by1 - by0).max(2) as u32,
+            1,
+            BOX,
+        );
+        for (a, b) in BONES {
+            let (p, q) = (map(hand.points[a]), map(hand.points[b]));
+            let steps = ((q.0 - p.0).abs().max((q.1 - p.1).abs()) / 2).max(1);
+            for step in 0..=steps {
+                let t = step as f64 / steps as f64;
+                let (x, y) = (
+                    p.0 as f64 + (q.0 - p.0) as f64 * t,
+                    p.1 as f64 + (q.1 - p.1) as f64 * t,
+                );
+                canvas.fill(x as i64 - 1, y as i64 - 1, 3, 3, BONE);
+            }
         }
-        let name = match hand.pose {
+        for (index, point) in hand.points.iter().enumerate() {
+            let (x, y) = map(*point);
+            if TIPS.contains(&index) {
+                canvas.circle(x, y, 6, TIP);
+            } else {
+                canvas.circle(x, y, 3, JOINT);
+            }
+        }
+        let name = match pose {
             Some(crate::hand::Pose::Fist) => "FIST",
             Some(crate::hand::Pose::Point) => "POINT",
             Some(crate::hand::Pose::Two) => "TWO",
             Some(crate::hand::Pose::Palm) => "PALM",
-            None => "NOT A POSE",
+            None => "NO POSE",
         };
-        let text = format!("{name}  {} finger(s)", hand.tips.len());
-        let label_y = (by0 - 24).max(fit.y as i64 + 4);
+        let text = format!("{name}  {:.0}%", hand.score * 100.0);
+        let label_y = (by0 - 28).max(fit.y as i64 + 36);
         let used = canvas.label(bx, label_y, &text, 2, opc_ui::canvas::WHITE);
         // The hold bar: full means the gesture fires.
         let bar = (f64::from(used) * f64::from(hold.clamp(0.0, 1.0))) as u32;
         canvas.fill(bx - 4, label_y + 20, used, 4, [255, 255, 255, 60]);
-        canvas.fill(bx - 4, label_y + 20, bar, 4, if *hold >= 1.0 { TIP } else { HAND });
+        canvas.fill(bx - 4, label_y + 20, bar, 4, if *hold >= 1.0 { TIP } else { BONE });
     }
 
     /// Changes whenever [`Self::chrome`] has been redrawn.

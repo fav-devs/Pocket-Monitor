@@ -18,7 +18,7 @@ if (-not $NoBuild) {
     & (Join-Path $desktop 'build-release.ps1') @arguments
 }
 
-foreach ($name in 'opc-monitor.exe', 'opc_vcam_win.dll', 'OpenPocketCineDesktop.dll') {
+foreach ($name in 'opc-monitor.exe', 'opc_vcam_win.dll', 'OpenPocketCineDesktop.dll', 'DirectML.dll') {
     if (-not (Test-Path (Join-Path $staged $name))) {
         throw "$name is not in $staged - run build-release.ps1 first."
     }
