@@ -315,6 +315,8 @@ pub struct Shell {
     presented: VecDeque<f64>,
     /// The rasterised chrome, kept until something it draws changes.
     chrome: Option<Rgba>,
+    /// Counts every time `chrome` is redrawn, so the window can tell without comparing pixels.
+    chrome_generation: u64,
     chrome_stale: bool,
     /// The second the countdown last showed, so a ticking number redraws and a still one
     /// does not.
@@ -441,6 +443,7 @@ impl Shell {
             stick_sent_at: f64::NEG_INFINITY,
             presented: VecDeque::new(),
             chrome: None,
+            chrome_generation: 0,
             chrome_stale: true,
             gimbal_mode: GimbalMode::Follow,
             pad_held: false,
@@ -3649,6 +3652,7 @@ impl Shell {
                 self.draw_hand(&mut canvas, fit);
             }
 
+            self.chrome_generation += 1;
             self.chrome = Some(Rgba {
                 width: canvas.width,
                 height: canvas.height,
@@ -3721,6 +3725,11 @@ impl Shell {
         let bar = (f64::from(used) * f64::from(hold.clamp(0.0, 1.0))) as u32;
         canvas.fill(bx - 4, label_y + 20, used, 4, [255, 255, 255, 60]);
         canvas.fill(bx - 4, label_y + 20, bar, 4, if *hold >= 1.0 { TIP } else { HAND });
+    }
+
+    /// Changes whenever [`Self::chrome`] has been redrawn.
+    pub fn chrome_generation(&self) -> u64 {
+        self.chrome_generation
     }
 
     /// Whether the chrome is being drawn at all.

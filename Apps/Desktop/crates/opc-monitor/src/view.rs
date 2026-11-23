@@ -102,6 +102,9 @@ struct View {
     feed_gestures: Option<FeedGestures>,
     /// A webcam was asked for since gestures last pointed at it.
     webcam_tried: bool,
+    /// Whether the chrome was showing, and which redraw, when the renderer last got it.
+    overlay_key: (bool, u64),
+    render_stats: (u32, Duration, Instant),
     last_pad_at: f64,
     /// Where the camera is, for a reconnect.
     remote: Option<std::net::SocketAddr>,
@@ -837,6 +840,29 @@ impl View {
     }
 
     fn draw(&mut self) {
+        let started = Instant::now();
+        self.draw_frame();
+        self.note_render_time(started.elapsed());
+    }
+
+    /// Once a second, how many frames were drawn and what each cost, in the log: what
+    /// to read when fullscreen is slower than a window.
+    fn note_render_time(&mut self, spent: Duration) {
+        self.render_stats.0 += 1;
+        self.render_stats.1 += spent;
+        if self.render_stats.2.elapsed() >= Duration::from_secs(1) {
+            let (draws, total, _) = self.render_stats;
+            let size = self.window.as_ref().map(|w| w.inner_size());
+            diagnostic(format_args!(
+                "render: {draws} draws/s, {:.2} ms each on the CPU, window {:?}",
+                total.as_secs_f64() * 1000.0 / f64::from(draws.max(1)),
+                size.map(|s| (s.width, s.height))
+            ));
+            self.render_stats = (0, Duration::ZERO, Instant::now());
+        }
+    }
+
+    fn draw_frame(&mut self) {
         self.pump_camera();
         self.decode();
         let now = self.now();
@@ -878,9 +904,16 @@ impl View {
             self.shell.set_phase(Phase::Live);
         }
 
-        match self.shell.chrome(now) {
-            Some(chrome) => renderer.set_overlay(chrome),
-            None => renderer.clear_overlay(),
+        // Hand the chrome over only when it was redrawn: comparing a fullscreen 4K
+        // buffer pixel by pixel every frame costs more than the frame itself.
+        let visible = self.shell.chrome(now).is_some();
+        let key = (visible, self.shell.chrome_generation());
+        if key != self.overlay_key {
+            self.overlay_key = key;
+            match self.shell.chrome(now) {
+                Some(chrome) => renderer.set_overlay(chrome),
+                None => renderer.clear_overlay(),
+            }
         }
 
         let picture = latest.picture();
@@ -1287,6 +1320,8 @@ pub fn run(options: Options) -> Result<(), String> {
         gestures: None,
         feed_gestures: None,
         webcam_tried: false,
+        overlay_key: (false, u64::MAX),
+        render_stats: (0, Duration::ZERO, Instant::now()),
         remote: options.remote,
         phone: options.phone.clone(),
         model_id: options.model_id,
