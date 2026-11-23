@@ -2015,18 +2015,19 @@ fn presets_are_saved_from_the_live_pose_and_recalled_by_key_or_swipe() {
             duration_tenths: 40
         }]
     );
-    // A swipe right steps on to slot 2; up recentres; down flips.
+    // A swipe right steps on to slot 2; a fist recentres; two fingers flip; raising or
+    // lowering a hand does nothing.
     let next = sent(&shell.gesture(Gesture::SwipeRight, 5.0));
     assert!(matches!(
         next.as_slice(),
         [Command::GimbalTimedTarget { yaw_tenth: 600, .. }]
     ));
     assert_eq!(
-        sent(&shell.gesture(Gesture::SwipeUp, 9.0)),
+        sent(&shell.gesture(Gesture::Fist, 9.0)),
         [Command::GimbalRecenter]
     );
     assert_eq!(
-        sent(&shell.gesture(Gesture::SwipeDown, 13.0)),
+        sent(&shell.gesture(Gesture::Two, 13.0)),
         [Command::GimbalFlip]
     );
 }
@@ -2100,4 +2101,14 @@ fn y_shows_the_hand_view_in_the_viewfinder() {
     assert!(shell.hand_overlay());
     assert!(shell.press(Key::Char('Y'), 1.0).is_empty());
     assert!(!shell.hand_overlay());
+}
+
+#[test]
+fn raising_or_lowering_a_hand_never_flips_the_camera() {
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    use opc_monitor::gesture::Gesture;
+    for gesture in [Gesture::SwipeUp, Gesture::SwipeDown] {
+        assert!(sent(&shell.gesture(gesture, 1.0)).is_empty());
+    }
 }

@@ -3741,7 +3741,15 @@ impl Shell {
             Some(crate::hand::Pose::Palm) => "PALM",
             None => "NO POSE",
         };
-        let text = format!("{name}  {:.0}%", hand.score * 100.0);
+        let reach = crate::hand::finger_reach(hand);
+        let text = format!(
+            "{name}  {:.0}%  I{:.1} M{:.1} R{:.1} P{:.1}",
+            hand.score * 100.0,
+            reach[0],
+            reach[1],
+            reach[2],
+            reach[3]
+        );
         let label_y = (by0 - 28).max(fit.y as i64 + 36);
         let used = canvas.label(bx, label_y, &text, 2, opc_ui::canvas::WHITE);
         // The hold bar: full means the gesture fires.

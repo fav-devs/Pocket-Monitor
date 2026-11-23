@@ -141,8 +141,8 @@ impl Default for GestureMap {
         let mut map = Self([GestureAction::Nothing; 8]);
         map.set(Gesture::SwipeLeft, GestureAction::PreviousPreset);
         map.set(Gesture::SwipeRight, GestureAction::NextPreset);
-        map.set(Gesture::SwipeUp, GestureAction::Recenter);
-        map.set(Gesture::SwipeDown, GestureAction::Flip);
+        // Raising and lowering a hand reads as a vertical sweep, so those do nothing
+        // until the operator chooses otherwise.
         map.set(Gesture::Palm, GestureAction::Stop);
         map.set(Gesture::Fist, GestureAction::Recenter);
         map.set(Gesture::Point, GestureAction::NextPreset);

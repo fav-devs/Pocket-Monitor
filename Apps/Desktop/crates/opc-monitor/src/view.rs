@@ -1508,6 +1508,10 @@ impl FeedGestures {
                 }
             }
         }
+        if !found.is_empty() {
+            // Putting the hand down afterwards must not read as a sweep.
+            self.sweep.hold_off(now);
+        }
         found
     }
 }

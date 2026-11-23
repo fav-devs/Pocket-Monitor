@@ -19,20 +19,26 @@ pub enum Pose {
 /// How long a pose must be held, and how long it must be gone before it can fire again.
 const HOLD: f64 = 0.9;
 const RELEASE: f64 = 0.5;
-/// A finger counts as out when its tip is this much farther from the wrist than its
-/// middle joint. Straight is about 1.35, curled under about 0.8.
-const OUT: f32 = 1.2;
-
-/// The pose this hand makes, or `None` for a shape we have no name for.
-pub fn pose_of(hand: &Hand) -> Option<Pose> {
+/// How far each finger's tip is from the wrist, as a multiple of how far its base is:
+/// index, middle, ring, pinky. A straight finger reaches about 1.7 times as far as its
+/// base (measured on real photos: 1.55 to 1.85); one folded into the palm 1.3 or less.
+pub fn finger_reach(hand: &Hand) -> [f32; 4] {
     let distance = |a: usize, b: usize| {
         let ((ax, ay), (bx, by)) = (hand.points[a], hand.points[b]);
         ((ax - bx) * hand.aspect).hypot(ay - by)
     };
-    // Index, middle, ring, pinky: middle joint and tip.
-    let out = |pip: usize, tip: usize| distance(tip, 0) > distance(pip, 0) * OUT;
-    let fingers = [out(6, 8), out(10, 12), out(14, 16), out(18, 20)];
-    match fingers {
+    let reach = |base: usize, tip: usize| distance(tip, 0) / distance(base, 0).max(1e-4);
+    [reach(5, 8), reach(9, 12), reach(13, 16), reach(17, 20)]
+}
+
+/// A finger counts as out past this reach.
+const OUT: f32 = 1.42;
+
+/// The pose this hand makes, or `None` for a shape we have no name for. The thumb is
+/// free: it does not change the pose.
+pub fn pose_of(hand: &Hand) -> Option<Pose> {
+    let [index, middle, ring, pinky] = finger_reach(hand).map(|reach| reach > OUT);
+    match [index, middle, ring, pinky] {
         [false, false, false, false] => Some(Pose::Fist),
         [true, false, false, false] => Some(Pose::Point),
         [true, true, false, false] => Some(Pose::Two),
@@ -93,13 +99,19 @@ impl Holder {
 const SWEEP_TRAVEL: f32 = 0.28;
 const SWEEP_WITHIN: f64 = 0.55;
 const SWEEP_DOMINANCE: f32 = 1.8;
-const SWEEP_COOLDOWN: f64 = 1.0;
+const SWEEP_COOLDOWN: f64 = 1.5;
+/// A hand that has just come into view, or is being put down, is not sweeping: wait
+/// this long after it appears before reading a sweep.
+const SWEEP_SETTLE: f64 = 0.6;
 
 /// Reads a sweep of the palm across the picture: a quick, mostly straight run.
 #[derive(Debug)]
 pub struct Sweep {
     trail: VecDeque<(f64, f32, f32)>,
     quiet_until: f64,
+    /// When the hand came into view, while it has stayed in view.
+    present_since: Option<f64>,
+    last_seen: f64,
     mirror: bool,
 }
 
@@ -109,8 +121,16 @@ impl Sweep {
         Self {
             trail: VecDeque::new(),
             quiet_until: 0.0,
+            present_since: None,
+            last_seen: f64::NEG_INFINITY,
             mirror,
         }
+    }
+
+    /// Holds sweeps off for the cooldown, as when another gesture has just fired.
+    pub fn hold_off(&mut self, now: f64) {
+        self.trail.clear();
+        self.quiet_until = self.quiet_until.max(now + SWEEP_COOLDOWN);
     }
 
     /// The hand found in a frame at `now` (seconds), or `None` when there is none.
@@ -122,7 +142,17 @@ impl Sweep {
         {
             self.trail.pop_front();
         }
-        let hand = hand?;
+        let Some(hand) = hand else {
+            if now - self.last_seen > 0.25 {
+                self.present_since = None;
+            }
+            return None;
+        };
+        self.last_seen = now;
+        let since = *self.present_since.get_or_insert(now);
+        if now - since < SWEEP_SETTLE {
+            return None;
+        }
         let (mut x, y) = hand.palm_centre();
         if self.mirror {
             x = 1.0 - x;
@@ -271,6 +301,11 @@ mod tests {
     fn sweep_across(mirror: bool, from: (f32, f32), to: (f32, f32)) -> Vec<Gesture> {
         let mut sweep = Sweep::new(mirror);
         let mut found = Vec::new();
+        // The hand is in view and still first, as a hand being held up is.
+        let still = hand_at(from.0, from.1);
+        for step in 0..14 {
+            sweep.feed(Some(&still), -1.0 + f64::from(step) * 0.05);
+        }
         for step in 0..=8 {
             let t = step as f32 / 8.0;
             let hand = hand_at(from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
@@ -298,6 +333,35 @@ mod tests {
             sweep_across(false, (0.5, 0.8), (0.5, 0.3)),
             [Gesture::SwipeUp]
         );
+    }
+
+    #[test]
+    fn a_hand_coming_into_view_or_going_down_is_not_a_sweep() {
+        let mut sweep = Sweep::new(false);
+        let mut found = Vec::new();
+        // Raised from low in the picture to high, in half a second, straight into view.
+        for step in 0..=8 {
+            let t = step as f32 / 8.0;
+            let hand = hand_at(0.5, 0.9 - 0.5 * t);
+            found.extend(sweep.feed(Some(&hand), f64::from(step) * 0.05));
+        }
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_gesture_that_just_fired_holds_sweeps_off() {
+        let mut sweep = Sweep::new(false);
+        let still = hand_at(0.2, 0.5);
+        for step in 0..14 {
+            sweep.feed(Some(&still), f64::from(step) * 0.05);
+        }
+        sweep.hold_off(0.7);
+        let mut found = Vec::new();
+        for step in 0..=8 {
+            let hand = hand_at(0.2 + 0.0625 * step as f32, 0.5);
+            found.extend(sweep.feed(Some(&hand), 0.75 + f64::from(step) * 0.05));
+        }
+        assert!(found.is_empty());
     }
 
     #[test]

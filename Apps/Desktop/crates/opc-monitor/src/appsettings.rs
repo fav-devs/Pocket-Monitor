@@ -37,11 +37,15 @@ impl Default for AppSettings {
 }
 
 const HEADER: &str = "openpocketcine-desktop-app-v1";
+/// Which defaults the saved gesture map was made against. A map without this line came
+/// from the first defaults, which put flip on a downward sweep (lowering a hand flipped
+/// the camera), so it is dropped once and the new defaults apply.
+const MAP_VERSION: &str = "gesture_map_version=2";
 
 impl AppSettings {
     pub fn to_text(&self) -> String {
         format!(
-            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\ngesture_source={}\n{}",
+            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\ngesture_source={}\n{MAP_VERSION}\n{}",
             u8::from(self.gestures),
             u8::from(self.open_camera_at_launch),
             match self.gesture_source {
@@ -59,6 +63,7 @@ impl AppSettings {
         if lines.next() != Some(HEADER) {
             return settings;
         }
+        let current_map = text.lines().any(|line| line == MAP_VERSION);
         for line in lines {
             match line.split_once('=') {
                 Some(("gestures", value)) => settings.gestures = value == "1",
@@ -72,7 +77,8 @@ impl AppSettings {
                         GestureSource::CameraFeed
                     }
                 }
-                _ => settings.gesture_map.read_line(line),
+                _ if current_map => settings.gesture_map.read_line(line),
+                _ => {}
             }
         }
         settings
@@ -139,6 +145,17 @@ mod tests {
         assert_eq!(AppSettings::parse(&settings.to_text()), settings);
         assert_eq!(AppSettings::parse("junk"), AppSettings::default());
         assert_eq!(AppSettings::parse(""), AppSettings::default());
+    }
+
+    #[test]
+    fn a_map_saved_before_the_new_defaults_is_dropped() {
+        let old = "openpocketcine-desktop-app-v1\ngestures=1\ngesture.swipe_down=flip\ngesture.two=flip\n";
+        let settings = AppSettings::parse(old);
+        assert!(settings.gestures, "the rest of the file is kept");
+        assert_eq!(
+            settings.gesture_map.get(crate::gesture::Gesture::SwipeDown),
+            crate::gesture::GestureAction::Nothing
+        );
     }
 
     #[test]

@@ -153,6 +153,9 @@ pub fn start() -> Option<Webcam> {
                 Pose::Two => Gesture::Two,
                 Pose::Palm => Gesture::Palm,
             });
+            if swipe.is_some() || held.is_some() {
+                sweep.hold_off(now);
+            }
             for gesture in swipe.into_iter().chain(held) {
                 if sender.send(gesture).is_err() {
                     let _ = child.kill();
