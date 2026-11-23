@@ -67,6 +67,8 @@ const FPS_WINDOW: f64 = 1.0;
 /// How long a FORMAT pin and a notice stay up, as the phones keep them.
 const PIN_SECONDS: f64 = 2.0;
 const NOTICE_SECONDS: f64 = 2.5;
+/// How long recording has to be held for by gesture.
+const RECORD_HOLD: f64 = 2.5;
 
 /// What the window is asked to do.
 #[derive(Debug, Clone, PartialEq)]
@@ -283,7 +285,17 @@ pub struct Shell {
     hand_overlay: bool,
     /// What the hand reader says about itself; empty when nothing is reading.
     hand_status: String,
-    hand_seen: Option<(crate::handnet::Hand, Option<crate::hand::Pose>, f32)>,
+    hand_scene: Option<crate::hand::HandScene>,
+    /// Pinch-and-drag hand control of the gimbal and zoom, while gestures are on.
+    hand_control: bool,
+    /// The stick is the right hand when true, the left when false.
+    stick_is_right: bool,
+    /// Track a face by itself once one has been in view for a moment.
+    auto_face: bool,
+    /// The hand stick has the gimbal.
+    hand_stick_held: bool,
+    /// A face is wanted for tracking: the picture reader answers with `track_region`.
+    face_request: bool,
     /// The scopes: options, the last sample of the picture, the axis for the body's
     /// colour mode, the readings, and where the operator parked each plate.
     scope_options: ScopeOptions,
@@ -423,7 +435,12 @@ impl Shell {
             focus_marker: None,
             hand_overlay: false,
             hand_status: String::new(),
-            hand_seen: None,
+            hand_scene: None,
+            hand_control: true,
+            stick_is_right: true,
+            auto_face: false,
+            hand_stick_held: false,
+            face_request: false,
             tracking: None,
             tracking_rules: opc_camera::tracking_rules(),
             tracking_cleared_at: None,
@@ -1117,6 +1134,9 @@ impl Shell {
         self.gesture_map = settings.gesture_map;
         let asked = std::env::var_os("OPC_GESTURES").is_some_and(|value| value != "0");
         self.gestures = (settings.gestures || asked).then_some(settings.gesture_source);
+        self.hand_control = settings.hand_control;
+        self.stick_is_right = settings.stick_is_right;
+        self.auto_face = settings.auto_face_track;
         self.prefs_path = Some(path);
         self
     }
@@ -1250,24 +1270,142 @@ impl Shell {
         self.gestures
     }
 
-    /// Switches gesture control and remembers it for the next launch.
-    fn set_gestures(&mut self, mode: Option<crate::appsettings::GestureSource>) {
-        use crate::appsettings::{self, GestureSource};
-        self.gestures = mode;
+    /// Changes the remembered app settings, beside the prefs file.
+    fn remember(&self, change: impl FnOnce(&mut crate::appsettings::AppSettings)) {
+        use crate::appsettings;
         if let Some(prefs) = self.prefs_path.as_ref() {
             let file = appsettings::path_beside(prefs);
             let mut settings = appsettings::load_at(&file);
+            change(&mut settings);
+            appsettings::save_at(&file, &settings);
+        }
+    }
+
+    /// Switches gesture control and remembers it for the next launch.
+    fn set_gestures(&mut self, mode: Option<crate::appsettings::GestureSource>) {
+        use crate::appsettings::GestureSource;
+        self.gestures = mode;
+        if mode.is_none() {
+            // Whatever the hands held, they let go of.
+            self.hand_scene = None;
+        }
+        self.remember(|settings| {
             settings.gestures = mode.is_some();
             if let Some(source) = mode {
                 settings.gesture_source = source;
             }
-            appsettings::save_at(&file, &settings);
-        }
+        });
         self.set_notice(match mode {
             None => "Gestures off",
             Some(GestureSource::CameraFeed) => "Gestures on: watching the camera's picture",
             Some(GestureSource::Webcam) => "Gestures on: watching the PC webcam",
         });
+    }
+
+    /// Whether pinch-and-drag hand control is switched on, for the picture reader.
+    pub fn hand_control_on(&self) -> bool {
+        self.hand_control && self.gestures.is_some()
+    }
+
+    /// Whether the right hand is the gimbal stick (and the left the zoom).
+    pub fn stick_is_right(&self) -> bool {
+        self.stick_is_right
+    }
+
+    /// Whether a face is to be tracked by itself.
+    pub fn auto_face(&self) -> bool {
+        self.auto_face
+    }
+
+    /// True once after a gesture asked for the face to be tracked.
+    pub fn take_face_request(&mut self) -> bool {
+        std::mem::take(&mut self.face_request)
+    }
+
+    /// How long a gesture has to be held: recording takes longer than the rest, so it
+    /// is never an accident.
+    pub fn gesture_hold_seconds(&self, gesture: Gesture) -> f64 {
+        if self.gesture_map.get(gesture) == GestureAction::Record {
+            RECORD_HOLD
+        } else {
+            crate::hand::HOLD
+        }
+    }
+
+    /// A held gesture is part-way: say so when it is the one that records.
+    pub fn gesture_progress(&mut self, gesture: Gesture, fraction: f32) {
+        if self.gesture_map.get(gesture) != GestureAction::Record || !(0.1..1.0).contains(&fraction)
+        {
+            return;
+        }
+        let filled = (fraction * 10.0) as usize;
+        let bar: String = (0..10).map(|i| if i < filled { '#' } else { '-' }).collect();
+        let what = if self.hud.status.is_recording {
+            "STOP RECORDING"
+        } else {
+            "START RECORDING"
+        };
+        self.set_notice(&format!("HOLD TO {what} [{bar}]"));
+    }
+
+    /// A pinching hand's control, `dt` seconds after the last one.
+    pub fn hand_control(&mut self, control: crate::hand::Control, dt: f64, now: f64) -> Vec<Intent> {
+        use crate::hand::Control;
+        if self.screen != Screen::Viewfinder || !self.hand_control_on() {
+            return Vec::new();
+        }
+        self.last_now = self.last_now.max(now);
+        match control {
+            Control::Stick { x, y } => {
+                if f64::from(x).abs() < PAD_REST && f64::from(y).abs() < PAD_REST {
+                    if !self.hand_stick_held {
+                        return Vec::new();
+                    }
+                    self.hand_stick_held = false;
+                    return self.pad_released();
+                }
+                self.hand_stick_held = true;
+                self.pad_moved(x, y)
+            }
+            Control::StickEnd => {
+                if !self.hand_stick_held {
+                    return Vec::new();
+                }
+                self.hand_stick_held = false;
+                self.pad_released()
+            }
+            Control::Zoom { rate } => {
+                let (out, into) = (f64::from((-rate).max(0.0)), f64::from(rate.max(0.0)));
+                if out < PAD_REST && into < PAD_REST {
+                    return Vec::new();
+                }
+                let current = self.controls.zoom();
+                let next = zoom_trigger_step(current, out, into, dt.clamp(0.0, 0.1), self.zoom_rules.max());
+                if (next - current).abs() < 0.005 {
+                    return Vec::new();
+                }
+                self.zoom_write(ZoomWrite::Slider(next), now)
+            }
+            Control::ZoomEnd => Vec::new(),
+        }
+    }
+
+    /// Tracks the region of the picture at `raw` (left, top, width, height as fractions
+    /// of the sensor), as a drag of a box would.
+    pub fn track_region(&mut self, raw: (f64, f64, f64, f64), now: f64) -> Vec<Intent> {
+        if self.screen != Screen::Viewfinder {
+            return Vec::new();
+        }
+        self.last_now = self.last_now.max(now);
+        let (x, y, w, h) = raw;
+        let mirror = self.toggles.mirror;
+        let seen_x = if mirror { 1.0 - x - w } else { x };
+        let mut drag = Drag::start((seen_x, y), mirror);
+        drag.extend((seen_x + w, y + h));
+        let Some(command) = drag.command(self.next_track_id) else {
+            return Vec::new();
+        };
+        self.send_box(&drag, command, now)
     }
 
     /// Whether the hand view is switched on (key `Y`).
@@ -1276,19 +1414,14 @@ impl Shell {
     }
 
     /// What the picture reader reports this frame: a line about itself (empty when
-    /// nothing is reading), the hand it sees with the pose it makes, and how far through
-    /// the hold that pose is.
-    pub fn set_hand(
-        &mut self,
-        status: &str,
-        seen: Option<(crate::handnet::Hand, Option<crate::hand::Pose>, f32)>,
-    ) {
+    /// nothing is reading) and what the hands are doing.
+    pub fn set_hand(&mut self, status: &str, scene: Option<crate::hand::HandScene>) {
         if !self.hand_overlay {
             return;
         }
-        if status != self.hand_status || seen != self.hand_seen {
+        if status != self.hand_status || scene != self.hand_scene {
             self.hand_status = status.to_string();
-            self.hand_seen = seen;
+            self.hand_scene = scene;
             self.chrome_stale = true;
         }
     }
@@ -1489,6 +1622,16 @@ impl Shell {
                 intents.push(Intent::Send(Command::GimbalTimedStop));
                 intents
             }
+            GestureAction::FaceTrack => {
+                if self.tracking.is_some() {
+                    self.set_notice("FACE TRACKING OFF");
+                    self.act(Action::ClearTracking, now)
+                } else {
+                    self.face_request = true;
+                    self.set_notice("LOOKING FOR YOUR FACE");
+                    Vec::new()
+                }
+            }
             GestureAction::Record => {
                 self.set_notice("GESTURE: RECORD");
                 let command = self.record_command();
@@ -1683,6 +1826,9 @@ impl Shell {
             program: &self.program,
             presets: &self.presets,
             gestures: self.gestures,
+            hand_control: self.hand_control,
+            stick_is_right: self.stick_is_right,
+            auto_face: self.auto_face,
             live_pose: self.live_pose(),
             move_running: self.move_running(),
             move_paused: self.move_paused(),
@@ -2191,6 +2337,21 @@ impl Shell {
                 self.set_gestures(mode);
                 Vec::new()
             }
+            Pick::HandControl(on) => {
+                self.hand_control = on;
+                self.remember(|settings| settings.hand_control = on);
+                Vec::new()
+            }
+            Pick::StickHand(right) => {
+                self.stick_is_right = right;
+                self.remember(|settings| settings.stick_is_right = right);
+                Vec::new()
+            }
+            Pick::AutoFace(on) => {
+                self.auto_face = on;
+                self.remember(|settings| settings.auto_face_track = on);
+                Vec::new()
+            }
             Pick::PresetSeconds(seconds) => {
                 self.presets.seconds = seconds;
                 self.persist_presets();
@@ -2256,7 +2417,7 @@ impl Shell {
         }
         if matches!(key, Key::Char('y' | 'Y')) {
             self.hand_overlay = !self.hand_overlay;
-            self.hand_seen = None;
+            self.hand_scene = None;
             self.chrome_stale = true;
             return Vec::new();
         }
@@ -2525,6 +2686,11 @@ impl Shell {
             let (x, y, _, _) = drag.rectangle();
             return self.tap_focus((x, y), now);
         };
+        self.send_box(&drag, command, now)
+    }
+
+    /// Sends a box the operator drew, or a gesture asked for, to the body to follow.
+    fn send_box(&mut self, drag: &Drag, command: Command, now: f64) -> Vec<Intent> {
         let (sx, sy, sw, sh) = drag.sensor_rectangle();
         let minimum = self.tracking_rules.minimum_side;
         if sw < minimum || sh < minimum {
@@ -3672,14 +3838,13 @@ impl Shell {
         self.chrome.as_ref()
     }
 
-    /// The hand view: the 21 landmarks and the skeleton joining them, the pose they
-    /// make and how far through its hold it is, over the picture being read.
+    /// The hand view: each hand's 21 landmarks and the skeleton joining them, the pose
+    /// it makes, the pinch a control is held with, and how far through its hold a pose is.
     fn draw_hand(&self, canvas: &mut opc_ui::Canvas, fit: opc_ui::Fit) {
+        use crate::hand::{Pose, Role};
         use crate::handnet::{BONES, TIPS};
-        const BONE: opc_ui::canvas::Colour = [64, 255, 128, 255];
         const JOINT: opc_ui::canvas::Colour = [255, 255, 255, 255];
         const TIP: opc_ui::canvas::Colour = [255, 196, 0, 255];
-        const BOX: opc_ui::canvas::Colour = [64, 255, 128, 110];
         let mirror = self.toggles.mirror;
         let map = |(x, y): (f32, f32)| {
             let u = if mirror { 1.0 - f64::from(x) } else { f64::from(x) };
@@ -3692,70 +3857,117 @@ impl Shell {
         let status = if self.hand_status.is_empty() {
             "HAND VIEW: turn on gestures (J) and watch the camera picture (Moves sheet, K)"
                 .to_string()
-        } else if self.hand_seen.is_some() {
+        } else if self.hand_scene.as_ref().is_some_and(|scene| !scene.hands.is_empty()) {
             format!("HAND VIEW  {}", self.hand_status)
         } else {
             format!("HAND VIEW  {}  no hand", self.hand_status)
         };
         canvas.label(x0, y0, &status, 2, opc_ui::canvas::WHITE);
-        let Some((hand, pose, hold)) = self.hand_seen.as_ref() else {
+        let Some(scene) = self.hand_scene.as_ref() else {
             return;
         };
-        let (l, t, r, b) = hand.bounds();
-        let (pad_x, pad_y) = ((r - l) * 0.12, (b - t) * 0.12);
-        let (bx0, by0) = map((l - pad_x, t - pad_y));
-        let (bx1, by1) = map((r + pad_x, b + pad_y));
-        let bx = bx0.min(bx1);
-        canvas.stroke(
-            bx,
-            by0,
-            (bx0 - bx1).unsigned_abs().max(2) as u32,
-            (by1 - by0).max(2) as u32,
-            1,
-            BOX,
-        );
-        for (a, b) in BONES {
-            let (p, q) = (map(hand.points[a]), map(hand.points[b]));
-            let steps = ((q.0 - p.0).abs().max((q.1 - p.1).abs()) / 2).max(1);
+        for view in &scene.hands {
+            let hand = &view.hand;
+            // The stick hand green, the zoom hand blue.
+            let role = if hand.right == self.stick_is_right {
+                Role::Stick
+            } else {
+                Role::Zoom
+            };
+            let (bone, outline): (opc_ui::canvas::Colour, opc_ui::canvas::Colour) = match role {
+                Role::Stick => ([64, 255, 128, 255], [64, 255, 128, 110]),
+                Role::Zoom => ([90, 170, 255, 255], [90, 170, 255, 110]),
+            };
+            let (l, t, r, b) = hand.bounds();
+            let (pad_x, pad_y) = ((r - l) * 0.12, (b - t) * 0.12);
+            let (bx0, by0) = map((l - pad_x, t - pad_y));
+            let (bx1, by1) = map((r + pad_x, b + pad_y));
+            let bx = bx0.min(bx1);
+            canvas.stroke(
+                bx,
+                by0,
+                (bx0 - bx1).unsigned_abs().max(2) as u32,
+                (by1 - by0).max(2) as u32,
+                1,
+                outline,
+            );
+            for (a, b) in BONES {
+                let (p, q) = (map(hand.points[a]), map(hand.points[b]));
+                let steps = ((q.0 - p.0).abs().max((q.1 - p.1).abs()) / 2).max(1);
+                for step in 0..=steps {
+                    let t = step as f64 / steps as f64;
+                    let (x, y) = (
+                        p.0 as f64 + (q.0 - p.0) as f64 * t,
+                        p.1 as f64 + (q.1 - p.1) as f64 * t,
+                    );
+                    canvas.fill(x as i64 - 1, y as i64 - 1, 3, 3, bone);
+                }
+            }
+            for (index, point) in hand.points.iter().enumerate() {
+                let (x, y) = map(*point);
+                if TIPS.contains(&index) {
+                    canvas.circle(x, y, 6, TIP);
+                } else {
+                    canvas.circle(x, y, 3, JOINT);
+                }
+            }
+            let name = match view.pose {
+                Some(Pose::Fist) => "FIST",
+                Some(Pose::Point) => "POINT",
+                Some(Pose::Two) => "TWO",
+                Some(Pose::Horns) => "ROCK",
+                Some(Pose::Palm) => "PALM",
+                None => "NO POSE",
+            };
+            let who = match role {
+                Role::Stick => "STICK",
+                Role::Zoom => "ZOOM",
+            };
+            let reach = crate::hand::finger_reach(hand);
+            let text = format!(
+                "{who} {name} {:.0}%  I{:.1} M{:.1} R{:.1} P{:.1}  pinch {:.2}",
+                hand.score * 100.0,
+                reach[0],
+                reach[1],
+                reach[2],
+                reach[3],
+                crate::hand::pinch_ratio(hand)
+            );
+            let label_y = (by0 - 28).max(fit.y as i64 + 36);
+            let used = canvas.label(bx, label_y, &text, 2, opc_ui::canvas::WHITE);
+            if scene.hold > 0.0 && view.pose.is_some() {
+                // The hold bar: full means the gesture fires.
+                let bar = (f64::from(used) * f64::from(scene.hold.clamp(0.0, 1.0))) as u32;
+                canvas.fill(bx - 4, label_y + 20, used, 4, [255, 255, 255, 60]);
+                canvas.fill(bx - 4, label_y + 20, bar, 4, if scene.hold >= 1.0 { TIP } else { bone });
+            }
+        }
+        // A pinch being held: where it began, where it is, and the line between.
+        for grab in &scene.grabs {
+            let colour: opc_ui::canvas::Colour = match grab.role {
+                Role::Stick => [64, 255, 128, 255],
+                Role::Zoom => [90, 170, 255, 255],
+            };
+            let (a, p) = (map(grab.anchor), map(grab.point));
+            let steps = ((p.0 - a.0).abs().max((p.1 - a.1).abs()) / 3).max(1);
             for step in 0..=steps {
                 let t = step as f64 / steps as f64;
-                let (x, y) = (
-                    p.0 as f64 + (q.0 - p.0) as f64 * t,
-                    p.1 as f64 + (q.1 - p.1) as f64 * t,
+                canvas.fill(
+                    (a.0 as f64 + (p.0 - a.0) as f64 * t) as i64 - 1,
+                    (a.1 as f64 + (p.1 - a.1) as f64 * t) as i64 - 1,
+                    3,
+                    3,
+                    colour,
                 );
-                canvas.fill(x as i64 - 1, y as i64 - 1, 3, 3, BONE);
             }
+            canvas.ring(a.0, a.1, 34, 30, colour);
+            canvas.circle(p.0, p.1, 9, colour);
+            let word = match grab.role {
+                Role::Stick => "STICK",
+                Role::Zoom => "ZOOM",
+            };
+            canvas.label(a.0 - 24, a.1 + 44, word, 2, opc_ui::canvas::WHITE);
         }
-        for (index, point) in hand.points.iter().enumerate() {
-            let (x, y) = map(*point);
-            if TIPS.contains(&index) {
-                canvas.circle(x, y, 6, TIP);
-            } else {
-                canvas.circle(x, y, 3, JOINT);
-            }
-        }
-        let name = match pose {
-            Some(crate::hand::Pose::Fist) => "FIST",
-            Some(crate::hand::Pose::Point) => "POINT",
-            Some(crate::hand::Pose::Two) => "TWO",
-            Some(crate::hand::Pose::Palm) => "PALM",
-            None => "NO POSE",
-        };
-        let reach = crate::hand::finger_reach(hand);
-        let text = format!(
-            "{name}  {:.0}%  I{:.1} M{:.1} R{:.1} P{:.1}",
-            hand.score * 100.0,
-            reach[0],
-            reach[1],
-            reach[2],
-            reach[3]
-        );
-        let label_y = (by0 - 28).max(fit.y as i64 + 36);
-        let used = canvas.label(bx, label_y, &text, 2, opc_ui::canvas::WHITE);
-        // The hold bar: full means the gesture fires.
-        let bar = (f64::from(used) * f64::from(hold.clamp(0.0, 1.0))) as u32;
-        canvas.fill(bx - 4, label_y + 20, used, 4, [255, 255, 255, 60]);
-        canvas.fill(bx - 4, label_y + 20, bar, 4, if *hold >= 1.0 { TIP } else { BONE });
     }
 
     /// Changes whenever [`Self::chrome`] has been redrawn.

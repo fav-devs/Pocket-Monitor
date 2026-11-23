@@ -23,6 +23,12 @@ pub struct AppSettings {
     /// What each webcam gesture does.
     pub gesture_map: GestureMap,
     pub gesture_source: GestureSource,
+    /// Pinch-and-drag hand control of the gimbal and zoom.
+    pub hand_control: bool,
+    /// The stick is the right hand (the person's right) when true, the left when false.
+    pub stick_is_right: bool,
+    /// Start tracking a face by itself when one has been in view for a moment.
+    pub auto_face_track: bool,
 }
 
 impl Default for AppSettings {
@@ -32,6 +38,9 @@ impl Default for AppSettings {
             open_camera_at_launch: false,
             gesture_map: GestureMap::default(),
             gesture_source: GestureSource::CameraFeed,
+            hand_control: true,
+            stick_is_right: true,
+            auto_face_track: false,
         }
     }
 }
@@ -40,18 +49,21 @@ const HEADER: &str = "openpocketcine-desktop-app-v1";
 /// Which defaults the saved gesture map was made against. A map without this line came
 /// from the first defaults, which put flip on a downward sweep (lowering a hand flipped
 /// the camera), so it is dropped once and the new defaults apply.
-const MAP_VERSION: &str = "gesture_map_version=2";
+const MAP_VERSION: &str = "gesture_map_version=3";
 
 impl AppSettings {
     pub fn to_text(&self) -> String {
         format!(
-            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\ngesture_source={}\n{MAP_VERSION}\n{}",
+            "{HEADER}\ngestures={}\nopen_camera_at_launch={}\ngesture_source={}\nhand_control={}\nstick_is_right={}\nauto_face_track={}\n{MAP_VERSION}\n{}",
             u8::from(self.gestures),
             u8::from(self.open_camera_at_launch),
             match self.gesture_source {
                 GestureSource::CameraFeed => "camera",
                 GestureSource::Webcam => "webcam",
             },
+            u8::from(self.hand_control),
+            u8::from(self.stick_is_right),
+            u8::from(self.auto_face_track),
             self.gesture_map.to_lines()
         )
     }
@@ -70,6 +82,9 @@ impl AppSettings {
                 Some(("open_camera_at_launch", value)) => {
                     settings.open_camera_at_launch = value == "1"
                 }
+                Some(("hand_control", value)) => settings.hand_control = value == "1",
+                Some(("stick_is_right", value)) => settings.stick_is_right = value == "1",
+                Some(("auto_face_track", value)) => settings.auto_face_track = value == "1",
                 Some(("gesture_source", value)) => {
                     settings.gesture_source = if value == "webcam" {
                         GestureSource::Webcam
@@ -141,6 +156,9 @@ mod tests {
                 map
             },
             gesture_source: GestureSource::Webcam,
+            hand_control: false,
+            stick_is_right: false,
+            auto_face_track: true,
         };
         assert_eq!(AppSettings::parse(&settings.to_text()), settings);
         assert_eq!(AppSettings::parse("junk"), AppSettings::default());

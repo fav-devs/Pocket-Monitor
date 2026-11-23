@@ -1,7 +1,8 @@
-//! What the hand is doing, read from the 21 landmarks of [`crate::handnet`]: which
-//! fingers are out (a pose), how long a pose has been held, and whether the palm has
-//! swept across the picture. The reading works at any tilt of the hand, because it
-//! compares distances and not directions.
+//! What the hands are doing, read from the 21 landmarks of [`crate::handnet`]: which
+//! fingers are out (a pose), how long a pose has been held, whether the palm has swept
+//! across the picture, and the two hands' continuous controls: pinch and drag one hand
+//! for the gimbal stick, the other for zoom. The reading works at any tilt of the hand,
+//! because it compares distances and not directions.
 
 use std::collections::VecDeque;
 
@@ -13,35 +14,74 @@ pub enum Pose {
     Fist,
     Point,
     Two,
+    /// Index and little finger out: the rock sign.
+    Horns,
     Palm,
 }
 
-/// How long a pose must be held, and how long it must be gone before it can fire again.
-const HOLD: f64 = 0.9;
+impl Pose {
+    pub fn gesture(self) -> Gesture {
+        match self {
+            Pose::Fist => Gesture::Fist,
+            Pose::Point => Gesture::Point,
+            Pose::Two => Gesture::Two,
+            Pose::Horns => Gesture::Horns,
+            Pose::Palm => Gesture::Palm,
+        }
+    }
+}
+
+/// How long a pose is normally held before it counts, and how long it must be gone
+/// before it can fire again.
+pub const HOLD: f64 = 0.9;
 const RELEASE: f64 = 0.5;
+
+/// Distance between two landmarks, with the picture's shape taken out.
+fn distance(hand: &Hand, a: usize, b: usize) -> f32 {
+    let ((ax, ay), (bx, by)) = (hand.points[a], hand.points[b]);
+    ((ax - bx) * hand.aspect).hypot(ay - by)
+}
+
 /// How far each finger's tip is from the wrist, as a multiple of how far its base is:
 /// index, middle, ring, pinky. A straight finger reaches about 1.7 times as far as its
 /// base (measured on real photos: 1.55 to 1.85); one folded into the palm 1.3 or less.
 pub fn finger_reach(hand: &Hand) -> [f32; 4] {
-    let distance = |a: usize, b: usize| {
-        let ((ax, ay), (bx, by)) = (hand.points[a], hand.points[b]);
-        ((ax - bx) * hand.aspect).hypot(ay - by)
-    };
-    let reach = |base: usize, tip: usize| distance(tip, 0) / distance(base, 0).max(1e-4);
+    let reach = |base: usize, tip: usize| distance(hand, tip, 0) / distance(hand, base, 0).max(1e-4);
     [reach(5, 8), reach(9, 12), reach(13, 16), reach(17, 20)]
 }
 
 /// A finger counts as out past this reach.
 const OUT: f32 = 1.42;
 
+/// Thumb tip to index tip, as a share of the palm's length: near zero when pinched.
+pub fn pinch_ratio(hand: &Hand) -> f32 {
+    distance(hand, 4, 8) / distance(hand, 0, 9).max(1e-4)
+}
+
+/// Pinched at or below this; let go at or above [`PINCH_OFF`].
+pub const PINCH_ON: f32 = 0.25;
+pub const PINCH_OFF: f32 = 0.42;
+
+/// Where the pinch is: halfway between the thumb tip and the index tip.
+pub fn pinch_point(hand: &Hand) -> (f32, f32) {
+    (
+        (hand.points[4].0 + hand.points[8].0) / 2.0,
+        (hand.points[4].1 + hand.points[8].1) / 2.0,
+    )
+}
+
 /// The pose this hand makes, or `None` for a shape we have no name for. The thumb is
-/// free: it does not change the pose.
+/// free: it does not change the pose. A pinch is not a pose: it is the controls' grip.
 pub fn pose_of(hand: &Hand) -> Option<Pose> {
+    if pinch_ratio(hand) < PINCH_OFF {
+        return None;
+    }
     let [index, middle, ring, pinky] = finger_reach(hand).map(|reach| reach > OUT);
     match [index, middle, ring, pinky] {
         [false, false, false, false] => Some(Pose::Fist),
         [true, false, false, false] => Some(Pose::Point),
         [true, true, false, false] => Some(Pose::Two),
+        [true, false, false, true] => Some(Pose::Horns),
         [true, true, true, true] => Some(Pose::Palm),
         _ => None,
     }
@@ -50,7 +90,8 @@ pub fn pose_of(hand: &Hand) -> Option<Pose> {
 /// Turns a stream of poses into held-pose events.
 #[derive(Debug, Default)]
 pub struct Holder {
-    current: Option<(Pose, f64)>,
+    /// The pose, when it began, and how long it has to be held.
+    current: Option<(Pose, f64, f64)>,
     fired: bool,
     gone_since: Option<f64>,
 }
@@ -58,27 +99,28 @@ pub struct Holder {
 impl Holder {
     /// The pose being held and how far through the hold it is, 0 to 1.
     pub fn progress(&self, now: f64) -> Option<(Pose, f32)> {
-        let (pose, since) = self.current?;
+        let (pose, since, hold) = self.current?;
         let done = if self.fired {
             1.0
         } else {
-            ((now - since) / HOLD).clamp(0.0, 1.0)
+            ((now - since) / hold).clamp(0.0, 1.0)
         };
         Some((pose, done as f32))
     }
 
-    pub fn feed(&mut self, seen: Option<Pose>, now: f64) -> Option<Pose> {
+    /// `hold` is how long this pose has to be held, in seconds.
+    pub fn feed(&mut self, seen: Option<Pose>, now: f64, hold: f64) -> Option<Pose> {
         match (seen, self.current) {
-            (Some(pose), Some((held, since))) if pose == held => {
+            (Some(pose), Some((held, since, needed))) if pose == held => {
                 self.gone_since = None;
-                if !self.fired && now - since >= HOLD {
+                if !self.fired && now - since >= needed {
                     self.fired = true;
                     return Some(pose);
                 }
             }
             (Some(pose), _) => {
                 self.gone_since = None;
-                self.current = Some((pose, now));
+                self.current = Some((pose, now, hold));
                 self.fired = false;
             }
             (None, Some(_)) => {
@@ -93,7 +135,247 @@ impl Holder {
         }
         None
     }
+
+    /// Forget what is being held, as when another gesture has just fired.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
+
+/// Opening and closing the hand quickly, three times over: a pattern, not a pose.
+#[derive(Debug, Default)]
+pub struct Pulse {
+    /// Confirmed palm and fist states, with when each began.
+    states: Vec<(Pose, f64)>,
+    /// A palm or fist just seen, and since when.
+    candidate: Option<(Pose, f64)>,
+    last_seen: f64,
+}
+
+/// Each state must last at least this long to count, and at most the other.
+const PULSE_MIN: f64 = 0.06;
+const PULSE_MAX: f64 = 0.9;
+/// Three open-and-close cycles within this.
+const PULSE_WITHIN: f64 = 4.0;
+
+impl Pulse {
+    /// True once, when the third cycle completes.
+    pub fn feed(&mut self, seen: Option<Pose>, now: f64) -> bool {
+        match seen {
+            Some(pose @ (Pose::Palm | Pose::Fist)) => {
+                self.last_seen = now;
+                match self.candidate {
+                    Some((held, _)) if held == pose => {}
+                    _ => self.candidate = Some((pose, now)),
+                }
+                if let Some((candidate, since)) = self.candidate {
+                    let confirmed = now - since >= PULSE_MIN;
+                    let new = self.states.last().map_or(true, |&(last, _)| last != candidate);
+                    if confirmed && new {
+                        self.states.push((candidate, since));
+                    }
+                }
+            }
+            Some(_) => {
+                // Some other pose is not part of the pattern.
+                self.states.clear();
+                self.candidate = None;
+            }
+            None => {
+                self.candidate = None;
+                if now - self.last_seen > 1.0 {
+                    self.states.clear();
+                }
+            }
+        }
+        self.states.retain(|&(_, since)| now - since <= PULSE_WITHIN);
+        // Six states in a row: open, closed, open, closed, open, closed.
+        if self.states.len() >= 6 {
+            let tail = &self.states[self.states.len() - 6..];
+            let quick = tail.windows(2).all(|pair| {
+                let held = pair[1].1 - pair[0].1;
+                (PULSE_MIN..=PULSE_MAX).contains(&held)
+            });
+            if quick {
+                self.states.clear();
+                self.candidate = None;
+                return true;
+            }
+        }
+        false
+    }
+}
+
+// ---- Pinch and drag -----------------------------------------------------------------
+
+/// Which control a hand is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Pinch and drag: the gimbal stick.
+    Stick,
+    /// Pinch and drag up or down: zoom.
+    Zoom,
+}
+
+/// What a pinching hand asks for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Control {
+    /// The stick, from -1 to 1 each way; up is positive.
+    Stick { x: f32, y: f32 },
+    /// The pinch was let go.
+    StickEnd,
+    /// Zoom rate from -1 (out) to 1 (in).
+    Zoom { rate: f32 },
+    ZoomEnd,
+}
+
+/// A pinch being held, for drawing: where it began and where the fingers are now.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grab {
+    pub role: Role,
+    pub anchor: (f32, f32),
+    pub point: (f32, f32),
+}
+
+/// How far the pinch has to move, as a share of the picture's height, for full stick.
+const STICK_REACH: f32 = 0.18;
+const ZOOM_REACH: f32 = 0.16;
+const DEAD: f32 = 0.15;
+/// A pinching hand that drops out of view this long is let go.
+const LOST: f64 = 0.3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum Grip {
+    #[default]
+    Idle,
+    /// Pinched for this many readings so far.
+    Closing(u8),
+    Held {
+        anchor: (f32, f32),
+        seen: f64,
+    },
+}
+
+/// Both hands' pinch controls.
+#[derive(Debug)]
+pub struct Controls {
+    stick: Grip,
+    zoom: Grip,
+    /// Whether the right hand (as the camera sees it, which is the person's right) is
+    /// the stick; the left is then the zoom.
+    pub stick_is_right: bool,
+}
+
+/// What one reading of the hands gave.
+#[derive(Debug, Default)]
+pub struct Reading {
+    pub controls: Vec<Control>,
+    pub grabs: Vec<Grab>,
+}
+
+impl Controls {
+    pub fn new(stick_is_right: bool) -> Self {
+        Self {
+            stick: Grip::Idle,
+            zoom: Grip::Idle,
+            stick_is_right,
+        }
+    }
+
+    /// Whether either hand has hold of a control.
+    pub fn busy(&self) -> bool {
+        matches!(self.stick, Grip::Held { .. }) || matches!(self.zoom, Grip::Held { .. })
+    }
+
+    /// Lets go of everything, saying so for each control that was held.
+    pub fn release(&mut self) -> Vec<Control> {
+        let mut ended = Vec::new();
+        if matches!(self.stick, Grip::Held { .. }) {
+            ended.push(Control::StickEnd);
+        }
+        if matches!(self.zoom, Grip::Held { .. }) {
+            ended.push(Control::ZoomEnd);
+        }
+        self.stick = Grip::Idle;
+        self.zoom = Grip::Idle;
+        ended
+    }
+
+    /// The hands in a frame at `now`.
+    pub fn feed(&mut self, hands: &[Hand], now: f64) -> Reading {
+        let mut reading = Reading::default();
+        let stick_hand = hands.iter().find(|hand| hand.right == self.stick_is_right);
+        let zoom_hand = hands.iter().find(|hand| hand.right != self.stick_is_right);
+        for (role, hand) in [(Role::Stick, stick_hand), (Role::Zoom, zoom_hand)] {
+            let grip = match role {
+                Role::Stick => &mut self.stick,
+                Role::Zoom => &mut self.zoom,
+            };
+            let pinch = hand.map(pinch_ratio);
+            let next = match (*grip, hand, pinch) {
+                (Grip::Idle, Some(_), Some(ratio)) if ratio < PINCH_ON => Grip::Closing(1),
+                (Grip::Closing(n), Some(hand), Some(ratio)) if ratio < PINCH_ON => {
+                    if n + 1 >= 2 {
+                        Grip::Held {
+                            anchor: pinch_point(hand),
+                            seen: now,
+                        }
+                    } else {
+                        Grip::Closing(n + 1)
+                    }
+                }
+                (Grip::Closing(_), ..) => Grip::Idle,
+                (Grip::Held { anchor, .. }, Some(_), Some(ratio)) if ratio < PINCH_OFF => {
+                    Grip::Held { anchor, seen: now }
+                }
+                (Grip::Held { seen, .. }, None, _) if now - seen <= LOST => *grip,
+                (Grip::Held { .. }, ..) => {
+                    reading.controls.push(match role {
+                        Role::Stick => Control::StickEnd,
+                        Role::Zoom => Control::ZoomEnd,
+                    });
+                    Grip::Idle
+                }
+                _ => Grip::Idle,
+            };
+            *grip = next;
+            if let (Grip::Held { anchor, .. }, Some(hand)) = (next, hand) {
+                let point = pinch_point(hand);
+                reading.grabs.push(Grab {
+                    role,
+                    anchor,
+                    point,
+                });
+                let dx = (point.0 - anchor.0) * hand.aspect;
+                let dy = point.1 - anchor.1;
+                reading.controls.push(match role {
+                    Role::Stick => {
+                        let (x, y) = (dx / STICK_REACH, -dy / STICK_REACH);
+                        let (x, y) = dead_zone(x, y);
+                        Control::Stick { x, y }
+                    }
+                    Role::Zoom => {
+                        let (_, rate) = dead_zone(0.0, -dy / ZOOM_REACH);
+                        Control::Zoom { rate }
+                    }
+                });
+            }
+        }
+        reading
+    }
+}
+
+/// A stick throw with a dead zone in the middle and full throw at the edge.
+fn dead_zone(x: f32, y: f32) -> (f32, f32) {
+    let magnitude = x.hypot(y);
+    if magnitude < DEAD {
+        return (0.0, 0.0);
+    }
+    let scaled = ((magnitude - DEAD) / (1.0 - DEAD)).min(1.0);
+    (x / magnitude * scaled, y / magnitude * scaled)
+}
+
+// ---- Sweeps -------------------------------------------------------------------------
 
 /// How far the palm must travel, as a share of the picture, and how fast.
 const SWEEP_TRAVEL: f32 = 0.28;
@@ -186,6 +468,24 @@ impl Sweep {
     }
 }
 
+// ---- What the viewfinder draws --------------------------------------------------------
+
+/// One hand as the hand view draws it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandView {
+    pub hand: Hand,
+    pub pose: Option<Pose>,
+}
+
+/// Everything the hand view shows for one reading.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HandScene {
+    pub hands: Vec<HandView>,
+    pub grabs: Vec<Grab>,
+    /// How far through its hold the pose being held is, 0 to 1.
+    pub hold: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +504,9 @@ mod tests {
             )
         };
         points[0] = place(0.0, 0.0);
+        points[9] = place(0.0, 0.18);
+        // The thumb, out to the side and well clear of the index tip.
+        points[4] = place(-0.16, 0.14);
         for (finger, &straight) in out.iter().enumerate() {
             let across = -0.045 + 0.03 * finger as f32;
             let base = 1 + 4 * (finger + 1);
@@ -227,6 +530,15 @@ mod tests {
         }
     }
 
+    /// A hand pinching with its index tip meeting its thumb tip at (x, y) in the picture.
+    fn pinching_at(x: f32, y: f32, right: bool) -> Hand {
+        let mut hand = hand_with([false, true, true, true], 0.0);
+        hand.right = right;
+        hand.points[8] = (x, y);
+        hand.points[4] = (x + 0.004, y + 0.004);
+        hand
+    }
+
     #[test]
     fn fingers_out_make_the_poses() {
         assert_eq!(pose_of(&hand_with([false; 4], 0.0)), Some(Pose::Fist));
@@ -238,11 +550,15 @@ mod tests {
             pose_of(&hand_with([true, true, false, false], 0.0)),
             Some(Pose::Two)
         );
-        assert_eq!(pose_of(&hand_with([true; 4], 0.0)), Some(Pose::Palm));
         assert_eq!(
             pose_of(&hand_with([true, false, false, true], 0.0)),
+            Some(Pose::Horns)
+        );
+        assert_eq!(pose_of(&hand_with([true; 4], 0.0)), Some(Pose::Palm));
+        assert_eq!(
+            pose_of(&hand_with([false, true, true, false], 0.0)),
             None,
-            "horns are not a pose we name"
+            "the middle two alone is not a pose we name"
         );
     }
 
@@ -255,25 +571,49 @@ mod tests {
     }
 
     #[test]
-    fn a_pose_fires_once_after_a_steady_hold() {
+    fn a_pinch_is_not_a_pose() {
+        let hand = pinching_at(0.5, 0.5, true);
+        assert!(pinch_ratio(&hand) < PINCH_ON);
+        assert_eq!(pose_of(&hand), None);
+        assert!(pinch_ratio(&hand_with([true; 4], 0.0)) > PINCH_OFF);
+    }
+
+    #[test]
+    fn a_pose_fires_once_after_its_hold_and_a_longer_hold_waits_longer() {
         let mut holder = Holder::default();
         let mut fired = Vec::new();
         let mut now = 0.0;
         for _ in 0..60 {
-            fired.extend(holder.feed(Some(Pose::Fist), now));
+            fired.extend(holder.feed(Some(Pose::Fist), now, HOLD));
             now += 0.05;
         }
         assert_eq!(fired, [Pose::Fist]);
         // Lowering the hand re-arms it.
         for _ in 0..20 {
-            holder.feed(None, now);
+            holder.feed(None, now, HOLD);
             now += 0.05;
         }
         for _ in 0..30 {
-            fired.extend(holder.feed(Some(Pose::Fist), now));
+            fired.extend(holder.feed(Some(Pose::Fist), now, HOLD));
             now += 0.05;
         }
         assert_eq!(fired, [Pose::Fist, Pose::Fist]);
+        // A pose that must be held 2.5 s is not there at 1.5 s, and is at 2.6 s.
+        let mut record = Holder::default();
+        let mut at = 0.0;
+        let mut got = Vec::new();
+        while at < 1.5 {
+            got.extend(record.feed(Some(Pose::Two), at, 2.5));
+            at += 0.05;
+        }
+        assert!(got.is_empty());
+        let (_, partway) = record.progress(at).expect("being held");
+        assert!(partway > 0.5 && partway < 0.7, "{partway}");
+        while at < 2.7 {
+            got.extend(record.feed(Some(Pose::Two), at, 2.5));
+            at += 0.05;
+        }
+        assert_eq!(got, [Pose::Two]);
     }
 
     #[test]
@@ -282,9 +622,111 @@ mod tests {
         let mut now = 0.0;
         for i in 0..80 {
             let pose = if i % 10 < 5 { Pose::Palm } else { Pose::Fist };
-            assert_eq!(holder.feed(Some(pose), now), None);
+            assert_eq!(holder.feed(Some(pose), now, HOLD), None);
             now += 0.05;
         }
+    }
+
+    #[test]
+    fn opening_and_closing_three_times_is_a_pulse_and_holding_is_not() {
+        let mut pulse = Pulse::default();
+        let mut fired = 0;
+        let mut now = 0.0;
+        // Open, closed, three times over, each for about a third of a second.
+        for cycle in 0..6 {
+            let pose = if cycle % 2 == 0 { Pose::Palm } else { Pose::Fist };
+            for _ in 0..7 {
+                fired += usize::from(pulse.feed(Some(pose), now));
+                now += 0.05;
+            }
+        }
+        assert_eq!(fired, 1);
+        let mut slow = Pulse::default();
+        let mut now = 0.0;
+        for cycle in 0..6 {
+            let pose = if cycle % 2 == 0 { Pose::Palm } else { Pose::Fist };
+            for _ in 0..40 {
+                assert!(!slow.feed(Some(pose), now));
+                now += 0.05;
+            }
+        }
+        // And twice is not enough.
+        let mut twice = Pulse::default();
+        let mut now = 0.0;
+        for cycle in 0..4 {
+            let pose = if cycle % 2 == 0 { Pose::Palm } else { Pose::Fist };
+            for _ in 0..7 {
+                assert!(!twice.feed(Some(pose), now));
+                now += 0.05;
+            }
+        }
+    }
+
+    #[test]
+    fn pinching_and_dragging_one_hand_is_the_stick_until_the_pinch_is_let_go() {
+        let mut controls = Controls::new(true);
+        let mut last = Vec::new();
+        // Pinch at the middle, hold still: grips after a couple of readings, no throw.
+        for step in 0..4 {
+            let hand = pinching_at(0.5, 0.5, true);
+            last = controls.feed(&[hand], f64::from(step) * 0.05).controls;
+        }
+        assert_eq!(last, [Control::Stick { x: 0.0, y: 0.0 }]);
+        assert!(controls.busy());
+        // Drag up and to the right a good way: full throw up and right.
+        let reading = controls.feed(&[pinching_at(0.7, 0.3, true)], 0.3);
+        match reading.controls.as_slice() {
+            [Control::Stick { x, y }] => assert!(*x > 0.5 && *y > 0.5, "{x} {y}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(reading.grabs.len(), 1);
+        // Open the fingers: let go.
+        let open = hand_with([true; 4], 0.0);
+        let reading = controls.feed(&[open], 0.35);
+        assert_eq!(reading.controls, [Control::StickEnd]);
+        assert!(!controls.busy());
+    }
+
+    #[test]
+    fn the_other_hand_zooms_by_dragging_up_and_down_and_the_hands_do_not_mix() {
+        let mut controls = Controls::new(true);
+        let mut zoom_rates = Vec::new();
+        let mut stick_throws = Vec::new();
+        for step in 0..5 {
+            let t = f64::from(step) * 0.05;
+            // The left hand pinches and drags down; the right hand just hangs there open.
+            let zoom = pinching_at(0.3, 0.5 + 0.1 * step as f32, false);
+            let stick = hand_with([true; 4], 0.0);
+            for control in controls.feed(&[zoom, stick], t).controls {
+                match control {
+                    Control::Zoom { rate } => zoom_rates.push(rate),
+                    Control::Stick { x, y } => stick_throws.push((x, y)),
+                    _ => {}
+                }
+            }
+        }
+        assert!(stick_throws.is_empty(), "an open right hand is not a grip");
+        assert!(zoom_rates.last().is_some_and(|rate| *rate < -0.5), "{zoom_rates:?}");
+        // Swapping hands makes the right the zoom.
+        let mut swapped = Controls::new(false);
+        let mut got = Vec::new();
+        for step in 0..4 {
+            got = swapped
+                .feed(&[pinching_at(0.5, 0.5, true)], f64::from(step) * 0.05)
+                .controls;
+        }
+        assert_eq!(got, [Control::Zoom { rate: 0.0 }]);
+    }
+
+    #[test]
+    fn a_pinch_that_drops_out_of_view_lets_go_after_a_moment() {
+        let mut controls = Controls::new(true);
+        for step in 0..3 {
+            controls.feed(&[pinching_at(0.5, 0.5, true)], f64::from(step) * 0.05);
+        }
+        assert!(controls.busy());
+        assert!(controls.feed(&[], 0.2).controls.is_empty(), "a flicker is forgiven");
+        assert_eq!(controls.feed(&[], 0.5).controls, [Control::StickEnd]);
     }
 
     /// The hand's palm at (x, y) of the picture.

@@ -46,6 +46,10 @@ pub const BONES: [(usize, usize); 21] = [
 /// The five fingertips.
 pub const TIPS: [usize; 5] = [4, 8, 12, 16, 20];
 
+/// Hands followed at once: one for each of the operator's.
+pub const MAX_HANDS: usize = 2;
+/// With one hand in view, look for the other this often (in frames).
+const SEARCH_EVERY: u32 = 6;
 const PALM_SIZE: usize = 192;
 const HAND_SIZE: usize = 224;
 /// The palm detector must be at least this sure (0 to 1) there is a hand.
@@ -109,8 +113,10 @@ pub struct HandNet {
     palm: Session,
     hand: Session,
     anchors: Vec<(f32, f32)>,
-    /// Where the hand was last frame, once one has been found.
-    tracking: Option<Crop>,
+    /// Where each hand was last frame, for the hands found so far.
+    tracking: Vec<Crop>,
+    /// Frames since the palm detector last looked for a second hand.
+    since_search: u32,
     provider: &'static str,
 }
 
@@ -118,7 +124,7 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x.clamp(-60.0, 60.0)).exp())
 }
 
-fn build_session(model: &[u8]) -> Result<(Session, &'static str), String> {
+pub(crate) fn build_session(model: &[u8]) -> Result<(Session, &'static str), String> {
     #[cfg(windows)]
     {
         use ort::execution_providers::DirectMLExecutionProvider;
@@ -157,7 +163,8 @@ impl HandNet {
             palm,
             hand,
             anchors,
-            tracking: None,
+            tracking: Vec::new(),
+            since_search: 0,
             provider,
         })
     }
@@ -167,37 +174,56 @@ impl HandNet {
         self.provider
     }
 
-    /// The hand in one `width * height` RGB frame, if there is one.
-    pub fn detect(&mut self, rgb: &[u8], width: usize, height: usize) -> Option<Hand> {
+    /// The hands in one `width * height` RGB frame: none, one or two.
+    pub fn detect(&mut self, rgb: &[u8], width: usize, height: usize) -> Vec<Hand> {
         if width < 16 || height < 16 || rgb.len() != width * height * 3 {
-            return None;
+            return Vec::new();
         }
         let frame = Frame { rgb, width, height };
-        let crop = match self.tracking {
-            Some(crop) => crop,
-            None => self.find_palm(&frame)?,
-        };
-        match self.read_landmarks(&frame, crop) {
-            Some((hand, next)) => {
-                self.tracking = Some(next);
-                Some(hand)
-            }
-            None => {
-                // Lost it: look for a palm from scratch next time, and now.
-                let was_tracking = self.tracking.take().is_some();
-                if was_tracking {
-                    let crop = self.find_palm(&frame)?;
-                    let (hand, next) = self.read_landmarks(&frame, crop)?;
-                    self.tracking = Some(next);
-                    return Some(hand);
+        let mut hands: Vec<Hand> = Vec::new();
+        let mut next: Vec<Crop> = Vec::new();
+        for crop in std::mem::take(&mut self.tracking) {
+            if let Some((hand, crop)) = self.read_landmarks(&frame, crop) {
+                // Two crops that settled on the same hand are one hand.
+                let twin = hands.iter().any(|other| {
+                    let (a, b) = (hand.palm_centre(), other.palm_centre());
+                    ((a.0 - b.0) * hand.aspect).hypot(a.1 - b.1) < 0.04
+                });
+                if !twin {
+                    hands.push(hand);
+                    next.push(crop);
                 }
-                None
             }
         }
+        // With no hand, look every frame; with one, look now and then for the other.
+        self.since_search += 1;
+        if next.is_empty() || (next.len() < MAX_HANDS && self.since_search >= SEARCH_EVERY) {
+            self.since_search = 0;
+            for crop in self.find_palms(&frame) {
+                if next.len() >= MAX_HANDS {
+                    break;
+                }
+                let (cx, cy) = (crop.cx / width as f32, crop.cy / height as f32);
+                let on_known = hands.iter().any(|hand| {
+                    let (l, t, r, b) = hand.bounds();
+                    cx > l && cx < r && cy > t && cy < b
+                });
+                if on_known {
+                    continue;
+                }
+                if let Some((hand, crop)) = self.read_landmarks(&frame, crop) {
+                    hands.push(hand);
+                    next.push(crop);
+                }
+            }
+        }
+        self.tracking = next;
+        hands
     }
 
-    /// Runs the palm detector on the whole frame and places the first crop.
-    fn find_palm(&mut self, frame: &Frame) -> Option<Crop> {
+    /// Runs the palm detector on the whole frame: a crop for each palm it is sure of,
+    /// the surest first, up to [`MAX_HANDS`] + 1.
+    fn find_palms(&mut self, frame: &Frame) -> Vec<Crop> {
         // The frame, scaled to fit the model's square and centred on black.
         let ratio = PALM_SIZE as f32 / frame.width.max(frame.height) as f32;
         let (scaled_w, scaled_h) = (
@@ -223,50 +249,70 @@ impl HandNet {
                 input[at..at + 3].copy_from_slice(&rgb);
             }
         }
-        let tensor = Tensor::from_array(([1usize, PALM_SIZE, PALM_SIZE, 3], input)).ok()?;
-        let outputs = self.palm.run(ort::inputs!["input_1" => tensor]).ok()?;
-        let (boxes_shape, boxes) = outputs[0].try_extract_tensor::<f32>().ok()?;
-        let (_, scores) = outputs[1].try_extract_tensor::<f32>().ok()?;
-        let stride = *boxes_shape.last()? as usize;
+        let Ok(tensor) = Tensor::from_array(([1usize, PALM_SIZE, PALM_SIZE, 3], input)) else {
+            return Vec::new();
+        };
+        let Ok(outputs) = self.palm.run(ort::inputs!["input_1" => tensor]) else {
+            return Vec::new();
+        };
+        let (Ok((boxes_shape, boxes)), Ok((_, scores))) = (
+            outputs[0].try_extract_tensor::<f32>(),
+            outputs[1].try_extract_tensor::<f32>(),
+        ) else {
+            return Vec::new();
+        };
+        let stride = boxes_shape.last().copied().unwrap_or(0) as usize;
         if stride < 18 || scores.len() < self.anchors.len() {
-            return None;
+            return Vec::new();
         }
-        let best = (0..self.anchors.len())
+        let mut candidates: Vec<(usize, f32)> = (0..self.anchors.len())
             .map(|i| (i, sigmoid(scores[i])))
             .filter(|&(_, score)| score >= PALM_SCORE)
-            .max_by(|a, b| a.1.total_cmp(&b.1))?
-            .0;
-        let row = &boxes[best * stride..best * stride + stride];
-        let anchor = self.anchors[best];
+            .collect();
+        candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
         let size = PALM_SIZE as f32;
         // Box and keypoints are offsets from the anchor, as fractions of the model's input;
         // back to frame pixels by undoing the letterbox.
-        let to_frame = |nx: f32, ny: f32| {
-            (
-                (nx * size - pad_x) / ratio,
-                (ny * size - pad_y) / ratio,
-            )
-        };
-        let (cx, cy) = to_frame(anchor.0 + row[0] / size, anchor.1 + row[1] / size);
-        let (w, h) = (row[2] / size * size / ratio, row[3] / size * size / ratio);
-        let keypoint = |k: usize| {
-            to_frame(
-                anchor.0 + row[4 + 2 * k] / size,
-                anchor.1 + row[5 + 2 * k] / size,
-            )
-        };
-        let (wrist, middle) = (keypoint(0), keypoint(2));
-        // Tilt so the wrist-to-middle-finger line points up.
-        let angle = std::f32::consts::FRAC_PI_2 - (-(middle.1 - wrist.1)).atan2(middle.0 - wrist.0);
-        let angle = angle - std::f32::consts::TAU * ((angle + std::f32::consts::PI) / std::f32::consts::TAU).floor();
-        let (s, c) = angle.sin_cos();
-        // Nudge the box toward the fingers and grow it to take in the whole hand.
-        Some(Crop {
-            cx: cx + 0.5 * h * s,
-            cy: cy - 0.5 * h * c,
-            side: w.max(h) * 2.6,
-            angle,
-        })
+        let to_frame = |nx: f32, ny: f32| ((nx * size - pad_x) / ratio, (ny * size - pad_y) / ratio);
+        let mut crops: Vec<Crop> = Vec::new();
+        for (index, _) in candidates {
+            let row = &boxes[index * stride..index * stride + stride];
+            let anchor = self.anchors[index];
+            let (cx, cy) = to_frame(anchor.0 + row[0] / size, anchor.1 + row[1] / size);
+            let (w, h) = (row[2] / ratio, row[3] / ratio);
+            // Neighbouring anchors fire on the same palm: keep one per palm.
+            if crops
+                .iter()
+                .any(|other| (other.cx - cx).hypot(other.cy - cy) < 0.8 * w.max(h))
+            {
+                continue;
+            }
+            let keypoint = |k: usize| {
+                to_frame(
+                    anchor.0 + row[4 + 2 * k] / size,
+                    anchor.1 + row[5 + 2 * k] / size,
+                )
+            };
+            let (wrist, middle) = (keypoint(0), keypoint(2));
+            // Tilt so the wrist-to-middle-finger line points up.
+            let angle = std::f32::consts::FRAC_PI_2
+                - (-(middle.1 - wrist.1)).atan2(middle.0 - wrist.0);
+            let angle = angle
+                - std::f32::consts::TAU
+                    * ((angle + std::f32::consts::PI) / std::f32::consts::TAU).floor();
+            let (s, c) = angle.sin_cos();
+            // Nudge the box toward the fingers and grow it to take in the whole hand.
+            crops.push(Crop {
+                cx: cx + 0.5 * h * s,
+                cy: cy - 0.5 * h * c,
+                side: w.max(h) * 2.6,
+                angle,
+            });
+            if crops.len() > MAX_HANDS {
+                break;
+            }
+        }
+        crops
     }
 
     /// Runs the landmark model on `crop`. On success the hand, and the crop for next time.
@@ -367,18 +413,25 @@ pub enum Update {
     Ready(&'static str),
     /// The models could not be loaded.
     Failed(String),
-    /// One frame's result, and how long the models took on it.
-    Seen(Option<Hand>, f32),
+    /// One frame's result: the hands, the faces if they were asked for, and how long the
+    /// models took.
+    Seen {
+        hands: Vec<Hand>,
+        faces: Option<Vec<crate::facenet::Face>>,
+        ms: f32,
+    },
 }
 
 struct Job {
     rgb: Vec<u8>,
     width: usize,
     height: usize,
+    faces: bool,
 }
 
-/// A thread that owns a [`HandNet`]: frames go in, results come out, and a frame sent
-/// while it is busy is dropped rather than queued, so it never lags behind the picture.
+/// A thread that owns a [`HandNet`] (and a face finder, loaded the first time faces are
+/// asked for): frames go in, results come out, and a frame sent while it is busy is
+/// dropped rather than queued, so it never lags behind the picture.
 pub struct HandWorker {
     jobs: SyncSender<Job>,
     updates: Receiver<Update>,
@@ -399,12 +452,24 @@ impl HandWorker {
                     return;
                 }
             };
+            let mut face_net: Option<Option<crate::facenet::FaceNet>> = None;
             // Ends when the sender is dropped, which also ends the models.
             while let Ok(job) = job_rx.recv() {
                 let started = Instant::now();
-                let hand = net.detect(&job.rgb, job.width, job.height);
+                let hands = net.detect(&job.rgb, job.width, job.height);
+                let faces = job.faces.then(|| {
+                    let finder = face_net.get_or_insert_with(|| {
+                        crate::facenet::FaceNet::new()
+                            .map_err(|error| eprintln!("faces: {error}"))
+                            .ok()
+                    });
+                    finder
+                        .as_mut()
+                        .map(|finder| finder.detect(&job.rgb, job.width, job.height))
+                        .unwrap_or_default()
+                });
                 let ms = started.elapsed().as_secs_f32() * 1000.0;
-                if update_tx.send(Update::Seen(hand, ms)).is_err() {
+                if update_tx.send(Update::Seen { hands, faces, ms }).is_err() {
                     break;
                 }
             }
@@ -412,9 +477,15 @@ impl HandWorker {
         Self { jobs, updates }
     }
 
-    /// Offers a frame; false when the worker is still busy with the last one.
-    pub fn submit(&self, rgb: Vec<u8>, width: usize, height: usize) -> bool {
-        match self.jobs.try_send(Job { rgb, width, height }) {
+    /// Offers a frame; false when the worker is still busy with the last one. `faces`
+    /// asks for the faces in it too.
+    pub fn submit(&self, rgb: Vec<u8>, width: usize, height: usize, faces: bool) -> bool {
+        match self.jobs.try_send(Job {
+            rgb,
+            width,
+            height,
+            faces,
+        }) {
             Ok(()) => true,
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
         }
@@ -436,11 +507,11 @@ mod tests {
         // Beige and flat, the kind of wall skin-colour tricks mistake for a hand.
         let wall = [214u8, 190, 165].repeat(480 * 270);
         for _ in 0..3 {
-            assert_eq!(net.detect(&wall, 480, 270), None);
+            assert!(net.detect(&wall, 480, 270).is_empty());
         }
-        assert_eq!(net.detect(&[0u8; 30], 480, 270), None, "a wrong-sized frame");
+        assert!(net.detect(&[0u8; 30], 480, 270).is_empty(), "a wrong-sized frame");
         let black = vec![0u8; 480 * 270 * 3];
-        assert_eq!(net.detect(&black, 480, 270), None);
+        assert!(net.detect(&black, 480, 270).is_empty());
     }
 
     #[test]
@@ -456,5 +527,12 @@ mod tests {
         assert!((x - 100.0).abs() < 1e-3 && (y - 110.0).abs() < 1e-3, "{x} {y}");
         let (x, y) = crop.to_frame(0.0, -10.0);
         assert!((x - 110.0).abs() < 1e-3 && (y - 100.0).abs() < 1e-3, "{x} {y}");
+    }
+
+    #[test]
+    fn the_face_finder_loads_and_finds_nothing_in_a_wall() {
+        let mut finder = crate::facenet::FaceNet::new().expect("the built-in model loads");
+        let wall = [214u8, 190, 165].repeat(480 * 270);
+        assert!(finder.detect(&wall, 480, 270).is_empty());
     }
 }

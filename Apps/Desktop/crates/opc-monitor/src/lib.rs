@@ -10,6 +10,7 @@ pub mod assists;
 pub mod homewifi;
 pub mod gesture;
 pub mod hand;
+pub mod facenet;
 pub mod handnet;
 pub mod library;
 pub mod luts;

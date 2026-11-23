@@ -685,20 +685,52 @@ impl View {
         if let Some(webcam) = self.gestures.as_ref() {
             seen.extend(webcam.receiver.try_iter());
         }
+        let mut controls = Vec::new();
+        let mut dt = 0.0;
         if let (Some(feed), Some(picture)) = (self.feed_gestures.as_mut(), self.latest.as_ref()) {
             let pose = opc_monitor::moves::Waypoint::from_status(self.shell.status());
-            seen.extend(feed.read(picture, pose, now));
+            let holds: Vec<(opc_monitor::gesture::Gesture, f64)> = opc_monitor::gesture::Gesture::ALL
+                .iter()
+                .map(|gesture| (*gesture, self.shell.gesture_hold_seconds(*gesture)))
+                .collect();
+            let tuning = Tuning {
+                holds: &holds,
+                stick_is_right: self.shell.stick_is_right(),
+                hand_control: self.shell.hand_control_on(),
+                face_requested: self.shell.take_face_request(),
+                auto_face: self.shell.auto_face(),
+                tracking: self.shell.is_tracking(),
+            };
+            let out = feed.read(picture, pose, now, &tuning);
+            seen.extend(out.gestures);
+            controls = out.controls;
+            dt = out.dt;
+            if let Some((gesture, fraction)) = out.progress {
+                self.shell.gesture_progress(gesture, fraction);
+            }
+            if let Some(rect) = out.face {
+                self.shell.say("FACE TRACKING");
+                for intent in self.shell.track_region(rect, now) {
+                    if let Intent::Send(command) = intent {
+                        self.send(command);
+                    }
+                }
+            }
+            if out.no_face {
+                self.shell.say("NO FACE FOUND");
+            }
         }
         if self.shell.hand_overlay() {
             match self.feed_gestures.as_ref() {
-                Some(feed) => {
-                    let shown = feed.hand.clone().map(|hand| {
-                        let pose = opc_monitor::hand::pose_of(&hand);
-                        (hand, pose, feed.hold(now))
-                    });
-                    self.shell.set_hand(&feed.status, shown);
-                }
+                Some(feed) => self.shell.set_hand(&feed.status, feed.scene(now)),
                 None => self.shell.set_hand("", None),
+            }
+        }
+        for control in controls {
+            for intent in self.shell.hand_control(control, dt, now) {
+                if let Intent::Send(command) = intent {
+                    self.send(command);
+                }
             }
         }
         for gesture in seen {
@@ -1410,22 +1442,60 @@ fn fresh_session() -> (u16, u16) {
 }
 
 
+/// What the picture reader needs to know from the shell each time.
+struct Tuning<'a> {
+    /// How long each gesture has to be held.
+    holds: &'a [(opc_monitor::gesture::Gesture, f64)],
+    stick_is_right: bool,
+    hand_control: bool,
+    /// A gesture asked for the face to be tracked.
+    face_requested: bool,
+    auto_face: bool,
+    /// The camera already has something to follow.
+    tracking: bool,
+}
+
+/// What one look at the picture came to.
+#[derive(Default)]
+struct Looked {
+    gestures: Vec<opc_monitor::gesture::Gesture>,
+    controls: Vec<opc_monitor::hand::Control>,
+    /// Seconds since the controls were last read, for the zoom rate.
+    dt: f64,
+    /// A held pose part-way to firing.
+    progress: Option<(opc_monitor::gesture::Gesture, f32)>,
+    /// A face to track, as left, top, width, height of the picture.
+    face: Option<(f64, f64, f64, f64)>,
+    /// A face was asked for and none was found.
+    no_face: bool,
+}
+
 /// Gestures read from the camera's own picture: the operator stands in front of the
-/// lens. The hand model runs on its own thread, so the picture never waits for it. The
-/// gimbal moving shifts the whole scene, so sweeps are ignored while it moves and for
-/// a moment after; held poses do not depend on that.
+/// lens. The hand and face models run on their own thread, so the picture never waits
+/// for them. The gimbal moving shifts the whole scene, so sweeps are ignored while it
+/// moves and for a moment after; held poses and pinches do not depend on that.
 struct FeedGestures {
     worker: opc_monitor::handnet::HandWorker,
     holder: opc_monitor::hand::Holder,
     sweep: opc_monitor::hand::Sweep,
+    pulse: opc_monitor::hand::Pulse,
+    controls: opc_monitor::hand::Controls,
     last_sent: f64,
+    last_read: f64,
     last_pose: Option<(f64, f64)>,
     moving_until: f64,
-    /// The latest hand found, for the hand view.
-    hand: Option<opc_monitor::handnet::Hand>,
+    /// What the hands were doing at the last reading.
+    scene: Option<opc_monitor::hand::HandScene>,
     /// What the model runs on and how long it takes, for the hand view.
     status: String,
     provider: &'static str,
+    /// A face is wanted until this time (a gesture asked for it).
+    face_wanted_until: Option<f64>,
+    /// When a face was first seen, for tracking one by itself.
+    face_seen_since: Option<f64>,
+    /// No face is started by itself before this time.
+    face_rest_until: f64,
+    last_face_ask: f64,
 }
 
 impl FeedGestures {
@@ -1434,18 +1504,38 @@ impl FeedGestures {
             worker: opc_monitor::handnet::HandWorker::start(),
             holder: opc_monitor::hand::Holder::default(),
             sweep: opc_monitor::hand::Sweep::new(true),
+            pulse: opc_monitor::hand::Pulse::default(),
+            controls: opc_monitor::hand::Controls::new(true),
             last_sent: f64::NEG_INFINITY,
+            last_read: f64::NEG_INFINITY,
             last_pose: None,
             moving_until: 0.0,
-            hand: None,
+            scene: None,
             status: "loading the hand model".to_string(),
             provider: "",
+            face_wanted_until: None,
+            face_seen_since: None,
+            face_rest_until: 0.0,
+            last_face_ask: f64::NEG_INFINITY,
         }
     }
 
-    /// How far the pose in view is through its hold, 0 to 1.
-    fn hold(&self, now: f64) -> f32 {
-        self.holder.progress(now).map_or(0.0, |(_, done)| done)
+    /// What the hand view should draw.
+    fn scene(&self, _now: f64) -> Option<opc_monitor::hand::HandScene> {
+        self.scene.clone()
+    }
+
+    /// The box to give the camera for a face: the head with some shoulders, inside the
+    /// picture.
+    fn face_box(face: &opc_monitor::facenet::Face) -> (f64, f64, f64, f64) {
+        let (cx, cy) = (
+            f64::from(face.x + face.width / 2.0),
+            f64::from(face.y + face.height / 2.0),
+        );
+        let (w, h) = (f64::from(face.width) * 2.0, f64::from(face.height) * 2.4);
+        let x = (cx - w / 2.0).clamp(0.0, 1.0 - w.min(1.0));
+        let y = (cy - h * 0.4).clamp(0.0, 1.0 - h.min(1.0));
+        (x, y, w.min(1.0), h.min(1.0))
     }
 
     fn read(
@@ -1453,11 +1543,12 @@ impl FeedGestures {
         picture: &opc_decode::OwnedPicture,
         pose: Option<opc_monitor::moves::Waypoint>,
         now: f64,
-    ) -> Vec<opc_monitor::gesture::Gesture> {
+        tuning: &Tuning<'_>,
+    ) -> Looked {
         use opc_monitor::gesture::Gesture;
-        use opc_monitor::hand::{pose_of, Pose};
         use opc_monitor::handnet::Update;
 
+        let mut looked = Looked::default();
         if let Some(pose) = pose {
             if let Some((yaw, pitch)) = self.last_pose {
                 if (pose.yaw - yaw).abs() > 0.3 || (pose.pitch - pitch).abs() > 0.3 {
@@ -1466,18 +1557,35 @@ impl FeedGestures {
             }
             self.last_pose = Some((pose.yaw, pose.pitch));
         }
-        // Offer a frame at about 20 a second; one is dropped if the model is still busy.
+        self.controls.stick_is_right = tuning.stick_is_right;
+        if tuning.face_requested {
+            self.face_wanted_until = Some(now + 3.0);
+        }
+        let want_faces = self.face_wanted_until.is_some()
+            || (tuning.auto_face && !tuning.tracking && now >= self.face_rest_until);
+        // Offer a frame at about 20 a second; one is dropped if the models are still
+        // busy. Faces are asked for at a few a second, not every frame.
         if now - self.last_sent >= 1.0 / 20.0 && picture.width > 0 && picture.height > 0 {
+            let ask_faces = want_faces && now - self.last_face_ask >= 0.25;
             let width = 480usize;
             let height = ((width as u64 * u64::from(picture.height)
                 / u64::from(picture.width)) as usize)
                 .max(2);
             let rgb = opc_monitor::scopes::small_rgb(picture, width, height);
-            if self.worker.submit(rgb, width, height) {
+            if self.worker.submit(rgb, width, height, ask_faces) {
                 self.last_sent = now;
+                if ask_faces {
+                    self.last_face_ask = now;
+                }
             }
         }
-        let mut found = Vec::new();
+        let hold_for = |gesture: Gesture| {
+            tuning
+                .holds
+                .iter()
+                .find(|(g, _)| *g == gesture)
+                .map_or(opc_monitor::hand::HOLD, |(_, seconds)| *seconds)
+        };
         for update in self.worker.updates() {
             match update {
                 Update::Ready(provider) => {
@@ -1487,31 +1595,127 @@ impl FeedGestures {
                 Update::Failed(error) => {
                     self.status = format!("model failed: {error}");
                 }
-                Update::Seen(hand, ms) => {
+                Update::Seen { hands, faces, ms } => {
                     if !self.provider.is_empty() {
                         self.status = format!("{} {ms:.0} ms", self.provider);
                     }
-                    let swipe = self.sweep.feed(hand.as_ref(), now);
-                    if now >= self.moving_until {
-                        found.extend(swipe);
+                    self.reading(&hands, now, tuning, &hold_for, &mut looked);
+                    if let Some(faces) = faces {
+                        self.faces(&faces, now, tuning, &mut looked);
                     }
-                    let seen = hand.as_ref().and_then(pose_of);
-                    if let Some(pose) = self.holder.feed(seen, now) {
-                        found.push(match pose {
-                            Pose::Fist => Gesture::Fist,
-                            Pose::Point => Gesture::Point,
-                            Pose::Two => Gesture::Two,
-                            Pose::Palm => Gesture::Palm,
-                        });
-                    }
-                    self.hand = hand;
                 }
             }
         }
-        if !found.is_empty() {
+        if let Some(until) = self.face_wanted_until {
+            if now > until {
+                self.face_wanted_until = None;
+                looked.no_face = true;
+            }
+        }
+        if !looked.gestures.is_empty() {
             // Putting the hand down afterwards must not read as a sweep.
             self.sweep.hold_off(now);
+            self.holder.reset();
         }
-        found
+        looked
+    }
+
+    /// The hands in one result: pinch controls, then poses and sweeps from a hand that
+    /// is not holding a control.
+    fn reading(
+        &mut self,
+        hands: &[opc_monitor::handnet::Hand],
+        now: f64,
+        tuning: &Tuning<'_>,
+        hold_for: &dyn Fn(opc_monitor::gesture::Gesture) -> f64,
+        looked: &mut Looked,
+    ) {
+        use opc_monitor::gesture::Gesture;
+        use opc_monitor::hand::{pose_of, HandScene, HandView};
+
+        let mut grabs = Vec::new();
+        if tuning.hand_control {
+            let reading = self.controls.feed(hands, now);
+            looked.controls.extend(reading.controls);
+            grabs = reading.grabs;
+        } else if self.controls.busy() {
+            looked.controls.extend(self.controls.release());
+        }
+        looked.dt = if self.last_read.is_finite() {
+            (now - self.last_read).clamp(0.0, 0.1)
+        } else {
+            0.0
+        };
+        self.last_read = now;
+        // Poses and sweeps come from a hand that is not pinching: the stick hand's if
+        // both are free.
+        let free = |hand: &&opc_monitor::handnet::Hand| {
+            !self.controls.busy() && opc_monitor::hand::pinch_ratio(hand) > opc_monitor::hand::PINCH_OFF
+        };
+        let posing = hands
+            .iter()
+            .filter(free)
+            .min_by_key(|hand| u8::from(hand.right != tuning.stick_is_right));
+        let swipe = self.sweep.feed(posing, now);
+        if now >= self.moving_until {
+            looked.gestures.extend(swipe);
+        }
+        let seen = posing.and_then(pose_of);
+        if self.pulse.feed(seen, now) {
+            looked.gestures.push(Gesture::FaceTrack);
+            self.holder.reset();
+        } else {
+            let hold = seen.map_or(opc_monitor::hand::HOLD, |pose| hold_for(pose.gesture()));
+            if let Some(pose) = self.holder.feed(seen, now, hold) {
+                looked.gestures.push(pose.gesture());
+            }
+        }
+        let held = self.holder.progress(now);
+        looked.progress = held
+            .filter(|(_, fraction)| *fraction < 1.0)
+            .map(|(pose, fraction)| (pose.gesture(), fraction));
+        self.scene = Some(HandScene {
+            hands: hands
+                .iter()
+                .map(|hand| HandView {
+                    hand: hand.clone(),
+                    pose: pose_of(hand),
+                })
+                .collect(),
+            grabs,
+            hold: held.map_or(0.0, |(_, fraction)| fraction),
+        });
+    }
+
+    /// The faces in one result: the one a gesture asked for, or one seen for a moment.
+    fn faces(
+        &mut self,
+        faces: &[opc_monitor::facenet::Face],
+        now: f64,
+        tuning: &Tuning<'_>,
+        looked: &mut Looked,
+    ) {
+        let Some(face) = faces.first() else {
+            self.face_seen_since = None;
+            return;
+        };
+        if self.face_wanted_until.take().is_some() {
+            looked.face = Some(Self::face_box(face));
+            looked.no_face = false;
+            self.face_rest_until = now + 20.0;
+            return;
+        }
+        if !tuning.auto_face || tuning.tracking {
+            self.face_seen_since = None;
+            return;
+        }
+        let since = *self.face_seen_since.get_or_insert(now);
+        if now - since >= 1.5 && now >= self.face_rest_until {
+            looked.face = Some(Self::face_box(face));
+            self.face_seen_since = None;
+            // Once started by itself, leave it alone for a while: stopping it by hand
+            // must not start it again at once.
+            self.face_rest_until = now + 30.0;
+        }
     }
 }

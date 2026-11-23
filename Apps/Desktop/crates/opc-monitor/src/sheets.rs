@@ -272,6 +272,12 @@ pub enum Pick {
     PresetSave(usize),
     /// Gesture control: off, or reading the camera's picture or the PC's webcam.
     Gestures(Option<crate::appsettings::GestureSource>),
+    /// Pinch-and-drag hand control of the gimbal and zoom, on or off.
+    HandControl(bool),
+    /// The stick is the right hand (true) or the left (false).
+    StickHand(bool),
+    /// Track a face by itself, on or off.
+    AutoFace(bool),
     PresetGo(usize),
     PresetClear(usize),
     PresetSeconds(f64),
@@ -350,6 +356,9 @@ pub struct Context<'a> {
     pub program: &'a Program,
     pub presets: &'a crate::presets::Presets,
     pub gestures: Option<crate::appsettings::GestureSource>,
+    pub hand_control: bool,
+    pub stick_is_right: bool,
+    pub auto_face: bool,
     /// The body's live pose, if it has reported one.
     pub live_pose: Option<Waypoint>,
     pub move_running: bool,
@@ -876,6 +885,21 @@ fn moves(context: Context) -> Built {
                 context.gestures == Some(GestureSource::Webcam),
                 Pick::Gestures(Some(GestureSource::Webcam)),
             ),
+    );
+    rows.push(
+        RowBuilder::new("Hand control (pinch and drag)")
+            .option("Off", !context.hand_control, Pick::HandControl(false))
+            .option("On", context.hand_control, Pick::HandControl(true)),
+    );
+    rows.push(
+        RowBuilder::new("Stick hand (the other zooms)")
+            .option("Right", context.stick_is_right, Pick::StickHand(true))
+            .option("Left", !context.stick_is_right, Pick::StickHand(false)),
+    );
+    rows.push(
+        RowBuilder::new("Face tracking by itself")
+            .option("Off", !context.auto_face, Pick::AutoFace(false))
+            .option("On", context.auto_face, Pick::AutoFace(true)),
     );
     assemble("MOVES", &[], 0, rows)
 }
@@ -1525,6 +1549,9 @@ mod tests {
             program: PROGRAM.get_or_init(Program::default),
             presets: PRESETS.get_or_init(crate::presets::Presets::default),
             gestures: None,
+            hand_control: true,
+            stick_is_right: true,
+            auto_face: false,
             live_pose: Some(Waypoint {
                 yaw: 12.0,
                 pitch: -3.0,
@@ -1693,7 +1720,10 @@ mod tests {
                 "Preset 4 (key 4)",
                 "Preset 5 (key 5)",
                 "Preset 6 (key 6)",
-                "Gestures (key J)"
+                "Gestures (key J)",
+                "Hand control (pinch and drag)",
+                "Stick hand (the other zooms)",
+                "Face tracking by itself"
             ]
         );
         assert_eq!(built.pick(9, 0), Some(&Pick::PresetSave(0)));

@@ -23,10 +23,14 @@ pub enum Gesture {
     Fist,
     Point,
     Two,
+    /// Index and little finger out: the rock sign.
+    Horns,
+    /// Opening and closing a hand quickly, three times over.
+    FaceTrack,
 }
 
 impl Gesture {
-    pub const ALL: [Gesture; 8] = [
+    pub const ALL: [Gesture; 10] = [
         Gesture::SwipeLeft,
         Gesture::SwipeRight,
         Gesture::SwipeUp,
@@ -35,6 +39,8 @@ impl Gesture {
         Gesture::Fist,
         Gesture::Point,
         Gesture::Two,
+        Gesture::Horns,
+        Gesture::FaceTrack,
     ];
 
     pub fn label(self) -> &'static str {
@@ -46,7 +52,9 @@ impl Gesture {
             Gesture::Palm => "Open palm",
             Gesture::Fist => "Fist",
             Gesture::Point => "One finger",
-            Gesture::Two => "Two fingers",
+            Gesture::Two => "Two fingers (peace sign)",
+            Gesture::Horns => "Rock sign",
+            Gesture::FaceTrack => "Open and close, three times",
         }
     }
 
@@ -61,6 +69,8 @@ impl Gesture {
             Gesture::Fist => "Hold up a closed fist for one second",
             Gesture::Point => "Hold up one finger for one second",
             Gesture::Two => "Hold up two fingers for one second",
+            Gesture::Horns => "Index and little finger out, the others folded, for about a second",
+            Gesture::FaceTrack => "Open your hand and close it to a fist, quickly, three times over",
         }
     }
 
@@ -78,6 +88,8 @@ impl Gesture {
             Gesture::Fist => "fist",
             Gesture::Point => "point",
             Gesture::Two => "two",
+            Gesture::Horns => "horns",
+            Gesture::FaceTrack => "face_track",
         }
     }
 }
@@ -92,12 +104,14 @@ pub enum GestureAction {
     PreviousPreset,
     /// Stop a move or recall in flight and let go of tracking.
     Stop,
-    /// Start or stop recording.
+    /// Start or stop recording. Held longer than the others, so it is never an accident.
     Record,
+    /// Start tracking the face the camera sees, or stop tracking.
+    FaceTrack,
 }
 
 impl GestureAction {
-    pub const ALL: [GestureAction; 7] = [
+    pub const ALL: [GestureAction; 8] = [
         GestureAction::Nothing,
         GestureAction::Recenter,
         GestureAction::Flip,
@@ -105,6 +119,7 @@ impl GestureAction {
         GestureAction::PreviousPreset,
         GestureAction::Stop,
         GestureAction::Record,
+        GestureAction::FaceTrack,
     ];
 
     pub fn label(self) -> &'static str {
@@ -115,7 +130,8 @@ impl GestureAction {
             GestureAction::NextPreset => "Next preset",
             GestureAction::PreviousPreset => "Previous preset",
             GestureAction::Stop => "Stop everything",
-            GestureAction::Record => "Start / stop recording",
+            GestureAction::Record => "Start / stop recording (hold 2.5 s)",
+            GestureAction::FaceTrack => "Face tracking on / off",
         }
     }
 
@@ -128,17 +144,18 @@ impl GestureAction {
             GestureAction::PreviousPreset => "previous_preset",
             GestureAction::Stop => "stop",
             GestureAction::Record => "record",
+            GestureAction::FaceTrack => "face_track",
         }
     }
 }
 
 /// Which action each gesture does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GestureMap([GestureAction; 8]);
+pub struct GestureMap([GestureAction; 10]);
 
 impl Default for GestureMap {
     fn default() -> Self {
-        let mut map = Self([GestureAction::Nothing; 8]);
+        let mut map = Self([GestureAction::Nothing; 10]);
         map.set(Gesture::SwipeLeft, GestureAction::PreviousPreset);
         map.set(Gesture::SwipeRight, GestureAction::NextPreset);
         // Raising and lowering a hand reads as a vertical sweep, so those do nothing
@@ -146,7 +163,10 @@ impl Default for GestureMap {
         map.set(Gesture::Palm, GestureAction::Stop);
         map.set(Gesture::Fist, GestureAction::Recenter);
         map.set(Gesture::Point, GestureAction::NextPreset);
-        map.set(Gesture::Two, GestureAction::Flip);
+        // Recording is the one to never trigger by accident: a peace sign, held.
+        map.set(Gesture::Two, GestureAction::Record);
+        map.set(Gesture::Horns, GestureAction::Flip);
+        map.set(Gesture::FaceTrack, GestureAction::FaceTrack);
         map
     }
 }

@@ -10,7 +10,7 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::Instant;
 
 use opc_monitor::gesture::Gesture;
-use opc_monitor::hand::{pose_of, Holder, Pose, Sweep};
+use opc_monitor::hand::{pinch_ratio, pose_of, Holder, Sweep, HOLD, PINCH_OFF};
 use opc_monitor::handnet::HandNet;
 
 /// The size ffmpeg scales the webcam to for the hand model.
@@ -145,14 +145,14 @@ pub fn start() -> Option<Webcam> {
                 break;
             }
             let now = started.elapsed().as_secs_f64();
-            let hand = net.detect(&frame, WIDTH, HEIGHT);
-            let swipe = sweep.feed(hand.as_ref(), now);
-            let held = holder.feed(hand.as_ref().and_then(pose_of), now).map(|pose| match pose {
-                Pose::Fist => Gesture::Fist,
-                Pose::Point => Gesture::Point,
-                Pose::Two => Gesture::Two,
-                Pose::Palm => Gesture::Palm,
-            });
+            let hands = net.detect(&frame, WIDTH, HEIGHT);
+            // The webcam reads sweeps and held poses from a hand that is not pinching;
+            // the pinch controls and the face finder run on the camera's own picture.
+            let hand = hands.iter().find(|hand| pinch_ratio(hand) > PINCH_OFF);
+            let swipe = sweep.feed(hand, now);
+            let held = holder
+                .feed(hand.and_then(pose_of), now, HOLD)
+                .map(|pose| pose.gesture());
             if swipe.is_some() || held.is_some() {
                 sweep.hold_off(now);
             }

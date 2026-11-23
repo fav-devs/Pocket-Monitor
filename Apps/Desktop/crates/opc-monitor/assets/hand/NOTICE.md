@@ -11,3 +11,8 @@ released under the Apache License 2.0; the licence text is in
 f32 pairs), taken from the OpenCV Zoo's `mp_palmdet.py`.
 
 The models run on the PC only. Nothing is sent anywhere.
+
+`face_detection_yunet.onnx` is the YuNet face detector (`face_detection_yunet_2023mar`) from
+the OpenCV Zoo, by Shiqi Yu, under the MIT licence (`LICENSE-yunet-mit.txt`). It finds where
+a face is in the picture so the camera can be told to track it; it does not recognise or
+identify anyone, and nothing is stored or sent.
