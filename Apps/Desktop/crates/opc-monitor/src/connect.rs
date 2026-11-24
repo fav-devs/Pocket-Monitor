@@ -771,7 +771,7 @@ impl eframe::App for ConnectApp {
                             "The camera joined, but this PC could not find it on the network after \
                              45 seconds. Check that both are on the same Wi-Fi and that the router \
                              does not isolate its clients, and that no other app is connected to \
-                             the camera, then try again. Details are in opc-monitor.log."
+                             the camera, then try again. Details are in opc-monitor.log, in the OpenPocketCine folder under your AppData."
                                 .into(),
                         );
                     }

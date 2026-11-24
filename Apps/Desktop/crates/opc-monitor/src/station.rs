@@ -22,15 +22,13 @@ use opc_monitor::homewifi::{
 };
 
 fn log(message: &str) {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("opc-monitor.log"))
-            {
-                let _ = writeln!(file, "station: {message}");
-            }
+    if let Some(path) = opc_monitor::logfile::path() {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "station: {message}");
         }
     }
 }

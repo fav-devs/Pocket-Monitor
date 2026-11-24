@@ -17,10 +17,7 @@ use opc_camera::{CameraSession, Command, Recovery, SessionEvent, SetOutcome, Sta
 /// Appends a concise diagnostic to the log beside the Windows executable. The window
 /// normally has no terminal, so decode outcomes must be available after it closes.
 pub(crate) fn diagnostic(message: impl std::fmt::Display) {
-    let Some(path) = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|dir| dir.join("opc-monitor.log")))
-    else {
+    let Some(path) = opc_monitor::logfile::path() else {
         return;
     };
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
@@ -149,9 +146,7 @@ fn run(
 ) {
     // The window is normally launched without a terminal on Windows. Keep the network
     // state beside the executable, but never log BLE credentials or camera payloads.
-    let mut log = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|dir| dir.join("opc-monitor.log")))
+    let mut log = opc_monitor::logfile::path()
         .and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok());
     macro_rules! link_log {
         ($($t:tt)*) => {

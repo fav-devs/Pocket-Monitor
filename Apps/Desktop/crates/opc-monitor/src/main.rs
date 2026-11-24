@@ -168,9 +168,7 @@ fn main() -> ExitCode {
         std::env::set_var("OPC_GESTURES", "1");
     }
     // Write a startup log beside the exe so silent crashes leave evidence.
-    let log_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("opc-monitor.log")));
+    let log_path = opc_monitor::logfile::path();
     // Appended, not truncated: the connect screen and the viewfinder are separate
     // processes, and a fresh viewfinder used to wipe what the connect screen had logged.
     // Only a log past a megabyte starts over.
@@ -639,15 +637,13 @@ fn save_camera(camera: &SavedCamera) -> Result<(), String> {
 #[cfg(opc_core_linked)]
 fn log_connection(message: &str) {
     use std::io::Write;
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("opc-monitor.log"))
-            {
-                let _ = writeln!(file, "wifi: {message}");
-            }
+    if let Some(path) = opc_monitor::logfile::path() {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "wifi: {message}");
         }
     }
 }

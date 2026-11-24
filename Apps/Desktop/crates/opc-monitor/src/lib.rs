@@ -14,6 +14,7 @@ pub mod hand;
 pub mod facenet;
 pub mod handnet;
 pub mod library;
+pub mod logfile;
 pub mod luts;
 pub mod moves;
 pub mod pad;
