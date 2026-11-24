@@ -59,6 +59,12 @@ Bluetooth device list and the app's Bluetooth LE scan are separate; seeing a dev
 Settings does not establish that the app can scan. The macOS transport waits for the
 Bluetooth manager to become ready and reports a readiness/access error instead of
 silently presenting an empty camera list. A USB adapter must support Bluetooth LE.
+The macOS shell uses btleplug 0.13.5, which separates connecting from service
+discovery and fixes CoreBluetooth discovery operations that could hang after an
+error. Windows and other platforms retain btleplug 0.11. macOS connection setup
+(including service discovery and notification subscription) times out after 30 seconds,
+cancels the pending connection, and requires a fresh scan before retrying. Keep the
+camera awake, close DJI Mimo on the phone, and accept any pairing prompt on the camera.
 BLE diagnostics are written to `~/.config/OpenPocketCine/opc-ble.log` (or under
 `XDG_CONFIG_HOME` when set), outside the signed app bundle to preserve its resource seal.
 

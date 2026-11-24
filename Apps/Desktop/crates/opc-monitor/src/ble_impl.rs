@@ -321,7 +321,7 @@ impl BleTransport for BtleplugTransport {
             )
         })?;
 
-        self.rt.block_on(async {
+        let setup = async {
             blog!(log, "  calling p.connect()");
             p.connect()
                 .await
@@ -403,7 +403,33 @@ impl BleTransport for BtleplugTransport {
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             Ok::<(), io::Error>(())
-        })?;
+        };
+        #[cfg(not(target_os = "macos"))]
+        self.rt.block_on(setup)?;
+        #[cfg(target_os = "macos")]
+        {
+            let result = self.rt.block_on(async {
+                tokio::time::timeout(Duration::from_secs(30), setup)
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Bluetooth connection or service discovery timed out. Keep the camera awake and nearby, close DJI Mimo on your phone, approve any camera prompt, then scan and try again.",
+                        ))
+                    })
+            });
+            if let Err(error) = result {
+                blog!(log, "  connection setup failed: {error}");
+                // Cancel the pending native connection too: dropping its Rust
+                // future alone leaves CoreBluetooth trying in the background.
+                self.rt.block_on(async {
+                    let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+                });
+                self.found.clear();
+                self.adapter = None;
+                return Err(error);
+            }
+        }
 
         // Spawn notification listener on the background runtime threads.
         let p2 = p.clone();
