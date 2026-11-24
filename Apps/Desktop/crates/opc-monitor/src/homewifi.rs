@@ -60,6 +60,50 @@ impl SavedStation {
     }
 }
 
+/// The operator's home network as kept for next time: the name, and the password only
+/// as the operating system sealed it for this user (never plain text on disk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeNetwork {
+    pub ssid: String,
+    /// The sealed password; empty when this platform cannot seal one.
+    pub sealed_password: Vec<u8>,
+}
+
+const HOME_HEADER: &str = "openpocketcine-desktop-homewifi-v1";
+
+impl HomeNetwork {
+    pub fn to_text(&self) -> String {
+        let sealed: String = self.sealed_password.iter().map(|b| format!("{b:02x}")).collect();
+        format!("{HOME_HEADER}\nssid={}\nsealed={sealed}\n", self.ssid)
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        if lines.next()? != HOME_HEADER {
+            return None;
+        }
+        let mut ssid = String::new();
+        let mut sealed = Vec::new();
+        for line in lines {
+            if let Some(name) = line.strip_prefix("ssid=") {
+                ssid = name.to_string();
+            } else if let Some(hex) = line.strip_prefix("sealed=") {
+                if hex.len() % 2 != 0 || !hex.is_ascii() {
+                    return None;
+                }
+                sealed = (0..hex.len() / 2)
+                    .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16))
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+            }
+        }
+        (!ssid.is_empty()).then_some(Self {
+            ssid,
+            sealed_password: sealed,
+        })
+    }
+}
+
 /// Which bodies want video mode selected before they join (Pocket 4 family).
 pub fn wants_video_mode(model_id: Option<i32>) -> bool {
     matches!(model_id, Some(0x0021 | 0x0022))
@@ -184,6 +228,19 @@ mod tests {
             "bad hex is not an identity"
         );
         assert_eq!(SavedStation::parse(&format!("{HEADER}\nssid=Home\n")), None);
+    }
+
+    #[test]
+    fn a_home_network_keeps_its_name_and_only_a_sealed_password() {
+        let home = HomeNetwork {
+            ssid: "Home Net".into(),
+            sealed_password: vec![1, 2, 0xab],
+        };
+        let text = home.to_text();
+        assert!(!text.contains("hunter2"));
+        assert_eq!(HomeNetwork::parse(&text), Some(home));
+        assert_eq!(HomeNetwork::parse("nope\nssid=x\n"), None);
+        assert_eq!(HomeNetwork::parse(&format!("{HOME_HEADER}\nssid=\n")), None);
     }
 
     #[test]

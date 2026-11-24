@@ -104,6 +104,8 @@ enum Screen {
         password: String,
         show_pass: bool,
         note: String,
+        /// Keep this network and put the camera on it by itself next time.
+        remember: bool,
     },
     /// Looking for the camera on this machine's networks.
     Searching(String),
@@ -156,6 +158,10 @@ struct ConnectApp {
     search_rx: Option<mpsc::Receiver<Option<std::net::SocketAddr>>>,
     /// What to remember once the search finds the camera.
     pending_station: Option<SavedStation>,
+    /// The home Wi-Fi the operator asked to keep, and its password.
+    home: Option<(String, String)>,
+    /// The camera was already put on the kept Wi-Fi once this run; do not loop on it.
+    auto_tried: bool,
 }
 
 impl ConnectApp {
@@ -183,7 +189,29 @@ impl ConnectApp {
             camera_address: String::new(),
             search_rx: None,
             pending_station: None,
+            home: station::home_load(),
+            auto_tried: false,
         }
+    }
+
+    /// Sends the camera onto a network, remembering where it lands.
+    fn start_station(&mut self, camera: String, ssid: String, password: String) {
+        self.pending_station = Some(SavedStation {
+            ssid: ssid.clone(),
+            identity: Vec::new(),
+            address: None,
+            model_id: self.model_id,
+        });
+        let _ = self.tx.send(BleCmd::Station {
+            address: self.camera_address.clone(),
+            ssid,
+            password,
+            model_id: self.model_id,
+        });
+        self.screen = Screen::Pairing {
+            label: "Connecting\u{2026}".into(),
+            camera,
+        };
     }
 
     /// Looks for the camera on this machine's networks, off the UI thread.
@@ -499,12 +527,16 @@ impl ConnectApp {
                 }
                 ui.add_space(12.0);
                 if ghost_button(ui, "Put the camera on my Wi-Fi instead  \u{2192}").clicked() {
+                    let (ssid, password) = self.home.clone().unwrap_or_else(|| {
+                        (station::current_ssid().unwrap_or_default(), String::new())
+                    });
                     self.screen = Screen::HomeWifi {
                         camera: self.camera_name.clone(),
-                        ssid: station::current_ssid().unwrap_or_default(),
-                        password: String::new(),
+                        ssid,
+                        password,
                         show_pass: false,
                         note: String::new(),
+                        remember: true,
                     };
                 }
                 None
@@ -516,6 +548,7 @@ impl ConnectApp {
                 password,
                 show_pass,
                 note,
+                remember,
             } => {
                 let camera = camera.clone();
                 ui.label(
@@ -528,7 +561,8 @@ impl ConnectApp {
                     RichText::new(
                         "The camera joins this network instead of hosting its own, so this PC keeps \
                          its internet. Use a 2.4 GHz network the camera can see. The password goes \
-                         to the camera over Bluetooth and is not kept here.",
+                         to the camera over Bluetooth. If you keep it below, it is stored sealed \
+                         to your Windows account, never as plain text.",
                     )
                     .color(DIM)
                     .font(FontId::proportional(13.0)),
@@ -561,6 +595,11 @@ impl ConnectApp {
                         *show_pass = !*show_pass;
                     }
                 });
+                ui.add_space(8.0);
+                ui.checkbox(
+                    remember,
+                    "Remember this Wi-Fi and put the camera on it by itself when I pair",
+                );
                 if !note.is_empty() {
                     ui.add_space(8.0);
                     ui.label(
@@ -569,7 +608,8 @@ impl ConnectApp {
                             .font(FontId::proportional(13.0)),
                     );
                 }
-                let (ssid, password) = (ssid.trim().to_string(), password.clone());
+                let (ssid, password, remember) =
+                    (ssid.trim().to_string(), password.clone(), *remember);
                 ui.add_space(24.0);
                 let join = accent_button(ui, "Join Wi-Fi  \u{2192}").clicked();
                 ui.add_space(8.0);
@@ -583,23 +623,21 @@ impl ConnectApp {
                         }
                         return None;
                     }
-                    self.pending_station = Some(SavedStation {
-                        ssid: ssid.clone(),
-                        identity: Vec::new(),
-                        address: None,
-                        model_id: self.model_id,
-                    });
-                    let _ = self.tx.send(BleCmd::Station {
-                        address: self.camera_address.clone(),
-                        ssid,
-                        password,
-                        model_id: self.model_id,
-                    });
-                    self.screen = Screen::Pairing {
-                        label: "Connecting\u{2026}".into(),
-                        camera,
-                    };
+                    if remember {
+                        if let Err(error) = station::home_save(&ssid, &password) {
+                            eprintln!("could not keep the Wi-Fi: {error}");
+                        }
+                        self.home = Some((ssid.clone(), password.clone()));
+                    } else {
+                        station::home_forget();
+                        self.home = None;
+                    }
+                    self.auto_tried = true;
+                    self.start_station(camera, ssid, password);
                 } else if reset {
+                    // Going back to the camera's own Wi-Fi also stops putting it on mine.
+                    station::home_forget();
+                    self.home = None;
                     let _ = self
                         .tx
                         .send(BleCmd::ResetStation(self.camera_address.clone()));
@@ -768,6 +806,20 @@ impl eframe::App for ConnectApp {
                     self.screen = Screen::AwaitingApproval { camera };
                 }
                 BleEvent::Credentials { ssid, password } => {
+                    // A kept home Wi-Fi: no screen, the camera goes straight onto it.
+                    if let (Some((home_ssid, home_password)), false) =
+                        (self.home.clone(), self.auto_tried)
+                    {
+                        if !home_password.is_empty() {
+                            self.auto_tried = true;
+                            let camera = self.camera_name.clone();
+                            station::note(&format!(
+                                "putting the camera on the kept Wi-Fi {home_ssid}"
+                            ));
+                            self.start_station(camera, home_ssid, home_password);
+                            continue;
+                        }
+                    }
                     self.screen = Screen::WifiReady {
                         camera: self.camera_name.clone(),
                         ssid,

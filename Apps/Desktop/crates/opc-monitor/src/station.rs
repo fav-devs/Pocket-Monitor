@@ -35,6 +35,11 @@ fn log(message: &str) {
     }
 }
 
+/// A line in the log for the connect screen's own decisions.
+pub fn note(message: &str) {
+    log(message);
+}
+
 // ---- The file ---------------------------------------------------------------
 
 fn saved_path() -> Option<PathBuf> {
@@ -60,6 +65,124 @@ pub fn save(station: &SavedStation) -> Result<(), String> {
 
 pub fn forget() {
     if let Some(path) = saved_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+// ---- The home Wi-Fi the operator asked to keep ------------------------------
+
+fn home_path() -> Option<PathBuf> {
+    saved_path().map(|path| path.with_file_name("desktop-homewifi-v1.txt"))
+}
+
+#[cfg(windows)]
+fn seal(plain: &[u8]) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: u32::try_from(plain.len()).ok()?,
+        pbData: plain.as_ptr().cast_mut(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    // SAFETY: `input` points at `plain` for the call; on success the system allocates
+    // `output`, which is copied out and then freed.
+    unsafe {
+        let ok = CryptProtectData(
+            &input,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            &mut output,
+        );
+        if ok == 0 || output.pbData.is_null() {
+            return None;
+        }
+        let sealed = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        LocalFree(output.pbData.cast());
+        Some(sealed)
+    }
+}
+
+#[cfg(windows)]
+fn unseal(sealed: &[u8]) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: u32::try_from(sealed.len()).ok()?,
+        pbData: sealed.as_ptr().cast_mut(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    // SAFETY: as in `seal`.
+    unsafe {
+        let ok = CryptUnprotectData(
+            &input,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            &mut output,
+        );
+        if ok == 0 || output.pbData.is_null() {
+            return None;
+        }
+        let plain = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        LocalFree(output.pbData.cast());
+        Some(plain)
+    }
+}
+
+// Other platforms keep the name only; the password is asked for each time.
+#[cfg(not(windows))]
+fn seal(_plain: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(not(windows))]
+fn unseal(_sealed: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
+/// The network the operator asked to keep, with its password when it could be read back.
+pub fn home_load() -> Option<(String, String)> {
+    let text = std::fs::read_to_string(home_path()?).ok()?;
+    let home = opc_monitor::homewifi::HomeNetwork::parse(&text)?;
+    let password = if home.sealed_password.is_empty() {
+        String::new()
+    } else {
+        unseal(&home.sealed_password)
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
+    };
+    Some((home.ssid, password))
+}
+
+pub fn home_save(ssid: &str, password: &str) -> Result<(), String> {
+    let path = home_path().ok_or("no folder to keep the Wi-Fi in")?;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+    }
+    let home = opc_monitor::homewifi::HomeNetwork {
+        ssid: ssid.to_string(),
+        sealed_password: if password.is_empty() {
+            Vec::new()
+        } else {
+            seal(password.as_bytes()).unwrap_or_default()
+        },
+    };
+    std::fs::write(&path, home.to_text()).map_err(|error| error.to_string())
+}
+
+pub fn home_forget() {
+    if let Some(path) = home_path() {
         let _ = std::fs::remove_file(path);
     }
 }

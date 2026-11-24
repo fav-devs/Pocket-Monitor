@@ -169,9 +169,20 @@ fn main() -> ExitCode {
     let log_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("opc-monitor.log")));
-    let mut log = log_path
-        .as_deref()
-        .and_then(|p| std::fs::File::create(p).ok());
+    // Appended, not truncated: the connect screen and the viewfinder are separate
+    // processes, and a fresh viewfinder used to wipe what the connect screen had logged.
+    // Only a log past a megabyte starts over.
+    let mut log = log_path.as_deref().and_then(|p| {
+        let too_big = std::fs::metadata(p).map_or(false, |m| m.len() > 1_000_000);
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        if too_big {
+            options.write(true).truncate(true);
+        } else {
+            options.append(true);
+        }
+        options.open(p).ok()
+    });
     macro_rules! log {
         ($($t:tt)*) => {
             if let Some(ref mut f) = log {
