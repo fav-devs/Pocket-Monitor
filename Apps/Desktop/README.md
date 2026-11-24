@@ -16,6 +16,9 @@ Inno Setup 6) that also registers the virtual camera.
 `SHA256SUMS.txt`, ready for a GitHub Release. Public assets require a shared LGPL
 FFmpeg build; the release script rejects GPL and nonfree FFmpeg configurations.
 
+On macOS, `build-macos.sh --dmg` builds an ad-hoc signed `.app` and optional disk image;
+see [macOS build notes](macos/README.md) for dependencies and camera-extension signing.
+
 ## Quick start
 
 Needs a Swift toolchain, FFmpeg development libraries, a Vulkan loader, and a GLSL

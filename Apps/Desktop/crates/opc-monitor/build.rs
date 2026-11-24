@@ -60,6 +60,11 @@ fn main() {
         // for both debug and release builds.
         println!("cargo:rustc-link-search=native={}", dir.display());
         println!("cargo:rustc-link-lib=dylib={LIB_NAME}");
+        // A dependency's rustc-link-arg does not propagate to our executable or
+        // library test harness. dyld needs the facade's @rpath resolved here too.
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        }
         println!("cargo:rustc-cfg=opc_core_linked");
     } else if std::env::var("DEP_OPENPOCKETCINEDESKTOP_LIB_DIR").is_ok() {
         println!("cargo:rustc-cfg=opc_core_linked");

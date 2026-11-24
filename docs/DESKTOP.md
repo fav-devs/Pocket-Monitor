@@ -240,3 +240,29 @@ winit, the platform surface extensions, and the event loops in
 its own tests and the Rust tests that call it are written but unrun. The
 grade-matches-the-core comparison in `crates/opc-render/tests/lut_grade.rs` is the one to
 run first on a machine with Swift.
+
+## macOS local build (November 2026)
+
+`Apps/Desktop/build-macos.sh --dmg` builds the release Rust viewfinder against the debug
+Swift facade and packages an ad-hoc signed `Apps/Desktop/dist/Pocket Monitor.app` and
+optional `.dmg`. The debug facade is intentional: Swift release optimization removes
+its internal C ABI exports, the same issue handled by the Windows release script.
+See [macOS build and signing notes](../Apps/Desktop/macos/README.md) for dependencies,
+Intel Homebrew compatibility, runtime bundling, and extension requirements.
+
+The app bundles FFmpeg and its dependency closure, Swift's facade, and MoltenVK. macOS
+uses Vulkan portability support and ONNX Runtime CPU execution; Windows retains its
+Vulkan setup, DirectML, Windows virtual camera, and Wi-Fi implementation. The local
+Homebrew FFmpeg is GPL-enabled, so this local bundle is not an LGPL public-release
+artifact. Its bundled dependencies require macOS 14 or later; testing was on this
+Intel Mac only, not an Apple Silicon or minimum-version machine.
+
+Verified here: Swift facade build and 912 Swift tests; release `opc-monitor` build;
+94 `opc-monitor` library tests, including loading the embedded CPU inference models;
+unsigned Xcode host/extension build; nine real GPU decode/render pipeline tests;
+bundled demo GPU initialization and a 24-second run without presentation errors;
+deep signature verification and command-line launch with a minimal environment.
+Visual UI inspection was unavailable because computer-use access was denied.
+The workspace `just desktop-check` currently stops at existing formatting differences
+in unrelated files. Targeted clippy completes with existing warnings. No Windows
+machine or camera is available for live-path verification.

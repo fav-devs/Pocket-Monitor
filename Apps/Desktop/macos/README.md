@@ -27,4 +27,65 @@ What it needs, and why:
   entitlements files share the team prefix; change the bundle id in one place and the
   other two follow.
 
-Nothing here has been built or run on a Mac yet; see `docs/desktop-viewfinder.md`.
+The host and extension compile on Intel macOS; activation and frame delivery remain unverified.
+
+## Pocket Monitor viewfinder app
+
+From the repository root on macOS with Xcode selected:
+
+```sh
+brew install ffmpeg pkg-config xcodegen glslang molten-vk vulkan-loader just
+rustup component add rustfmt clippy
+Apps/Desktop/build-macos.sh --dmg
+```
+
+This builds the debug Swift facade and release `opc-monitor` (as on Windows, Swift
+release optimization strips the internal C ABI exports), copies their native dependency
+closure into `Apps/Desktop/dist/Pocket Monitor.app/Contents/Frameworks`, rewrites the
+library paths and ad-hoc signs the bundle. `--dmg` also creates
+`Apps/Desktop/dist/Pocket Monitor.dmg`. The app loads its bundled MoltenVK directly;
+the Vulkan instance opts into portability enumeration when the loader advertises it
+and enables the portability subset on macOS. Windows keeps its original Vulkan setup and DirectML provider;
+macOS hand tracking uses ONNX Runtime's CPU provider. Models are embedded in the binary.
+The local bundle needs macOS 14 or later because of its Homebrew dependencies.
+The camera extension is a separate installation and is not embedded in this bundle.
+
+For development outside the app bundle:
+
+```sh
+export PATH="$(brew --prefix)/bin:$PATH"
+export VK_DRIVER_FILES="$(brew --prefix molten-vk)/etc/vulkan/icd.d/MoltenVK_icd.json"
+swift build --product OpenPocketCineDesktop -c debug
+export OPC_CORE_LIB_DIR="$(swift build -c debug --show-bin-path)"
+cd Apps/Desktop
+cargo build --release -p opc-monitor
+cargo test -p opc-monitor --lib
+./target/release/opc-monitor demo
+```
+
+Homebrew ended support for Intel macOS in September 2026. This Intel Mac was bootstrapped
+with the June 2026 installer, Homebrew 5.1.9, and homebrew-core snapshot
+`c935e3a89a8ef09388aa543c6d5f4b2be286aa4a` (FFmpeg 8.1.1, MoltenVK 1.4.1).
+Use `HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1` when maintaining that
+installation; current formulae may require source builds. Rust was already installed
+through rustup and Xcode supplies Swift. The generated Xcode project is ignored.
+
+Ad-hoc signing is suitable for this local build; it does not provide Gatekeeper
+notarization or permission to activate a camera system extension. The extension needs
+an Apple Developer Program team, matching identifiers/app groups/mach-service prefix,
+the system-extension and camera-extension entitlements, and appropriate signed
+provisioning. For distribution use Developer ID signing and notarization, then install
+its host in `/Applications` and approve activation in System Settings. To compile the
+extension without that signing setup (activation will remain unavailable):
+
+```sh
+cd Apps/Desktop/macos
+xcodegen generate
+xcodebuild -project OpenPocketCineCamera.xcodeproj -scheme OpenPocketCineCamera \
+  -configuration Release -derivedDataPath ../../../.build/macos-camera CODE_SIGNING_ALLOWED=NO
+```
+
+This packaging script is for local builds. Homebrew's FFmpeg enables GPL components;
+do not publish this app as an LGPL-only release. Public release packaging needs the
+same FFmpeg licence review as `build-release.ps1`, plus the licences/source obligations
+of all bundled dependencies. No unofficial LUTs are bundled.

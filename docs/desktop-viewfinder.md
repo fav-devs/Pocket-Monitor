@@ -552,4 +552,18 @@ other. Two channels, and nothing shared but the messages.
 
 ## What has not been run
 
-No camera, and no window. `link.rs` and `view.rs` reach the Swift core, so
+Camera testing remains outstanding. For the native macOS build and offline demo
+verification, see below. `link.rs` and `view.rs` reach the Swift core.
+
+## macOS build status (November 2026)
+
+A native Intel macOS release binary and ad-hoc signed app bundle can now be built with
+`Apps/Desktop/build-macos.sh --dmg`. See [macOS instructions](../Apps/Desktop/macos/README.md).
+MoltenVK supplies the Vulkan renderer; embedded hand/face models load on ONNX Runtime's
+CPU provider. The 94 viewfinder library tests and nine GPU feed-pipeline tests pass.
+Join camera Wi-Fi manually on macOS: automatic Wi-Fi joining remains Windows-only.
+The separate camera-extension host and extension compile unsigned, but activation and
+virtual-camera delivery require an Apple Developer signing setup and remain untested.
+No camera is attached, so the live viewfinder, Bluetooth pairing and hand tracking
+against a live camera have not been verified. No Windows hardware verification was
+performed for this macOS-only build work.
