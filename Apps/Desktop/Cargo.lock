@@ -4183,6 +4183,7 @@ dependencies = [
  "egui",
  "futures",
  "gilrs",
+ "objc2-core-bluetooth",
  "opc-camera",
  "opc-chrome",
  "opc-core-sys",

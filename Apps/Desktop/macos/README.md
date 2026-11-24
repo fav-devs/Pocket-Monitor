@@ -50,6 +50,18 @@ macOS hand tracking uses ONNX Runtime's CPU provider. Models are embedded in the
 The local bundle needs macOS 14 or later because of its Homebrew dependencies.
 The camera extension is a separate installation and is not embedded in this bundle.
 
+Bluetooth pairing requires access in **System Settings → Privacy & Security → Bluetooth**.
+Allow **Pocket Monitor**, then reopen the app and scan with the camera awake.
+After replacing an ad-hoc signed build, switch its Bluetooth permission off and on
+again before reopening: macOS can retain an approval tied to the old executable's
+code hash. A checked permission entry alone does not establish access for the new build. macOS's
+Bluetooth device list and the app's Bluetooth LE scan are separate; seeing a device in
+Settings does not establish that the app can scan. The macOS transport waits for the
+Bluetooth manager to become ready and reports a readiness/access error instead of
+silently presenting an empty camera list. A USB adapter must support Bluetooth LE.
+BLE diagnostics are written to `~/.config/OpenPocketCine/opc-ble.log` (or under
+`XDG_CONFIG_HOME` when set), outside the signed app bundle to preserve its resource seal.
+
 For development outside the app bundle:
 
 ```sh

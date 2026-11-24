@@ -1033,9 +1033,7 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                 }
 
                 // Append to BLE log so we can trace the pairing exchange.
-                let log_path = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.join("opc-ble.log")));
+                let log_path = crate::ble_impl::log_path();
                 let mut log = log_path.as_deref().and_then(|p| {
                     std::fs::OpenOptions::new()
                         .create(true)

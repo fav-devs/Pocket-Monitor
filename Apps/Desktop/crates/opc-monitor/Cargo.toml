@@ -44,6 +44,10 @@ ort = { version = "=2.0.0-rc.10", features = ["directml"] }
 [target.'cfg(not(windows))'.dependencies]
 ort = "=2.0.0-rc.10"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# btleplug collapses unsupported/unauthorized adapter states into Unknown.
+objc2-core-bluetooth = "0.2.2"
+
 [features]
 # Keep a terminal attached on Windows, for reading eprintln output while developing.
 console = []
