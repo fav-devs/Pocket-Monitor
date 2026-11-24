@@ -7,6 +7,7 @@
 
 pub mod appsettings;
 pub mod assists;
+pub mod clap;
 pub mod homewifi;
 pub mod gesture;
 pub mod hand;

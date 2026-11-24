@@ -91,6 +91,8 @@ mod connect;
 #[cfg(opc_core_linked)]
 mod link;
 #[cfg(opc_core_linked)]
+mod mic;
+#[cfg(opc_core_linked)]
 mod media;
 #[cfg(opc_core_linked)]
 mod station;

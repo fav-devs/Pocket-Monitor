@@ -1598,6 +1598,16 @@ impl Shell {
         self.zoom_write(ZoomWrite::Slider(next), now)
     }
 
+    /// A double clap: the gimbal goes back to centre.
+    pub fn clap(&mut self, now: f64) -> Vec<Intent> {
+        if self.screen != Screen::Viewfinder {
+            return Vec::new();
+        }
+        self.last_now = self.last_now.max(now);
+        self.set_notice("CLAP: RECENTRE");
+        self.act(Action::Send(Command::GimbalRecenter), now)
+    }
+
     /// A webcam gesture: up recentres, down flips, left and right step through the
     /// saved presets. Off the viewfinder, or with gestures not wanted, nothing happens.
     pub fn gesture(&mut self, gesture: Gesture, now: f64) -> Vec<Intent> {

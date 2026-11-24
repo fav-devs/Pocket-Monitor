@@ -56,6 +56,8 @@ const HAND_SIZE: usize = 224;
 const PALM_SCORE: f32 = 0.6;
 /// The landmark model must be at least this sure (0 to 1) it is looking at a hand.
 const HAND_SCORE: f32 = 0.8;
+/// A hand already being followed is kept on a lower score, so a blur does not drop it.
+const KEEP_SCORE: f32 = 0.55;
 
 /// One hand: its 21 landmarks in the frame's own units, x and y from 0 to 1 across and
 /// down the frame (a little outside when the hand is half out of it).
@@ -118,6 +120,8 @@ pub struct HandNet {
     /// Frames since the palm detector last looked for a second hand.
     since_search: u32,
     provider: &'static str,
+    /// Last frame's smoothed landmarks, to steady this frame's.
+    steady: Vec<[(f32, f32); POINTS]>,
 }
 
 fn sigmoid(x: f32) -> f32 {
@@ -166,6 +170,7 @@ impl HandNet {
             tracking: Vec::new(),
             since_search: 0,
             provider,
+            steady: Vec::new(),
         })
     }
 
@@ -183,7 +188,7 @@ impl HandNet {
         let mut hands: Vec<Hand> = Vec::new();
         let mut next: Vec<Crop> = Vec::new();
         for crop in std::mem::take(&mut self.tracking) {
-            if let Some((hand, crop)) = self.read_landmarks(&frame, crop) {
+            if let Some((hand, crop)) = self.read_landmarks(&frame, crop, KEEP_SCORE) {
                 // Two crops that settled on the same hand are one hand.
                 let twin = hands.iter().any(|other| {
                     let (a, b) = (hand.palm_centre(), other.palm_centre());
@@ -211,25 +216,89 @@ impl HandNet {
                 if on_known {
                     continue;
                 }
-                if let Some((hand, crop)) = self.read_landmarks(&frame, crop) {
+                if let Some((hand, crop)) = self.read_landmarks(&frame, crop, HAND_SCORE) {
                     hands.push(hand);
                     next.push(crop);
                 }
             }
         }
         self.tracking = next;
+        self.smooth(&mut hands);
         hands
+    }
+
+    /// Landmarks jitter a pixel or two from frame to frame. Still parts are held steady,
+    /// fast parts follow at once: the blend leans on the newest frame as a point speeds up.
+    fn smooth(&mut self, hands: &mut [Hand]) {
+        let before = std::mem::take(&mut self.steady);
+        for hand in hands.iter_mut() {
+            let (cx, cy) = hand.palm_centre();
+            let aspect = hand.aspect;
+            let earlier = before.iter().min_by(|a, b| {
+                let d = |p: &[(f32, f32); POINTS]| {
+                    let c = (
+                        [0, 5, 9, 13, 17].iter().map(|&i| p[i].0).sum::<f32>() / 5.0,
+                        [0, 5, 9, 13, 17].iter().map(|&i| p[i].1).sum::<f32>() / 5.0,
+                    );
+                    ((c.0 - cx) * aspect).hypot(c.1 - cy)
+                };
+                d(a).total_cmp(&d(b))
+            });
+            if let Some(earlier) = earlier {
+                let near = {
+                    let c = (
+                        [0, 5, 9, 13, 17].iter().map(|&i| earlier[i].0).sum::<f32>() / 5.0,
+                        [0, 5, 9, 13, 17].iter().map(|&i| earlier[i].1).sum::<f32>() / 5.0,
+                    );
+                    ((c.0 - cx) * aspect).hypot(c.1 - cy) < 0.15
+                };
+                if near {
+                    for (point, old) in hand.points.iter_mut().zip(earlier.iter()) {
+                        let speed = ((point.0 - old.0) * aspect).hypot(point.1 - old.1);
+                        let alpha = (0.25 + speed * 14.0).min(1.0);
+                        point.0 = old.0 + (point.0 - old.0) * alpha;
+                        point.1 = old.1 + (point.1 - old.1) * alpha;
+                    }
+                }
+            }
+        }
+        self.steady = hands.iter().map(|hand| hand.points).collect();
     }
 
     /// Runs the palm detector on the whole frame: a crop for each palm it is sure of,
     /// the surest first, up to [`MAX_HANDS`] + 1.
     fn find_palms(&mut self, frame: &Frame) -> Vec<Crop> {
-        // The frame, scaled to fit the model's square and centred on black.
-        let ratio = PALM_SIZE as f32 / frame.width.max(frame.height) as f32;
-        let (scaled_w, scaled_h) = (
-            (frame.width as f32 * ratio).round(),
-            (frame.height as f32 * ratio).round(),
-        );
+        let (w, h) = (frame.width as f32, frame.height as f32);
+        let mut found = self.find_palms_in(frame, (0.0, 0.0, w, h));
+        // A hand far from the camera is a few pixels once the whole wide frame is squeezed
+        // into the model's square. Looking at each square half gives it nearly twice the
+        // pixels, so a small or distant hand is seen as well.
+        if found.is_empty() && w > h * 1.2 {
+            for x0 in [0.0, w - h] {
+                found.extend(self.find_palms_in(frame, (x0, 0.0, h, h)));
+            }
+            found.sort_by(|a, b| b.side.total_cmp(&a.side));
+            let mut unique: Vec<Crop> = Vec::new();
+            for crop in found {
+                if !unique
+                    .iter()
+                    .any(|u| (u.cx - crop.cx).hypot(u.cy - crop.cy) < 0.5 * u.side.max(crop.side))
+                {
+                    unique.push(crop);
+                }
+            }
+            found = unique;
+            found.truncate(MAX_HANDS + 1);
+        }
+        found
+    }
+
+    /// The palm detector on one region of the frame: left, top, width, height in pixels.
+    fn find_palms_in(&mut self, frame: &Frame, region: (f32, f32, f32, f32)) -> Vec<Crop> {
+        let (rx, ry, rw, rh) = region;
+        // The region, scaled to fit the model's square and centred on black.
+        let ratio = PALM_SIZE as f32 / rw.max(rh);
+        let (scaled_w, scaled_h) = ((rw * ratio).round(), (rh * ratio).round());
         let (pad_x, pad_y) = (
             (PALM_SIZE as f32 - scaled_w) / 2.0,
             (PALM_SIZE as f32 - scaled_h) / 2.0,
@@ -237,13 +306,14 @@ impl HandNet {
         let mut input = vec![0f32; PALM_SIZE * PALM_SIZE * 3];
         for y in 0..PALM_SIZE {
             for x in 0..PALM_SIZE {
-                let (fx, fy) = (
+                let (lx, ly) = (
                     (x as f32 + 0.5 - pad_x) / ratio,
                     (y as f32 + 0.5 - pad_y) / ratio,
                 );
-                if fx < 0.0 || fy < 0.0 || fx >= frame.width as f32 || fy >= frame.height as f32 {
+                if lx < 0.0 || ly < 0.0 || lx >= rw || ly >= rh {
                     continue;
                 }
+                let (fx, fy) = (rx + lx, ry + ly);
                 let at = (y * PALM_SIZE + x) * 3;
                 let rgb = frame.sample(fx, fy);
                 input[at..at + 3].copy_from_slice(&rgb);
@@ -273,7 +343,7 @@ impl HandNet {
         let size = PALM_SIZE as f32;
         // Box and keypoints are offsets from the anchor, as fractions of the model's input;
         // back to frame pixels by undoing the letterbox.
-        let to_frame = |nx: f32, ny: f32| ((nx * size - pad_x) / ratio, (ny * size - pad_y) / ratio);
+        let to_frame = |nx: f32, ny: f32| (rx + (nx * size - pad_x) / ratio, ry + (ny * size - pad_y) / ratio);
         let mut crops: Vec<Crop> = Vec::new();
         for (index, _) in candidates {
             let row = &boxes[index * stride..index * stride + stride];
@@ -316,7 +386,7 @@ impl HandNet {
     }
 
     /// Runs the landmark model on `crop`. On success the hand, and the crop for next time.
-    fn read_landmarks(&mut self, frame: &Frame, crop: Crop) -> Option<(Hand, Crop)> {
+    fn read_landmarks(&mut self, frame: &Frame, crop: Crop, min_score: f32) -> Option<(Hand, Crop)> {
         let mut input = vec![0f32; HAND_SIZE * HAND_SIZE * 3];
         for y in 0..HAND_SIZE {
             for x in 0..HAND_SIZE {
@@ -335,7 +405,7 @@ impl HandNet {
         let (_, raw) = outputs[0].try_extract_tensor::<f32>().ok()?;
         let (_, score) = outputs[1].try_extract_tensor::<f32>().ok()?;
         let (_, side) = outputs[2].try_extract_tensor::<f32>().ok()?;
-        if raw.len() < POINTS * 3 || score.is_empty() || score[0] < HAND_SCORE {
+        if raw.len() < POINTS * 3 || score.is_empty() || score[0] < min_score {
             return None;
         }
         let mut points = [(0f32, 0f32); POINTS];

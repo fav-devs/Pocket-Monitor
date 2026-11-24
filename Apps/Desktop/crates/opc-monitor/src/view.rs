@@ -102,6 +102,9 @@ struct View {
     feed_gestures: Option<FeedGestures>,
     /// A webcam was asked for since gestures last pointed at it.
     webcam_tried: bool,
+    /// Listens for the double clap while gestures are on.
+    clap_mic: Option<crate::mic::ClapMic>,
+    clap_tried: bool,
     /// Whether the chrome was showing, and which redraw, when the renderer last got it.
     overlay_key: (bool, u64),
     render_stats: (u32, Duration, Instant),
@@ -680,6 +683,23 @@ impl View {
             self.feed_gestures.get_or_insert_with(FeedGestures::new);
         } else {
             self.feed_gestures = None;
+        }
+        // A double clap resets the gimbal, whatever the picture shows.
+        if wanted.is_some() {
+            if self.clap_mic.is_none() && !self.clap_tried {
+                self.clap_tried = true;
+                self.clap_mic = crate::mic::ClapMic::open();
+            }
+        } else {
+            self.clap_mic = None;
+            self.clap_tried = false;
+        }
+        if self.clap_mic.as_ref().is_some_and(|mic| mic.take()) {
+            for intent in self.shell.clap(now) {
+                if let Intent::Send(command) = intent {
+                    self.send(command);
+                }
+            }
         }
         let mut seen: Vec<opc_monitor::gesture::Gesture> = Vec::new();
         if let Some(webcam) = self.gestures.as_ref() {
@@ -1357,6 +1377,8 @@ pub fn run(options: Options) -> Result<(), String> {
         gestures: None,
         feed_gestures: None,
         webcam_tried: false,
+        clap_mic: None,
+        clap_tried: false,
         overlay_key: (false, u64::MAX),
         render_stats: (0, Duration::ZERO, Instant::now()),
         remote: options.remote,
