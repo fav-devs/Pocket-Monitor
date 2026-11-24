@@ -64,6 +64,9 @@ enum BleEvent {
         confirmed: bool,
     },
     StationReset,
+    /// The camera would not give its own Wi-Fi name: it is probably already on another
+    /// network, which is where the LAN search can still find it.
+    NoSsid,
     Error(String),
 }
 
@@ -749,6 +752,14 @@ impl eframe::App for ConnectApp {
                         if let std::net::IpAddr::V4(v4) = address.ip() {
                             station.address = Some(v4);
                         }
+                        // Found without knowing who it was: ask it, so next time it is known.
+                        if station.identity.is_empty() {
+                            station.identity = opc_camera::lan::read_identity(
+                                address,
+                                Duration::from_secs(6),
+                            )
+                            .unwrap_or_default();
+                        }
                         if let Err(error) = station::save(&station) {
                             eprintln!("could not remember the camera's network: {error}");
                         }
@@ -847,6 +858,33 @@ impl eframe::App for ConnectApp {
                             "It hosts its own network again. Pair it when you next want to connect."
                                 .into(),
                     };
+                }
+                BleEvent::NoSsid => {
+                    // Already on a network of the operator's? Look for it there.
+                    let kept = self
+                        .home
+                        .as_ref()
+                        .map(|(ssid, _)| ssid.clone())
+                        .or_else(|| station::load().map(|saved| saved.ssid));
+                    match kept {
+                        Some(ssid) => {
+                            station::note("the camera gave no Wi-Fi name; looking for it on the LAN");
+                            self.pending_station = Some(SavedStation {
+                                ssid,
+                                identity: Vec::new(),
+                                address: None,
+                                model_id: self.model_id,
+                            });
+                            // No identity to match: the one camera on the network is it.
+                            self.search_for(Vec::new(), None);
+                        }
+                        None => {
+                            self.screen = Screen::Failed(
+                                "The camera did not give its Wi-Fi name. If it is already on                                  your Wi-Fi, put it back on its own first with \"Return the                                  camera to its own Wi-Fi\", or switch it off and on and pair                                  again."
+                                    .into(),
+                            );
+                        }
+                    }
                 }
                 BleEvent::Error(msg) => {
                     self.screen = Screen::Failed(msg);
@@ -1033,9 +1071,8 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                 }
 
                 // Append to BLE log so we can trace the pairing exchange.
-                let log_path = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.join("opc-ble.log")));
+                let log_path =
+                    opc_monitor::logfile::path().map(|p| p.with_file_name("opc-ble.log"));
                 let mut log = log_path.as_deref().and_then(|p| {
                     std::fs::OpenOptions::new()
                         .create(true)
@@ -1245,9 +1282,7 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                     thread::sleep(Duration::from_millis(50));
                 }
                 if ssid.is_empty() {
-                    let _ = tx.send(BleEvent::Error(
-                        "Camera did not return a Wi-Fi name.".into(),
-                    ));
+                    let _ = tx.send(BleEvent::NoSsid);
                     let _ = transport.disconnect();
                     continue;
                 }

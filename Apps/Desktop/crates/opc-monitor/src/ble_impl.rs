@@ -21,9 +21,7 @@ use opc_camera::{BleTransport, Discovered, GattMap};
 type Log = Arc<Mutex<Option<std::fs::File>>>;
 
 fn open_log() -> Log {
-    let path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("opc-ble.log")));
+    let path = opc_monitor::logfile::path().map(|p| p.with_file_name("opc-ble.log"));
     let file = path.and_then(|p| {
         std::fs::OpenOptions::new()
             .create(true)
