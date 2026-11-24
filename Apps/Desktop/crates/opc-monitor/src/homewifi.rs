@@ -122,6 +122,8 @@ pub fn networks_from_ipconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
     let mut address: Option<Ipv4Addr> = None;
     let mut mask: Option<Ipv4Addr> = None;
     let mut gateway = false;
+    // The gateways are listed over several lines, the IPv6 one first on many machines.
+    let mut in_gateways = false;
     let value = |line: &str| -> Option<String> {
         line.split_once(':')
             .map(|(_, v)| v.trim().to_string())
@@ -137,15 +139,25 @@ pub fn networks_from_ipconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
             address = None;
             mask = None;
             gateway = false;
+            in_gateways = false;
             continue;
         }
+        // Another gateway for the adapter above: an address with no label in front of it.
+        if in_gateways && !trimmed.is_empty() && !trimmed.contains(" : ") {
+            if trimmed.parse::<Ipv4Addr>().is_ok() {
+                gateway = true;
+            }
+            continue;
+        }
+        in_gateways = false;
         if trimmed.starts_with("IPv4 Address") {
             address =
                 value(trimmed).and_then(|v| v.trim_end_matches("(Preferred)").trim().parse().ok());
         } else if trimmed.starts_with("Subnet Mask") {
             mask = value(trimmed).and_then(|v| v.parse().ok());
         } else if trimmed.starts_with("Default Gateway") {
-            gateway = value(trimmed).is_some_and(|v| v.parse::<Ipv4Addr>().is_ok());
+            in_gateways = true;
+            gateway |= value(trimmed).is_some_and(|v| v.parse::<Ipv4Addr>().is_ok());
         }
     }
     if let (Some(a), Some(m), true) = (address, mask, gateway) {
@@ -283,6 +295,25 @@ Ethernet adapter vEthernet (WSL):
                 Ipv4Addr::new(192, 168, 1, 23),
                 Ipv4Addr::new(255, 255, 255, 0)
             )]
+        );
+    }
+
+    #[test]
+    fn an_ipv6_gateway_listed_first_does_not_hide_the_ipv4_one() {
+        let text = "Wireless LAN adapter Wi-Fi:
+
+   IPv4 Address. . . . . . . . . . . : 10.0.0.205
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : fe80::e2db:d1ff:fef8:15ed%22
+                                       10.0.0.1
+
+Ethernet adapter Bluetooth Network Connection:
+
+   Media State . . . . . . . . . . . : Media disconnected
+";
+        assert_eq!(
+            networks_from_ipconfig(text),
+            [(Ipv4Addr::new(10, 0, 0, 205), Ipv4Addr::new(255, 255, 255, 0))]
         );
     }
 
