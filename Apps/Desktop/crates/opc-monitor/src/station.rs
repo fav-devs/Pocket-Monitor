@@ -17,8 +17,8 @@ use opc_camera::{
     lan, pair_approval_ack, pair_set_pin, BleTransport, Command, DumlFrame, NotificationAssembler,
 };
 use opc_monitor::homewifi::{
-    allows_missing_role_query, networks_from_ip_addr, networks_from_ipconfig, ssid_from_netsh,
-    wants_video_mode, SavedStation,
+    allows_missing_role_query, networks_from_ip_addr, networks_from_ipconfig, wants_video_mode,
+    SavedStation,
 };
 
 fn log(message: &str) {
@@ -230,13 +230,22 @@ pub fn local_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
 }
 
 /// The Wi-Fi this machine is on, to offer as the network the camera should join.
+#[cfg(target_os = "macos")]
+pub fn current_ssid() -> Option<String> {
+    crate::macwifi::current_ssid()
+}
+
+/// The Wi-Fi this machine is on, to offer as the network the camera should join.
+#[cfg(not(target_os = "macos"))]
 pub fn current_ssid() -> Option<String> {
     if cfg!(target_os = "windows") {
         tool("netsh")
             .args(["wlan", "show", "interfaces"])
             .output()
             .ok()
-            .and_then(|output| ssid_from_netsh(&String::from_utf8_lossy(&output.stdout)))
+            .and_then(|output| {
+                opc_monitor::homewifi::ssid_from_netsh(&String::from_utf8_lossy(&output.stdout))
+            })
     } else {
         tool("iwgetid")
             .arg("-r")

@@ -42,6 +42,8 @@ info = {
     'NSMicrophoneUsageDescription': 'Monitor audio from your selected input.',
     'NSLocalNetworkUsageDescription': 'Find and connect to cameras and shared phone feeds on your network.',
     'NSBonjourServices': ['_opc-mon._tcp'],
+    'NSLocationUsageDescription': 'Fill in the name of your Wi-Fi network when adding the camera to it.',
+    'NSLocationWhenInUseUsageDescription': 'Fill in the name of your Wi-Fi network when adding the camera to it.',
 }
 with (app / 'Contents/Info.plist').open('wb') as file:
     plistlib.dump(info, file)

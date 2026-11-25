@@ -92,6 +92,8 @@ mod connect;
 mod home;
 #[cfg(opc_core_linked)]
 mod link;
+#[cfg(target_os = "macos")]
+mod macwifi;
 #[cfg(opc_core_linked)]
 mod media;
 #[cfg(opc_core_linked)]

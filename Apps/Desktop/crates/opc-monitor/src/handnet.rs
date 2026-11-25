@@ -144,7 +144,15 @@ pub(crate) fn build_session(model: &[u8]) -> Result<(Session, &'static str), Str
             Err(error) => eprintln!("hands: the GPU is not usable, using the CPU: {error}"),
         }
     }
-    let session = Session::builder()
+    let builder = Session::builder();
+    // ONNX Runtime's default pool is one thread a core, each spinning while it waits
+    // for the next frame. Without a GPU provider that burns most of the machine on
+    // these small models. Windows keeps its defaults.
+    #[cfg(not(windows))]
+    let builder = builder
+        .and_then(|builder| builder.with_intra_threads(2))
+        .and_then(|builder| builder.with_intra_op_spinning(false));
+    let session = builder
         .and_then(|builder| builder.commit_from_memory(model))
         .map_err(|error| error.to_string())?;
     Ok((session, "CPU"))

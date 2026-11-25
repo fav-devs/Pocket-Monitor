@@ -1317,10 +1317,26 @@ impl ApplicationHandler for View {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.sync_repair_blocked();
-        if self.latest.is_some()
+        let active = self.latest.is_some()
             || self.media.is_active()
-            || self.shell.screen() != Screen::Viewfinder
-        {
+            || self.shell.screen() != Screen::Viewfinder;
+        if cfg!(target_os = "macos") {
+            // A redraw request wakes the loop at once here, so asking on every pass
+            // spins a core. Ask only when a frame is due. Frames also collect the
+            // camera link's events, so they continue slowly with no picture.
+            let interval = Duration::from_millis(if active { 16 } else { 33 });
+            let now = Instant::now();
+            let mut due = self.last_draw + interval;
+            if now >= due {
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+                due = now + interval;
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(due));
+            return;
+        }
+        if active {
             // Present at display rate, not as fast as a core can spin. The camera and
             // ACK pump run on their own thread; 60 Hz keeps 25/30/50 fps streams fresh
             // while leaving CPU/GPU room for decode and Vulkan.

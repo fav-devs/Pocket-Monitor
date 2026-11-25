@@ -127,3 +127,9 @@ command. Loopback, point-to-point VPNs and inactive interfaces are excluded.
 After the camera accepts home Wi-Fi settings, discovery probes the Mac's local
 subnet and verifies the camera protocol identity. The existing search bounds
 (up to /22 and 45 seconds) still apply. Windows retains its `ipconfig` path.
+
+### Wi-Fi name
+
+macOS gives the current network's name only to an app with Location access. The
+app asks for it when "Put the camera on my Wi-Fi instead" first opens, then fills
+in the network field. If access is refused, type the name.

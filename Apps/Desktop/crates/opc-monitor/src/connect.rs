@@ -162,6 +162,9 @@ struct ConnectApp {
     home: Option<(String, String)>,
     /// The camera was already put on the kept Wi-Fi once this run; do not loop on it.
     auto_tried: bool,
+    /// The network field is still waiting for this Mac to give up the Wi-Fi name,
+    /// which it does only after the operator allows Location access.
+    ssid_wanted: bool,
 }
 
 impl ConnectApp {
@@ -191,6 +194,7 @@ impl ConnectApp {
             pending_station: None,
             home: station::home_load(),
             auto_tried: false,
+            ssid_wanted: false,
         }
     }
 
@@ -530,6 +534,7 @@ impl ConnectApp {
                     let (ssid, password) = self.home.clone().unwrap_or_else(|| {
                         (station::current_ssid().unwrap_or_default(), String::new())
                     });
+                    self.ssid_wanted = cfg!(target_os = "macos") && ssid.is_empty();
                     self.screen = Screen::HomeWifi {
                         camera: self.camera_name.clone(),
                         ssid,
@@ -574,7 +579,12 @@ impl ConnectApp {
                             .color(DIM)
                             .font(FontId::proportional(13.0)),
                     );
-                    ui.add(egui::TextEdit::singleline(ssid).desired_width(220.0));
+                    if ui
+                        .add(egui::TextEdit::singleline(ssid).desired_width(220.0))
+                        .changed()
+                    {
+                        self.ssid_wanted = false;
+                    }
                 });
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
@@ -851,6 +861,15 @@ impl eframe::App for ConnectApp {
                 BleEvent::Error(msg) => {
                     self.screen = Screen::Failed(msg);
                 }
+            }
+        }
+
+        if let (true, Screen::HomeWifi { ssid, .. }) = (self.ssid_wanted, &mut self.screen) {
+            if let Some(name) = station::current_ssid() {
+                *ssid = name;
+                self.ssid_wanted = false;
+            } else {
+                ctx.request_repaint_after(Duration::from_secs(1));
             }
         }
 
