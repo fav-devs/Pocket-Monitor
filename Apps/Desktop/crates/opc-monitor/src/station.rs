@@ -282,7 +282,9 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
 fn search_once(identity: &[u8], last: Option<Ipv4Addr>, round: u32) -> Option<SocketAddr> {
     if let Some(address) = last {
         let candidate = SocketAddr::from((address, lan::DATALINK_PORT));
-        log(&format!("round {round}: trying the last address {candidate}"));
+        log(&format!(
+            "round {round}: trying the last address {candidate}"
+        ));
         if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
             return Some(candidate);
         }

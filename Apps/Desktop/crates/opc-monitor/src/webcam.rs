@@ -30,8 +30,15 @@ impl Drop for Webcam {
 }
 
 fn ffmpeg() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) {
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+    {
         if dir.join(name).is_file() {
             return Some(dir.join(name));
         }
@@ -44,9 +51,14 @@ fn ffmpeg() -> Option<PathBuf> {
         }
     }
     // winget's Gyan.FFmpeg package.
-    let packages = PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft/WinGet/Packages");
+    let packages =
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft/WinGet/Packages");
     for package in std::fs::read_dir(packages).ok()?.flatten() {
-        if !package.file_name().to_string_lossy().starts_with("Gyan.FFmpeg") {
+        if !package
+            .file_name()
+            .to_string_lossy()
+            .starts_with("Gyan.FFmpeg")
+        {
             continue;
         }
         for build in std::fs::read_dir(package.path()).ok()?.flatten() {
@@ -75,15 +87,30 @@ fn device(ffmpeg: &PathBuf) -> Option<String> {
     if let Ok(name) = std::env::var("OPC_WEBCAM") {
         return Some(name);
     }
-    let output = quiet(
-        Command::new(ffmpeg).args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]),
-    )
+    let output = quiet(Command::new(ffmpeg).args([
+        "-hide_banner",
+        "-list_devices",
+        "true",
+        "-f",
+        "dshow",
+        "-i",
+        "dummy",
+    ]))
     .output()
     .ok()?;
     let text = String::from_utf8_lossy(&output.stderr);
     // Cameras that are software, including this app's own virtual camera, are never
     // the operator's webcam: reading them would feed our own picture back in.
-    let software = ["virtual", "obs", "openpocketcine", "pocket monitor", "droidcam", "ndi", "snap camera", "manycam"];
+    let software = [
+        "virtual",
+        "obs",
+        "openpocketcine",
+        "pocket monitor",
+        "droidcam",
+        "ndi",
+        "snap camera",
+        "manycam",
+    ];
     text.lines()
         .filter(|line| line.contains("(video)"))
         .filter_map(|line| {
@@ -113,7 +140,15 @@ pub fn start() -> Option<Webcam> {
     std::thread::spawn(move || {
         let mut command = Command::new(&ffmpeg);
         command
-            .args(["-loglevel", "quiet", "-f", "dshow", "-framerate", "20", "-i"])
+            .args([
+                "-loglevel",
+                "quiet",
+                "-f",
+                "dshow",
+                "-framerate",
+                "20",
+                "-i",
+            ])
             .arg(format!("video={device}"))
             .args(["-vf", &format!("scale={WIDTH}:{HEIGHT},format=rgb24")])
             .args(["-f", "rawvideo", "-"])

@@ -46,7 +46,8 @@ fn distance(hand: &Hand, a: usize, b: usize) -> f32 {
 /// index, middle, ring, pinky. A straight finger reaches about 1.7 times as far as its
 /// base (measured on real photos: 1.55 to 1.85); one folded into the palm 1.3 or less.
 pub fn finger_reach(hand: &Hand) -> [f32; 4] {
-    let reach = |base: usize, tip: usize| distance(hand, tip, 0) / distance(hand, base, 0).max(1e-4);
+    let reach =
+        |base: usize, tip: usize| distance(hand, tip, 0) / distance(hand, base, 0).max(1e-4);
     [reach(5, 8), reach(9, 12), reach(13, 16), reach(17, 20)]
 }
 
@@ -170,7 +171,10 @@ impl Pulse {
                 }
                 if let Some((candidate, since)) = self.candidate {
                     let confirmed = now - since >= PULSE_MIN;
-                    let new = self.states.last().map_or(true, |&(last, _)| last != candidate);
+                    let new = self
+                        .states
+                        .last()
+                        .map_or(true, |&(last, _)| last != candidate);
                     if confirmed && new {
                         self.states.push((candidate, since));
                     }
@@ -188,7 +192,8 @@ impl Pulse {
                 }
             }
         }
-        self.states.retain(|&(_, since)| now - since <= PULSE_WITHIN);
+        self.states
+            .retain(|&(_, since)| now - since <= PULSE_WITHIN);
         // Six states in a row: open, closed, open, closed, open, closed.
         if self.states.len() >= 6 {
             let tail = &self.states[self.states.len() - 6..];
@@ -221,11 +226,16 @@ pub enum Role {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Control {
     /// The stick, from -1 to 1 each way; up is positive.
-    Stick { x: f32, y: f32 },
+    Stick {
+        x: f32,
+        y: f32,
+    },
     /// The pinch was let go.
     StickEnd,
     /// Zoom rate from -1 (out) to 1 (in).
-    Zoom { rate: f32 },
+    Zoom {
+        rate: f32,
+    },
     ZoomEnd,
 }
 
@@ -565,8 +575,16 @@ mod tests {
     #[test]
     fn the_reading_does_not_care_which_way_the_hand_points() {
         for tilt in [-1.2f32, -0.6, 0.6, 1.5, 3.0] {
-            assert_eq!(pose_of(&hand_with([true; 4], tilt)), Some(Pose::Palm), "{tilt}");
-            assert_eq!(pose_of(&hand_with([false; 4], tilt)), Some(Pose::Fist), "{tilt}");
+            assert_eq!(
+                pose_of(&hand_with([true; 4], tilt)),
+                Some(Pose::Palm),
+                "{tilt}"
+            );
+            assert_eq!(
+                pose_of(&hand_with([false; 4], tilt)),
+                Some(Pose::Fist),
+                "{tilt}"
+            );
         }
     }
 
@@ -634,7 +652,11 @@ mod tests {
         let mut now = 0.0;
         // Open, closed, three times over, each for about a third of a second.
         for cycle in 0..6 {
-            let pose = if cycle % 2 == 0 { Pose::Palm } else { Pose::Fist };
+            let pose = if cycle % 2 == 0 {
+                Pose::Palm
+            } else {
+                Pose::Fist
+            };
             for _ in 0..7 {
                 fired += usize::from(pulse.feed(Some(pose), now));
                 now += 0.05;
@@ -644,7 +666,11 @@ mod tests {
         let mut slow = Pulse::default();
         let mut now = 0.0;
         for cycle in 0..6 {
-            let pose = if cycle % 2 == 0 { Pose::Palm } else { Pose::Fist };
+            let pose = if cycle % 2 == 0 {
+                Pose::Palm
+            } else {
+                Pose::Fist
+            };
             for _ in 0..40 {
                 assert!(!slow.feed(Some(pose), now));
                 now += 0.05;
@@ -654,7 +680,11 @@ mod tests {
         let mut twice = Pulse::default();
         let mut now = 0.0;
         for cycle in 0..4 {
-            let pose = if cycle % 2 == 0 { Pose::Palm } else { Pose::Fist };
+            let pose = if cycle % 2 == 0 {
+                Pose::Palm
+            } else {
+                Pose::Fist
+            };
             for _ in 0..7 {
                 assert!(!twice.feed(Some(pose), now));
                 now += 0.05;
@@ -706,7 +736,10 @@ mod tests {
             }
         }
         assert!(stick_throws.is_empty(), "an open right hand is not a grip");
-        assert!(zoom_rates.last().is_some_and(|rate| *rate < -0.5), "{zoom_rates:?}");
+        assert!(
+            zoom_rates.last().is_some_and(|rate| *rate < -0.5),
+            "{zoom_rates:?}"
+        );
         // Swapping hands makes the right the zoom.
         let mut swapped = Controls::new(false);
         let mut got = Vec::new();
@@ -725,7 +758,10 @@ mod tests {
             controls.feed(&[pinching_at(0.5, 0.5, true)], f64::from(step) * 0.05);
         }
         assert!(controls.busy());
-        assert!(controls.feed(&[], 0.2).controls.is_empty(), "a flicker is forgiven");
+        assert!(
+            controls.feed(&[], 0.2).controls.is_empty(),
+            "a flicker is forgiven"
+        );
         assert_eq!(controls.feed(&[], 0.5).controls, [Control::StickEnd]);
     }
 
@@ -809,7 +845,10 @@ mod tests {
     #[test]
     fn a_hand_that_drifts_or_wobbles_is_not_a_sweep() {
         assert!(sweep_across(false, (0.4, 0.5), (0.5, 0.5)).is_empty());
-        assert!(sweep_across(false, (0.2, 0.3), (0.5, 0.6)).is_empty(), "diagonal");
+        assert!(
+            sweep_across(false, (0.2, 0.3), (0.5, 0.6)).is_empty(),
+            "diagonal"
+        );
         let mut slow = Sweep::new(false);
         let mut found = Vec::new();
         for step in 0..40 {

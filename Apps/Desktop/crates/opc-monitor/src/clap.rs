@@ -58,7 +58,8 @@ impl ClapDetector {
     fn block_done(&mut self) -> bool {
         self.clock += f64::from(BLOCK);
         let peak = self.block.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
-        let level = (self.block.iter().map(|s| s * s).sum::<f32>() / self.block.len() as f32).sqrt();
+        let level =
+            (self.block.iter().map(|s| s * s).sum::<f32>() / self.block.len() as f32).sqrt();
         let rising = level > 3.0 * self.last_level + 0.02;
         let loud = peak > FLOOR && peak > RATIO * self.room;
         self.last_level = level;
@@ -138,7 +139,17 @@ mod tests {
 
     #[test]
     fn it_rests_after_firing() {
-        let parts = vec![room(1.0), clap(), room(0.3), clap(), room(0.3), clap(), room(0.3), clap(), room(1.0)];
+        let parts = vec![
+            room(1.0),
+            clap(),
+            room(0.3),
+            clap(),
+            room(0.3),
+            clap(),
+            room(0.3),
+            clap(),
+            room(1.0),
+        ];
         assert_eq!(run(&parts), 1);
     }
 }

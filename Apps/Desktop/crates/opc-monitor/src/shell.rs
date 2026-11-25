@@ -20,13 +20,13 @@ use opc_camera::capture::mode;
 use crate::assists::{
     guide_rect, AssistOptions, AssistTool, ZebraSteps, ZEBRA_HIGHLIGHT_STEPS, ZEBRA_MIDTONE_STEPS,
 };
+use crate::gesture::{Gesture, GestureAction, GestureMap};
 use crate::library::{Library, MediaAction, Player};
 use crate::luts::{self, LutChoice, LutMenu};
 use crate::moves::{can_send, MoveEngine, Program, Waypoint};
-use crate::gesture::{Gesture, GestureAction, GestureMap};
-use crate::presets::{self, Presets};
 use crate::pad::{PadAction, PadButton, REST as PAD_REST};
 use crate::prefs;
+use crate::presets::{self, Presets};
 use crate::scopes::{
     self, LightsReading, NdReading, Plate, ScopeOptions, ScopeSamples, ScopeScale,
     LIGHTS_COMPENSATION,
@@ -1339,7 +1339,9 @@ impl Shell {
             return;
         }
         let filled = (fraction * 10.0) as usize;
-        let bar: String = (0..10).map(|i| if i < filled { '#' } else { '-' }).collect();
+        let bar: String = (0..10)
+            .map(|i| if i < filled { '#' } else { '-' })
+            .collect();
         let what = if self.hud.status.is_recording {
             "STOP RECORDING"
         } else {
@@ -1349,7 +1351,12 @@ impl Shell {
     }
 
     /// A pinching hand's control, `dt` seconds after the last one.
-    pub fn hand_control(&mut self, control: crate::hand::Control, dt: f64, now: f64) -> Vec<Intent> {
+    pub fn hand_control(
+        &mut self,
+        control: crate::hand::Control,
+        dt: f64,
+        now: f64,
+    ) -> Vec<Intent> {
         use crate::hand::Control;
         if self.screen != Screen::Viewfinder || !self.hand_control_on() {
             return Vec::new();
@@ -1380,7 +1387,13 @@ impl Shell {
                     return Vec::new();
                 }
                 let current = self.controls.zoom();
-                let next = zoom_trigger_step(current, out, into, dt.clamp(0.0, 0.1), self.zoom_rules.max());
+                let next = zoom_trigger_step(
+                    current,
+                    out,
+                    into,
+                    dt.clamp(0.0, 0.1),
+                    self.zoom_rules.max(),
+                );
                 if (next - current).abs() < 0.005 {
                     return Vec::new();
                 }
@@ -2432,14 +2445,18 @@ impl Shell {
             return Vec::new();
         }
         if matches!(key, Key::Char('j' | 'J')) {
-            let source = self
-                .prefs_path
-                .as_ref()
-                .map_or(crate::appsettings::GestureSource::CameraFeed, |prefs| {
+            let source = self.prefs_path.as_ref().map_or(
+                crate::appsettings::GestureSource::CameraFeed,
+                |prefs| {
                     crate::appsettings::load_at(&crate::appsettings::path_beside(prefs))
                         .gesture_source
-                });
-            self.set_gestures(if self.gestures.is_some() { None } else { Some(source) });
+                },
+            );
+            self.set_gestures(if self.gestures.is_some() {
+                None
+            } else {
+                Some(source)
+            });
             return Vec::new();
         }
         if let Key::Char(digit @ '1'..='6') = key {
@@ -3857,7 +3874,11 @@ impl Shell {
         const TIP: opc_ui::canvas::Colour = [255, 196, 0, 255];
         let mirror = self.toggles.mirror;
         let map = |(x, y): (f32, f32)| {
-            let u = if mirror { 1.0 - f64::from(x) } else { f64::from(x) };
+            let u = if mirror {
+                1.0 - f64::from(x)
+            } else {
+                f64::from(x)
+            };
             (
                 (fit.x + u * fit.width) as i64,
                 (fit.y + f64::from(y) * fit.height) as i64,
@@ -3867,7 +3888,11 @@ impl Shell {
         let status = if self.hand_status.is_empty() {
             "HAND VIEW: turn on gestures (J) and watch the camera picture (Moves sheet, K)"
                 .to_string()
-        } else if self.hand_scene.as_ref().is_some_and(|scene| !scene.hands.is_empty()) {
+        } else if self
+            .hand_scene
+            .as_ref()
+            .is_some_and(|scene| !scene.hands.is_empty())
+        {
             format!("HAND VIEW  {}", self.hand_status)
         } else {
             format!("HAND VIEW  {}  no hand", self.hand_status)
@@ -3949,7 +3974,13 @@ impl Shell {
                 // The hold bar: full means the gesture fires.
                 let bar = (f64::from(used) * f64::from(scene.hold.clamp(0.0, 1.0))) as u32;
                 canvas.fill(bx - 4, label_y + 20, used, 4, [255, 255, 255, 60]);
-                canvas.fill(bx - 4, label_y + 20, bar, 4, if scene.hold >= 1.0 { TIP } else { bone });
+                canvas.fill(
+                    bx - 4,
+                    label_y + 20,
+                    bar,
+                    4,
+                    if scene.hold >= 1.0 { TIP } else { bone },
+                );
             }
         }
         // A pinch being held: where it began, where it is, and the line between.

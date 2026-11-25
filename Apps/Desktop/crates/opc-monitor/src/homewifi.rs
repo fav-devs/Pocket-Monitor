@@ -73,7 +73,11 @@ const HOME_HEADER: &str = "openpocketcine-desktop-homewifi-v1";
 
 impl HomeNetwork {
     pub fn to_text(&self) -> String {
-        let sealed: String = self.sealed_password.iter().map(|b| format!("{b:02x}")).collect();
+        let sealed: String = self
+            .sealed_password
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         format!("{HOME_HEADER}\nssid={}\nsealed={sealed}\n", self.ssid)
     }
 
@@ -378,7 +382,10 @@ Ethernet adapter Bluetooth Network Connection:
 ";
         assert_eq!(
             networks_from_ipconfig(text),
-            [(Ipv4Addr::new(10, 0, 0, 205), Ipv4Addr::new(255, 255, 255, 0))]
+            [(
+                Ipv4Addr::new(10, 0, 0, 205),
+                Ipv4Addr::new(255, 255, 255, 0)
+            )]
         );
     }
 

@@ -89,19 +89,19 @@ mod ble_impl;
 #[cfg(opc_core_linked)]
 mod connect;
 #[cfg(opc_core_linked)]
+mod home;
+#[cfg(opc_core_linked)]
 mod link;
 #[cfg(opc_core_linked)]
-mod mic;
-#[cfg(opc_core_linked)]
 mod media;
+#[cfg(opc_core_linked)]
+mod mic;
 #[cfg(opc_core_linked)]
 mod station;
 #[cfg(opc_core_linked)]
 mod view;
 #[cfg(opc_core_linked)]
 mod webcam;
-#[cfg(opc_core_linked)]
-mod home;
 
 #[cfg(not(opc_core_linked))]
 const NO_CORE: &str = "this build has no Swift core linked, so it cannot open a camera. \
@@ -162,8 +162,7 @@ const SAVED_WIFI_FAST_PATH_TIMEOUT: std::time::Duration = std::time::Duration::f
 
 fn main() -> ExitCode {
     keep_timers_fast();
-    if std::env::args().any(|arg| arg == "--gestures")
-        || opc_monitor::appsettings::load().gestures
+    if std::env::args().any(|arg| arg == "--gestures") || opc_monitor::appsettings::load().gestures
     {
         std::env::set_var("OPC_GESTURES", "1");
     }
@@ -867,7 +866,10 @@ mod lan_camera {
             .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-        Some(root.join("OpenPocketCine").join("desktop-lan-camera-v1.txt"))
+        Some(
+            root.join("OpenPocketCine")
+                .join("desktop-lan-camera-v1.txt"),
+        )
     }
 
     pub fn save(ip: Ipv4Addr, model: Option<i32>) {
@@ -876,9 +878,14 @@ mod lan_camera {
             let _ = std::fs::create_dir_all(folder);
         }
         let model = model.map(|m| m.to_string()).unwrap_or_default();
-        let _ = std::fs::write(path, format!("{ip}
+        let _ = std::fs::write(
+            path,
+            format!(
+                "{ip}
 {model}
-"));
+"
+            ),
+        );
     }
 
     pub fn forget() {

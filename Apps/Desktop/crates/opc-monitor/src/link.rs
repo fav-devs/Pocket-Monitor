@@ -205,7 +205,15 @@ fn run(
             Ok(polled) => polled,
             Err(error) => {
                 link_log!("UDP poll failed: {error}");
-                match reconnect(&error.to_string(), remote, session_id, base_seq, commands, events, &mut log) {
+                match reconnect(
+                    &error.to_string(),
+                    remote,
+                    session_id,
+                    base_seq,
+                    commands,
+                    events,
+                    &mut log,
+                ) {
                     Some(fresh) => {
                         session = fresh;
                         if let Some(model_id) = model_id {
@@ -318,7 +326,9 @@ fn run(
                 SessionEvent::Unreachable => {
                     link_log!("camera did not answer its UDP session handshake");
                     let reason = "the camera did not answer — is this machine on its Wi-Fi?";
-                    match reconnect(reason, remote, session_id, base_seq, commands, events, &mut log) {
+                    match reconnect(
+                        reason, remote, session_id, base_seq, commands, events, &mut log,
+                    ) {
                         Some(fresh) => {
                             session = fresh;
                             if let Some(model_id) = model_id {

@@ -70,7 +70,9 @@ impl Gesture {
             Gesture::Point => "Hold up one finger for one second",
             Gesture::Two => "Hold up two fingers for one second",
             Gesture::Horns => "Index and little finger out, the others folded, for about a second",
-            Gesture::FaceTrack => "Open your hand and close it to a fist, quickly, three times over",
+            Gesture::FaceTrack => {
+                "Open your hand and close it to a fist, quickly, three times over"
+            }
         }
     }
 
@@ -360,13 +362,19 @@ mod tests {
         read.read_line("gesture.unknown=flip");
         read.read_line("nonsense");
         assert_eq!(read, map);
-        assert_eq!(GestureMap::default().get(Gesture::Palm), GestureAction::Stop);
+        assert_eq!(
+            GestureMap::default().get(Gesture::Palm),
+            GestureAction::Stop
+        );
     }
 
     #[test]
     fn a_sweep_across_is_one_swipe() {
         let mut tracker = Tracker::new(false);
-        assert_eq!(sweep(&mut tracker, (4, 20), (48, 20)), [Gesture::SwipeRight]);
+        assert_eq!(
+            sweep(&mut tracker, (4, 20), (48, 20)),
+            [Gesture::SwipeRight]
+        );
         let mut tracker = Tracker::new(false);
         assert_eq!(sweep(&mut tracker, (48, 20), (4, 20)), [Gesture::SwipeLeft]);
     }

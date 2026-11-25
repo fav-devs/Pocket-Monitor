@@ -709,10 +709,11 @@ impl View {
         let mut dt = 0.0;
         if let (Some(feed), Some(picture)) = (self.feed_gestures.as_mut(), self.latest.as_ref()) {
             let pose = opc_monitor::moves::Waypoint::from_status(self.shell.status());
-            let holds: Vec<(opc_monitor::gesture::Gesture, f64)> = opc_monitor::gesture::Gesture::ALL
-                .iter()
-                .map(|gesture| (*gesture, self.shell.gesture_hold_seconds(*gesture)))
-                .collect();
+            let holds: Vec<(opc_monitor::gesture::Gesture, f64)> =
+                opc_monitor::gesture::Gesture::ALL
+                    .iter()
+                    .map(|gesture| (*gesture, self.shell.gesture_hold_seconds(*gesture)))
+                    .collect();
             let tuning = Tuning {
                 holds: &holds,
                 stick_is_right: self.shell.stick_is_right(),
@@ -1463,7 +1464,6 @@ fn fresh_session() -> (u16, u16) {
     (session_id, base_seq)
 }
 
-
 /// What the picture reader needs to know from the shell each time.
 struct Tuning<'a> {
     /// How long each gesture has to be held.
@@ -1590,8 +1590,8 @@ impl FeedGestures {
         if now - self.last_sent >= 1.0 / 20.0 && picture.width > 0 && picture.height > 0 {
             let ask_faces = want_faces && now - self.last_face_ask >= 0.25;
             let width = 480usize;
-            let height = ((width as u64 * u64::from(picture.height)
-                / u64::from(picture.width)) as usize)
+            let height = ((width as u64 * u64::from(picture.height) / u64::from(picture.width))
+                as usize)
                 .max(2);
             let rgb = opc_monitor::scopes::small_rgb(picture, width, height);
             if self.worker.submit(rgb, width, height, ask_faces) {
@@ -1672,7 +1672,8 @@ impl FeedGestures {
         // Poses and sweeps come from a hand that is not pinching: the stick hand's if
         // both are free.
         let free = |hand: &&opc_monitor::handnet::Hand| {
-            !self.controls.busy() && opc_monitor::hand::pinch_ratio(hand) > opc_monitor::hand::PINCH_OFF
+            !self.controls.busy()
+                && opc_monitor::hand::pinch_ratio(hand) > opc_monitor::hand::PINCH_OFF
         };
         let posing = hands
             .iter()

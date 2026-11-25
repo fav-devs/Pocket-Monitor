@@ -1461,7 +1461,10 @@ pub fn headless(args: &[String]) -> Result<(), String> {
                         result = Ok(());
                         break;
                     }
-                    BleEvent::StationDone { identity, confirmed } => {
+                    BleEvent::StationDone {
+                        identity,
+                        confirmed,
+                    } => {
                         println!("station done; confirmed={confirmed}; searching the LAN…");
                         match station::find_camera(&identity, None) {
                             Some(addr) => {
@@ -1483,7 +1486,9 @@ pub fn headless(args: &[String]) -> Result<(), String> {
             let _ = worker.join();
             result
         }
-        _ => Err("usage: opc-monitor headless scan [--seconds N] | pair | station --ssid NAME".into()),
+        _ => Err(
+            "usage: opc-monitor headless scan [--seconds N] | pair | station --ssid NAME".into(),
+        ),
     }
 }
 

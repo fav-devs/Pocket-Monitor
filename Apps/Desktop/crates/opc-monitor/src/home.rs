@@ -11,7 +11,9 @@ use std::time::Duration;
 
 use eframe::egui::{self, Align, FontId, Layout, RichText, Stroke, Vec2};
 
-use crate::connect::{accent_button, ghost_button, ACCENT, BG, BORDER, DIM, ERR, SUCCESS, SURFACE, TEXT};
+use crate::connect::{
+    accent_button, ghost_button, ACCENT, BG, BORDER, DIM, ERR, SUCCESS, SURFACE, TEXT,
+};
 use opc_monitor::appsettings::{self, AppSettings};
 use opc_monitor::gesture::{Gesture, GestureAction, GestureMap};
 use opc_monitor::homewifi::SavedStation;
@@ -244,7 +246,8 @@ impl eframe::App for HomeApp {
         visuals.widgets.inactive.bg_fill = SURFACE;
         visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(40, 40, 40);
         visuals.widgets.active.bg_fill = ACCENT;
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, egui::Color32::from_rgb(110, 110, 110));
+        visuals.widgets.inactive.bg_stroke =
+            Stroke::new(1.0, egui::Color32::from_rgb(110, 110, 110));
         visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
         visuals.selection.bg_fill = ACCENT;
         visuals.selection.stroke = Stroke::new(1.5, egui::Color32::BLACK);

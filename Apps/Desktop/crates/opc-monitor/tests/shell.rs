@@ -2117,7 +2117,10 @@ fn raising_or_lowering_a_hand_never_flips_the_camera() {
 fn recording_by_gesture_takes_a_long_hold_and_the_rest_a_short_one() {
     use opc_monitor::gesture::Gesture;
     let mut shell = framed();
-    assert!(shell.gesture_hold_seconds(Gesture::Two) >= 2.0, "the peace sign records");
+    assert!(
+        shell.gesture_hold_seconds(Gesture::Two) >= 2.0,
+        "the peace sign records"
+    );
     assert!(shell.gesture_hold_seconds(Gesture::Fist) < 1.5);
     shell.set_phase(opc_ui::Phase::Live);
     assert_eq!(
@@ -2126,7 +2129,11 @@ fn recording_by_gesture_takes_a_long_hold_and_the_rest_a_short_one() {
     );
     // While the hold is part-way, the top bar says what it is about to do.
     shell.gesture_progress(Gesture::Two, 0.5);
-    assert!(shell.notice(1.1).contains("RECORD"), "{}", shell.notice(1.1));
+    assert!(
+        shell.notice(1.1).contains("RECORD"),
+        "{}",
+        shell.notice(1.1)
+    );
     shell.gesture_progress(Gesture::Fist, 0.5);
 }
 
@@ -2150,7 +2157,11 @@ fn a_pinching_hand_drives_the_stick_and_the_other_the_zoom() {
     // Zooming in for a while sends zoom commands.
     let mut zooming = 0;
     for step in 0..20 {
-        let out = shell.hand_control(Control::Zoom { rate: 1.0 }, 0.05, 2.0 + f64::from(step) * 0.05);
+        let out = shell.hand_control(
+            Control::Zoom { rate: 1.0 },
+            0.05,
+            2.0 + f64::from(step) * 0.05,
+        );
         zooming += sent(&out).len();
     }
     assert!(zooming > 0, "zooming in sends commands");
@@ -2166,11 +2177,18 @@ fn the_face_gesture_asks_for_a_face_and_a_second_one_stops_tracking() {
     shell.set_phase(opc_ui::Phase::Live);
     assert!(!shell.take_face_request());
     assert!(shell.gesture(Gesture::FaceTrack, 1.0).is_empty());
-    assert!(shell.take_face_request(), "the reader is asked to find a face");
+    assert!(
+        shell.take_face_request(),
+        "the reader is asked to find a face"
+    );
     assert!(!shell.take_face_request(), "once");
     // A face found goes to the camera as a tracking box and the shell then follows it.
     let out = shell.track_region((0.4, 0.2, 0.2, 0.3), 2.0);
-    assert!(matches!(sent(&out).as_slice(), [Command::TrackSet { .. }]), "{:?}", sent(&out));
+    assert!(
+        matches!(sent(&out).as_slice(), [Command::TrackSet { .. }]),
+        "{:?}",
+        sent(&out)
+    );
     assert!(shell.is_tracking());
     // Doing the gesture again lets go.
     let out = shell.gesture(Gesture::FaceTrack, 3.0);

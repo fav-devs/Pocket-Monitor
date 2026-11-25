@@ -343,7 +343,12 @@ impl HandNet {
         let size = PALM_SIZE as f32;
         // Box and keypoints are offsets from the anchor, as fractions of the model's input;
         // back to frame pixels by undoing the letterbox.
-        let to_frame = |nx: f32, ny: f32| (rx + (nx * size - pad_x) / ratio, ry + (ny * size - pad_y) / ratio);
+        let to_frame = |nx: f32, ny: f32| {
+            (
+                rx + (nx * size - pad_x) / ratio,
+                ry + (ny * size - pad_y) / ratio,
+            )
+        };
         let mut crops: Vec<Crop> = Vec::new();
         for (index, _) in candidates {
             let row = &boxes[index * stride..index * stride + stride];
@@ -365,8 +370,8 @@ impl HandNet {
             };
             let (wrist, middle) = (keypoint(0), keypoint(2));
             // Tilt so the wrist-to-middle-finger line points up.
-            let angle = std::f32::consts::FRAC_PI_2
-                - (-(middle.1 - wrist.1)).atan2(middle.0 - wrist.0);
+            let angle =
+                std::f32::consts::FRAC_PI_2 - (-(middle.1 - wrist.1)).atan2(middle.0 - wrist.0);
             let angle = angle
                 - std::f32::consts::TAU
                     * ((angle + std::f32::consts::PI) / std::f32::consts::TAU).floor();
@@ -386,7 +391,12 @@ impl HandNet {
     }
 
     /// Runs the landmark model on `crop`. On success the hand, and the crop for next time.
-    fn read_landmarks(&mut self, frame: &Frame, crop: Crop, min_score: f32) -> Option<(Hand, Crop)> {
+    fn read_landmarks(
+        &mut self,
+        frame: &Frame,
+        crop: Crop,
+        min_score: f32,
+    ) -> Option<(Hand, Crop)> {
         let mut input = vec![0f32; HAND_SIZE * HAND_SIZE * 3];
         for y in 0..HAND_SIZE {
             for x in 0..HAND_SIZE {
@@ -420,7 +430,9 @@ impl HandNet {
         // Next crop: the hand's own tilt, centred on what the landmarks cover.
         let (wrist, middle) = (pixels[0], pixels[9]);
         let angle = std::f32::consts::FRAC_PI_2 - (-(middle.1 - wrist.1)).atan2(middle.0 - wrist.0);
-        let angle = angle - std::f32::consts::TAU * ((angle + std::f32::consts::PI) / std::f32::consts::TAU).floor();
+        let angle = angle
+            - std::f32::consts::TAU
+                * ((angle + std::f32::consts::PI) / std::f32::consts::TAU).floor();
         let (s, c) = angle.sin_cos();
         let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
         for &(x, y) in &pixels {
@@ -579,7 +591,10 @@ mod tests {
         for _ in 0..3 {
             assert!(net.detect(&wall, 480, 270).is_empty());
         }
-        assert!(net.detect(&[0u8; 30], 480, 270).is_empty(), "a wrong-sized frame");
+        assert!(
+            net.detect(&[0u8; 30], 480, 270).is_empty(),
+            "a wrong-sized frame"
+        );
         let black = vec![0u8; 480 * 270 * 3];
         assert!(net.detect(&black, 480, 270).is_empty());
     }
@@ -594,9 +609,15 @@ mod tests {
         };
         // Turned a quarter clockwise, the crop's right is the frame's down.
         let (x, y) = crop.to_frame(10.0, 0.0);
-        assert!((x - 100.0).abs() < 1e-3 && (y - 110.0).abs() < 1e-3, "{x} {y}");
+        assert!(
+            (x - 100.0).abs() < 1e-3 && (y - 110.0).abs() < 1e-3,
+            "{x} {y}"
+        );
         let (x, y) = crop.to_frame(0.0, -10.0);
-        assert!((x - 110.0).abs() < 1e-3 && (y - 100.0).abs() < 1e-3, "{x} {y}");
+        assert!(
+            (x - 110.0).abs() < 1e-3 && (y - 100.0).abs() < 1e-3,
+            "{x} {y}"
+        );
     }
 
     #[test]
