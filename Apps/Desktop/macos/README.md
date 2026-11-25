@@ -65,6 +65,17 @@ error. Windows and other platforms retain btleplug 0.11. macOS connection setup
 (including service discovery and notification subscription) times out after 30 seconds,
 cancels the pending connection, and requires a fresh scan before retrying. Keep the
 camera awake, close DJI Mimo on the phone, and accept any pairing prompt on the camera.
+Before reconnecting, the macOS shell retrieves the camera by its CoreBluetooth UUID.
+This refreshes the device record removed on disconnect, including the reconnect
+between initial pairing and sending home Wi-Fi settings.
+
+On a patched Realtek Bluetooth stack, native CoreBluetooth itself may remain in
+`connecting` before service discovery. An independent native probe reproduced this
+on the RTL8852C with BlueToolFixup: the host waits for PHY/data-length negotiation.
+A machine-specific legacy-LE compatibility workaround allowed native service discovery
+and app pairing. This is a system Bluetooth compatibility issue; seeing the camera
+in macOS Bluetooth Settings does not verify the application connection. The workaround
+limits optional 2M PHY and data-length extension; it is not shipped inside this app.
 BLE diagnostics are written to `~/.config/OpenPocketCine/opc-ble.log` (or under
 `XDG_CONFIG_HOME` when set), outside the signed app bundle to preserve its resource seal.
 

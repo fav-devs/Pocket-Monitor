@@ -321,6 +321,47 @@ impl BleTransport for BtleplugTransport {
             )
         })?;
 
+        #[cfg(target_os = "macos")]
+        let p = {
+            // CoreBluetooth removes its backend record after disconnect. Pairing
+            // deliberately disconnects before the operator enters home Wi-Fi;
+            // retrieve the UUID again so provisioning gets a new live record.
+            use btleplug::api::RetrievePeripheralsOptions;
+            let adapter = self.get_adapter()?;
+            let id = p.id();
+            let refreshed = self.rt.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    adapter.retrieve_peripherals(RetrievePeripheralsOptions {
+                        identifiers: Some(vec![id.clone()]),
+                        services: None,
+                    }),
+                )
+                .await
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Retrieving the camera timed out; scan again.",
+                    )
+                })?
+                .map_err(io_err)?
+                .into_iter()
+                .find(|candidate| candidate.id() == id)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "Camera no longer available; scan again.",
+                    )
+                })
+            })?;
+            self.found.insert(address.to_string(), refreshed.clone());
+            if let Ok(mut pending) = self.notifications.lock() {
+                pending.clear();
+            }
+            blog!(log, "  refreshed CoreBluetooth peripheral");
+            refreshed
+        };
+
         let setup = async {
             blog!(log, "  calling p.connect()");
             p.connect()
