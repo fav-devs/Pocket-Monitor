@@ -118,3 +118,12 @@ This packaging script is for local builds. Homebrew's FFmpeg enables GPL compone
 do not publish this app as an LGPL-only release. Public release packaging needs the
 same FFmpeg licence review as `build-release.ps1`, plus the licences/source obligations
 of all bundled dependencies. No unofficial LUTs are bundled.
+
+### Finding a camera on home Wi-Fi
+
+The macOS LAN search reads active broadcast IPv4 interfaces with `/sbin/ifconfig -a`,
+including macOS hexadecimal subnet masks, rather than relying on Linux's `ip`
+command. Loopback, point-to-point VPNs and inactive interfaces are excluded.
+After the camera accepts home Wi-Fi settings, discovery probes the Mac's local
+subnet and verifies the camera protocol identity. The existing search bounds
+(up to /22 and 45 seconds) still apply. Windows retains its `ipconfig` path.

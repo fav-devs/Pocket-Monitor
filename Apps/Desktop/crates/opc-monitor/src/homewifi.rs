@@ -194,6 +194,71 @@ pub fn networks_from_ip_addr(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
         .collect()
 }
 
+/// Active broadcast IPv4 interfaces in macOS `ifconfig -a` output.
+/// macOS prints masks in hexadecimal; loopback and point-to-point VPNs are
+/// excluded so camera discovery searches the local LAN rather than tunnels.
+pub fn networks_from_ifconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    let mut networks = Vec::new();
+    let mut usable = false;
+    for line in text.lines() {
+        if !line.starts_with(char::is_whitespace) && line.contains(": flags=") {
+            let flags = line
+                .split_once('<')
+                .and_then(|(_, rest)| rest.split_once('>'));
+            usable = flags.is_some_and(|(flags, _)| {
+                let flags: Vec<_> = flags.split(',').collect();
+                flags.contains(&"UP")
+                    && flags.contains(&"RUNNING")
+                    && flags.contains(&"BROADCAST")
+                    && !flags.contains(&"LOOPBACK")
+                    && !flags.contains(&"POINTOPOINT")
+            });
+            continue;
+        }
+        if !usable {
+            continue;
+        }
+        let words: Vec<_> = line.split_whitespace().collect();
+        if words.first() != Some(&"inet") {
+            continue;
+        }
+        let Some(address) = words.get(1).and_then(|s| s.parse::<Ipv4Addr>().ok()) else {
+            continue;
+        };
+        if address.is_unspecified()
+            || address.is_loopback()
+            || address.is_link_local()
+            || address.is_multicast()
+            || address.is_broadcast()
+        {
+            continue;
+        }
+        let Some(mask_text) = words
+            .windows(2)
+            .find(|pair| pair[0] == "netmask")
+            .map(|pair| pair[1])
+        else {
+            continue;
+        };
+        let mask = if let Some(hex) = mask_text.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16).ok().map(Ipv4Addr::from)
+        } else {
+            mask_text.parse::<Ipv4Addr>().ok()
+        };
+        let Some(mask) = mask else {
+            continue;
+        };
+        let host_bits = !u32::from(mask);
+        if u32::from(mask) == 0 || host_bits & host_bits.wrapping_add(1) != 0 {
+            continue;
+        }
+        if !networks.contains(&(address, mask)) {
+            networks.push((address, mask));
+        }
+    }
+    networks
+}
+
 /// The SSID in `netsh wlan show interfaces` output, if the machine is on Wi-Fi.
 pub fn ssid_from_netsh(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
@@ -327,6 +392,50 @@ Ethernet adapter Bluetooth Network Connection:
             networks_from_ip_addr(text),
             [(Ipv4Addr::new(10, 0, 0, 7), Ipv4Addr::new(255, 255, 252, 0))]
         );
+    }
+
+    #[test]
+    fn macos_ifconfig_reads_active_lans_and_skips_loopback_vpn_and_down_interfaces() {
+        let text = "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+    inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    inet6 fe80::1%en0 prefixlen 64
+    inet 10.0.0.58 netmask 0xffffff00 broadcast 10.0.0.255
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+    inet 100.64.0.2 --> 100.64.0.2 netmask 0xffffffff
+en1: flags=8862<BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    inet 192.168.1.3 netmask 0xffffff00 broadcast 192.168.1.255
+";
+        assert_eq!(
+            networks_from_ifconfig(text),
+            [(Ipv4Addr::new(10, 0, 0, 58), Ipv4Addr::new(255, 255, 255, 0))]
+        );
+    }
+
+    #[test]
+    fn macos_ifconfig_keeps_alias_networks_and_rejects_malformed_and_unusable_addresses() {
+        let text = "en0: flags=8863<UP,BROADCAST,RUNNING,MULTICAST> mtu 1500
+    inet 10.1.0.7 netmask 0xfffffc00 broadcast 10.1.3.255
+    inet 192.168.50.7 netmask 255.255.255.0
+    inet 192.168.50.7 netmask 0xffffff00
+    inet 10.2.0.7 netmask 0xff00ff00
+    inet 10.3.0.7 netmask 0xnothex
+    inet 10.4.0.7
+    inet 169.254.10.7 netmask 0xffff0000
+    inet 0.0.0.0 netmask 0xffffff00
+    inet 224.0.0.1 netmask 0xffffff00
+";
+        assert_eq!(
+            networks_from_ifconfig(text),
+            [
+                (Ipv4Addr::new(10, 1, 0, 7), Ipv4Addr::new(255, 255, 252, 0)),
+                (
+                    Ipv4Addr::new(192, 168, 50, 7),
+                    Ipv4Addr::new(255, 255, 255, 0)
+                ),
+            ]
+        );
+        assert!(networks_from_ifconfig("ifconfig failed").is_empty());
     }
 
     #[test]

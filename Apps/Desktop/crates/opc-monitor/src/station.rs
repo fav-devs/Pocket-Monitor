@@ -208,6 +208,18 @@ pub fn local_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
             .output()
             .map(|output| networks_from_ipconfig(&String::from_utf8_lossy(&output.stdout)))
             .unwrap_or_default()
+    } else if cfg!(target_os = "macos") {
+        tool("/sbin/ifconfig")
+            .arg("-a")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                opc_monitor::homewifi::networks_from_ifconfig(&String::from_utf8_lossy(
+                    &output.stdout,
+                ))
+            })
+            .unwrap_or_default()
     } else {
         tool("ip")
             .args(["-o", "-4", "addr"])
