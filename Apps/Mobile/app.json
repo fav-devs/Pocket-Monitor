@@ -6,7 +6,7 @@
     "version": "0.1.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#08090A",
     "ios": {
       "bundleIdentifier": "com.favdevs.pocketmonitor",
