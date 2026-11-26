@@ -94,7 +94,7 @@ public final class OpcGamepadModule: Module {
     let controller = GCController.controllers().first { $0.extendedGamepad != nil }
     boundController = controller
     guard let controller, let pad = controller.extendedGamepad else {
-      send(OpcGamepadStateEvent(connected: false, name: nil), force: true)
+      send(Self.disconnected, force: true)
       return
     }
     controller.handlerQueue = q
@@ -127,9 +127,16 @@ public final class OpcGamepadModule: Module {
     onGamepad(state)
   }
 
+  /// The macro's memberwise init has no defaults for non-optional fields; spell them out.
+  private static let disconnected = OpcGamepadStateEvent(
+    connected: false, name: nil, leftX: 0, leftY: 0, rightX: 0, rightY: 0, l2: 0, r2: 0,
+    buttons: OpcGamepadButtons(
+      a: false, b: false, x: false, y: false, l1: false, r1: false,
+      up: false, down: false, left: false, right: false, menu: false))
+
   private static func snapshot(_ controller: GCController) -> OpcGamepadStateEvent {
     guard let pad = controller.extendedGamepad else {
-      return OpcGamepadStateEvent(connected: false, name: nil)
+      return Self.disconnected
     }
     let buttons = OpcGamepadButtons(
       a: pad.buttonA.isPressed, b: pad.buttonB.isPressed,

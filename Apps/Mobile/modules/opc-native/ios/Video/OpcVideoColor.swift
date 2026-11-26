@@ -192,7 +192,7 @@ struct OpcPictureEffects: Equatable {
     guard let dict else { return fx }
     fx.sourceColor = OpcVideoTransfer(js: dict["sourceColor"] as? String)
     fx.lutId = dict["lutId"] as? String
-    fx.lutIntensity = Float(clampDouble(number(dict["lutIntensity"]) ?? 1, 0, 1))
+    fx.lutIntensity = Float(opcVideoClamp(number(dict["lutIntensity"]) ?? 1, 0, 1))
     switch dict["falseColor"] as? String {
     case "cinestop": fx.falseColor = 1
     case "video": fx.falseColor = 2
@@ -245,7 +245,7 @@ struct OpcPictureEffects: Equatable {
   }
 }
 
-func clampDouble(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v)) }
+func opcVideoClamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v)) }
 
 /// Seventeen float4 slots, the same order in MSL, GLSL (Android `uFx[17]`) and the web.
 struct OpcVideoFxUniforms {

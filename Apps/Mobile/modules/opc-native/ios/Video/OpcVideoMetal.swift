@@ -51,8 +51,9 @@ final class OpcVideoMetal {
     self.queue = queue
     queue.label = "opc.video"
     let options = MTLCompileOptions()
-    // VERIFY: fastMathEnabled is deprecated on newer SDKs in favour of mathMode; both default on.
-    library = try device.makeLibrary(source: opcVideoShaderSource, options: options)
+    // Default options (fast math on); the transfer curves tolerate it.
+    let lib = try device.makeLibrary(source: opcVideoShaderSource, options: options)
+    library = lib
 
     var cache: CVMetalTextureCache?
     guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess,
@@ -61,7 +62,7 @@ final class OpcVideoMetal {
     textureCache = cache
 
     func fn(_ name: String) throws -> MTLFunction {
-      guard let f = library.makeFunction(name: name) else { throw Failure.function(name) }
+      guard let f = lib.makeFunction(name: name) else { throw Failure.function(name) }
       return f
     }
     let vertex = try fn("opc_fullscreen_vertex")
