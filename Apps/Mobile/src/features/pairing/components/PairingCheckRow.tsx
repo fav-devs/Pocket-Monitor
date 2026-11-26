@@ -10,7 +10,7 @@ export type CheckState = 'complete' | 'active' | 'waiting' | 'failed';
 
 export interface PairingCheck {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   state: CheckState;
   stateLabel: string;
   icon?: IconSvgElement;
@@ -28,7 +28,7 @@ export function PairingCheckRow({ check }: { check: PairingCheck }) {
   return (
     <View
       accessible
-      accessibilityLabel={`${check.title}, ${check.subtitle}, ${check.stateLabel}`}
+      accessibilityLabel={[check.title, check.subtitle, check.stateLabel].filter(Boolean).join(', ')}
       style={[styles.row, state === 'waiting' && styles.waiting]}
     >
       <Squircle width={40} height={40} radius={13} color={well}>
@@ -38,9 +38,11 @@ export function PairingCheckRow({ check }: { check: PairingCheck }) {
         <Text numberOfLines={1} style={styles.title}>
           {check.title}
         </Text>
-        <Text numberOfLines={2} style={[styles.subtitle, state === 'failed' && { color: colors.destructive }]}>
-          {check.subtitle}
-        </Text>
+        {check.subtitle ? (
+          <Text numberOfLines={2} style={[styles.subtitle, state === 'failed' && { color: colors.destructive }]}>
+            {check.subtitle}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.trailing}>
         {state === 'active' ? (

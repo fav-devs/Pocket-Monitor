@@ -66,22 +66,20 @@ export function SessionRecoveryOverlay({
   if (!show) return null;
 
   let title: string;
-  let detail: string;
+  let detail: string | undefined;
   if (recovering) {
     title = 'Reconnecting';
-    detail = `${name} dropped. The picture holds the last frame while the link comes back.`;
+    detail = conn.detail;
   } else if (connecting) {
     title = 'Connecting';
-    detail = conn.detail ?? 'Starting live view';
+    detail = conn.detail;
   } else if (conn.phase === 'failed') {
     title = 'Connection paused';
-    detail = conn.error ?? `${name} stopped answering. Check that it is on and nearby.`;
+    detail = conn.error ?? `Check that ${name} is on and nearby.`;
   } else if (idle) {
     title = 'No camera connected';
-    detail = 'Choose a camera to start live view.';
   } else {
     title = 'Camera disconnected';
-    detail = `${name} is no longer connected.`;
   }
   const spinning = recovering || connecting;
 
@@ -95,8 +93,7 @@ export function SessionRecoveryOverlay({
         <Text style={styles.title} accessibilityRole="header">
           {title}
         </Text>
-        <Text style={styles.detail}>{detail}</Text>
-        {recovering && conn.detail ? <Text style={styles.status}>{conn.detail}</Text> : null}
+        {detail ? <Text style={styles.detail}>{detail}</Text> : null}
         {!connecting ? (
           <View style={styles.actions}>
             {idle ? (
@@ -137,7 +134,6 @@ function createStyles(_colors: ThemeColors) {
     },
     title: { marginTop: spacing.xs, fontFamily: fonts.semibold, fontSize: 20, color: onVideo.ink, textAlign: 'center' as const },
     detail: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: onVideo.inkMuted, textAlign: 'center' as const },
-    status: { fontFamily: fonts.medium, fontSize: 13, color: onVideo.ink, textAlign: 'center' as const },
     actions: { alignSelf: 'stretch' as const, flexDirection: 'row' as const, gap: spacing.sm, marginTop: spacing.sm },
     action: {
       flex: 1,

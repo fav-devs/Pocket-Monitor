@@ -91,8 +91,7 @@ export default function LiveScreen() {
   const { colors } = useTheme();
   const session = useCameraSession();
   const router = useRouter();
-  const params = useLocalSearchParams<{ demo?: string; bx?: string }>();
-  const bx = (k: string) => (params.bx ?? '').split(',').includes(k);
+  const params = useLocalSearchParams<{ demo?: string }>();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
 
@@ -359,10 +358,10 @@ export default function LiveScreen() {
       <StatusBar hidden={Platform.OS !== 'web'} style="light" />
       {/* Picture */}
       <View pointerEvents="none" style={[rectStyle(layout.picture), { backgroundColor: colors.preview, overflow: 'hidden' }]}>
-        {bx('pic') ? null : <LivePicture source={session.video} resizeMode={prefs.pictureFit} onPictureRect={setDrawn} />}
+        <LivePicture source={session.video} resizeMode={prefs.pictureFit} onPictureRect={setDrawn} />
       </View>
       <View pointerEvents="box-none" style={fill}>
-        {bx('ov') ? null : <AssistOverlays pictureRect={pictureRect} context="live" />}
+        <AssistOverlays pictureRect={pictureRect} context="live" />
       </View>
 
       {/* Feed touches sit above the picture and under the chrome. */}
@@ -373,16 +372,16 @@ export default function LiveScreen() {
       <ShutterFlash trigger={flash} />
 
       {/* Operator chrome */}
-      {chromeShown && !bx('chrome') ? (
+      {chromeShown ? (
         <View pointerEvents="box-none" style={[fill, { opacity: chromeOpacity }]}>
           <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
-            {bx('status') ? null : <LiveStatusChrome layout={layout} onBack={exit} />}
+            <LiveStatusChrome layout={layout} onBack={exit} />
             <Slot rect={layout.exposureGauge} pointerEvents="none">
-              {bx('gauge') ? null : <MonitorExposureGauge width={layout.exposureGauge.width} height={layout.exposureGauge.height} />}
+              <MonitorExposureGauge width={layout.exposureGauge.width} height={layout.exposureGauge.height} />
             </Slot>
-            {bx('strip') ? null : <CaptureControlBar layout={layout} />}
+            <CaptureControlBar layout={layout} />
             <View pointerEvents="box-none" style={{ position: 'absolute', left: layout.assists.x, bottom: h - maxY(layout.assists) }}>
-              {bx('assist') ? null : <AssistBar orientation={portrait ? 'portrait' : 'landscape'} />}
+              <AssistBar orientation={portrait ? 'portrait' : 'landscape'} />
             </View>
             {portrait ? (
               <Slot rect={layout.aspectToggle}>
@@ -397,7 +396,7 @@ export default function LiveScreen() {
             <Slot rect={layout.zoom}>
               <ZoomChip size={layout.zoom.width} disabled={!live} onOpenDial={() => ui.set({ zoomDialOpen: true, captureSheet: null, gimbalPanel: 'none' })} />
             </Slot>
-            {gimbalAvailable && !bx('stick') ? (
+            {gimbalAvailable ? (
               <>
                 <Slot rect={layout.gimbal}>
                   <LiveGimbalButton size={layout.gimbal.width} disabled={!live} />
@@ -445,10 +444,10 @@ export default function LiveScreen() {
           <LiveDispToggle />
         </Slot>
         <Slot rect={layout.record} style={{ alignItems: 'center', justifyContent: 'center' }}>
-          {bx('rec') ? null : <LiveRecordButton
+          <LiveRecordButton
             onPress={() => record.toggle()}
             onHold={() => ui.set({ captureSheet: 'mode', gimbalPanel: 'none', zoomDialOpen: false })}
-          />}
+          />
         </Slot>
       </View>
 
@@ -457,7 +456,7 @@ export default function LiveScreen() {
           <MotionRunPill />
         </View>
       ) : null}
-      {bx('sheet') ? null : <LiveSheetHost layout={layout} chromeShown={chromeShown} notice={stableNotice} />}
+      <LiveSheetHost layout={layout} chromeShown={chromeShown} notice={stableNotice} />
 
       {prefs.showRecordingBorder && recording ? <MonitorRecordingBorder /> : null}
       <MonitorTransientNotice notices={notices} onExpire={dismissNotice} top={ui.gimbalPanel === 'runPill' ? belowStatus + 52 : belowStatus} />

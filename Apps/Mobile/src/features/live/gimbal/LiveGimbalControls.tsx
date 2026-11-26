@@ -124,10 +124,9 @@ export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' 
       </View>
 
       <View>
-        <ToggleRow title="Direction Lock" detail="The stick moves one axis at a time" value={directionLock} onChange={(v) => setPref('directionLock', v)} />
+        <ToggleRow title="Direction Lock" value={directionLock} onChange={(v) => setPref('directionLock', v)} />
         <StepperRow
-          title="Ramp"
-          detail="Zoom preset travel time"
+          title="Zoom ramp"
           value={rampLabel(rampSeconds)}
           minusLabel="Shorter ramp"
           plusLabel="Longer ramp"
@@ -142,7 +141,7 @@ export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' 
         <SettingsRow
           icon={Route01Icon}
           title="Motion Control"
-          subtitle={setCount === 0 ? 'Repeatable A → B → C pan and tilt' : `${setCount} point${setCount === 1 ? '' : 's'} set`}
+          subtitle={setCount === 0 ? undefined : `${setCount} point${setCount === 1 ? '' : 's'} set`}
           chevron
           last
           onPress={() => set({ gimbalPanel: 'editor' })}

@@ -112,15 +112,12 @@ function EvSheet({ s }: { s: CameraState }) {
   const write = useWrite();
   const e = s.exposure;
   return (
-    <Stack>
-      <MonitorValueDrum
-        accessibilityLabel="Exposure compensation"
-        options={e.evOptions.map(evLabel)}
-        index={nearestIndex(e.evOptions, e.ev)}
-        onChange={(i) => write(control.setEv(e.evOptions[i]))}
-      />
-      <Hint>Auto exposure. The camera picks the shutter{e.shutterDenom ? ` (now ${shutterLabel(e.shutterDenom)})` : ''}.</Hint>
-    </Stack>
+    <MonitorValueDrum
+      accessibilityLabel="Exposure compensation"
+      options={e.evOptions.map(evLabel)}
+      index={nearestIndex(e.evOptions, e.ev)}
+      onChange={(i) => write(control.setEv(e.evOptions[i]))}
+    />
   );
 }
 
@@ -128,17 +125,12 @@ function ExposureSheet({ s }: { s: CameraState }) {
   const { control } = useCameraSession();
   const write = useWrite();
   return (
-    <Stack>
-      <ModeBar
-        accessibilityLabel="Exposure program"
-        tabs={['Auto', 'Manual']}
-        selected={s.exposure.mode === 'auto' ? 0 : 1}
-        onSelect={(i) => write(control.setExposureMode(i === 0 ? 'auto' : 'manual'))}
-      />
-      <Hint>
-        {s.exposure.mode === 'auto' ? 'The camera sets ISO and shutter. EV biases brightness.' : 'You set ISO and shutter. Exposure stays fixed while you shoot.'}
-      </Hint>
-    </Stack>
+    <ModeBar
+      accessibilityLabel="Exposure program"
+      tabs={['Auto', 'Manual']}
+      selected={s.exposure.mode === 'auto' ? 0 : 1}
+      onSelect={(i) => write(control.setExposureMode(i === 0 ? 'auto' : 'manual'))}
+    />
   );
 }
 
@@ -177,7 +169,7 @@ function WbSheet({ s }: { s: CameraState }) {
             onChange={(i) => write(control.setWhiteBalance({ kelvin: kelvins[i] }))}
           />
           <StepperRow
-            title="Tint"
+            title="Tint G–M"
             value={tint > 0 ? `+${tint}` : String(tint)}
             minusLabel="Tint toward green"
             plusLabel="Tint toward magenta"
@@ -185,7 +177,6 @@ function WbSheet({ s }: { s: CameraState }) {
             plusDisabled={tint >= wb.tintMax}
             onMinus={() => write(control.setWhiteBalance({ tint: Math.max(wb.tintMin, tint - 1) }))}
             onPlus={() => write(control.setWhiteBalance({ tint: Math.min(wb.tintMax, tint + 1) }))}
-            detail="− green · + magenta"
           />
         </>
       ) : tab === 1 ? (
@@ -195,9 +186,7 @@ function WbSheet({ s }: { s: CameraState }) {
           label={(p) => WB_PRESET_LABEL[p]}
           onSelect={(p) => write(control.setWhiteBalance({ preset: p }))}
         />
-      ) : (
-        <Hint>Auto white balance{wb.kelvin ? `, measuring about ${wb.kelvin}K` : ''}.</Hint>
-      )}
+      ) : null}
     </Stack>
   );
 }
@@ -227,9 +216,7 @@ function FocusSheet({ s }: { s: CameraState }) {
           index={nearestIndex(MF_STEPS, f.manualPosition ?? 0.5)}
           onChange={(i) => write(control.setManualFocus(MF_STEPS[i]))}
         />
-      ) : (
-        <Hint>{f.mode === 'afc' ? 'Continuous AF follows the subject.' : 'Single AF locks on a tap.'} Tap the picture to set the point.</Hint>
-      )}
+      ) : null}
     </Stack>
   );
 }

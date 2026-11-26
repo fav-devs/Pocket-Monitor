@@ -8,6 +8,7 @@ import {
   EaseInOutIcon,
   GameController03Icon,
   Joystick02Icon,
+  KeyboardIcon,
   Resize01Icon,
   Route01Icon,
   Route02Icon,
@@ -16,15 +17,18 @@ import {
   Target01Icon,
   VolumeHighIcon,
 } from '@hugeicons/core-free-icons';
-import { Platform } from 'react-native';
+import { useState } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
 import { ResetAction } from '@/components/reset-action';
 import { SettingsRow } from '@/components/settings-ui';
+import { Sheet } from '@/components/sheet';
 import { Slider } from '@/components/slider';
+import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import { settingsFeedback } from '../components/feedback';
-import { FieldRow, Group, Segments, Stepper, SwitchRow, ValueRow } from '../components/ui';
+import { FieldRow, Group, LinkRow, Segments, Stepper, SwitchRow, ValueRow } from '../components/ui';
 import { resetPrefs, usePref } from '../components/usePref';
-import { SettingsCopy, SettingsNoteCopy, SettingsRowCopy } from '../copy';
+import { GamepadButtons, SettingsCopy } from '../copy';
 
 /** Input & Orientation: remote shutter, rotation, game controller, head tracking. */
 export function InputSection() {
@@ -35,18 +39,18 @@ export function InputSection() {
   const [head, setHead] = usePref('headTrackingEnabled');
   const gimbal = useCamera((s) => s.capabilities.gimbal);
   const ios = Platform.OS === 'ios';
-  const headNotes: string[] = [SettingsNoteCopy.headTracking];
-  if (!ios) headNotes.push('Head tracking needs AirPods with motion on iPhone.');
-  if (!gimbal) headNotes.push('The connected camera has no gimbal.');
+  const styles = useThemedStyles(createStyles);
+  const [buttonsOpen, setButtonsOpen] = useState(false);
+  const headNote = !ios ? SettingsCopy.headTrackingPlatform : !gimbal ? SettingsCopy.noGimbal : SettingsCopy.headTracking;
   return (
     <>
       <Group label="Input & orientation">
-        <SwitchRow icon={VolumeHighIcon} title="Remote shutter" subtitle={SettingsRowCopy.remoteShutter} value={remote} onChange={setRemote} />
-        <SwitchRow icon={ScreenRotationIcon} title="Auto-Rotate Feed" subtitle={SettingsRowCopy.autoRotate} value={rotate} onChange={setRotate} last />
+        <SwitchRow icon={VolumeHighIcon} title="Remote shutter" subtitle={SettingsCopy.remoteShutter} value={remote} onChange={setRemote} />
+        <SwitchRow icon={ScreenRotationIcon} title="Auto-Rotate Feed" value={rotate} onChange={setRotate} last />
       </Group>
-      <Group label="Controller" note={SettingsNoteCopy.gamepad}>
-        <SwitchRow icon={GameController03Icon} title="Game controller" subtitle={SettingsRowCopy.gamepad} value={gamepad} onChange={setGamepad} />
-        <FieldRow icon={Joystick02Icon} title="Gimbal joystick" subtitle={SettingsRowCopy.gimbalJoystick} disabled={!gamepad}>
+      <Group label="Controller">
+        <SwitchRow icon={GameController03Icon} title="Game controller" value={gamepad} onChange={setGamepad} />
+        <FieldRow icon={Joystick02Icon} title="Gimbal joystick" disabled={!gamepad}>
           <Segments
             label="Gimbal joystick"
             options={[
@@ -57,19 +61,29 @@ export function InputSection() {
             onChange={setStick}
           />
         </FieldRow>
-        <ValueRow icon={GameController03Icon} title="Gamepad" value={Platform.OS === 'web' ? 'Not available on web' : 'Not connected'} last />
+        <ValueRow icon={GameController03Icon} title="Gamepad" value={Platform.OS === 'web' ? 'Not on web' : 'Not connected'} />
+        <LinkRow icon={KeyboardIcon} title="Button map" onPress={() => setButtonsOpen(true)} last />
       </Group>
-      <Group label="Head tracking" note={headNotes.join(' ')}>
+      <Group label="Head tracking" note={headNote}>
         <SwitchRow
           icon={Airpod01Icon}
-          title="Head Tracking (Experimental)"
-          subtitle={SettingsRowCopy.headTracking}
+          title="Head tracking (beta)"
           value={head}
           onChange={setHead}
           disabled={!ios}
           last
         />
       </Group>
+      <Sheet visible={buttonsOpen} title="Button map" onClose={() => setButtonsOpen(false)} expandable={false}>
+        <View style={styles.map}>
+          {GamepadButtons.map(([button, action], i) => (
+            <View key={button} style={[styles.mapRow, i < GamepadButtons.length - 1 && styles.mapBorder]}>
+              <Text style={styles.mapButton}>{button}</Text>
+              <Text style={styles.mapAction}>{action}</Text>
+            </View>
+          ))}
+        </View>
+      </Sheet>
     </>
   );
 }
@@ -101,7 +115,7 @@ export function MotionSection() {
           />
         }
       >
-        <FieldRow icon={DashboardSpeed01Icon} title="Joystick sensitivity" subtitle={SettingsRowCopy.joystickSensitivity} value={String(sensitivity)}>
+        <FieldRow icon={DashboardSpeed01Icon} title="Joystick sensitivity" value={String(sensitivity)}>
           <Slider
             value={sensitivity}
             min={1}
@@ -114,8 +128,8 @@ export function MotionSection() {
             }}
           />
         </FieldRow>
-        <SwitchRow icon={CenterFocusIcon} title="Picture-relative stick" subtitle={SettingsRowCopy.pictureRelative} value={relative} onChange={setRelative} />
-        <SwitchRow icon={SquareLock02Icon} title="Direction lock" subtitle={SettingsRowCopy.directionLock} value={lock} onChange={setLock} last />
+        <SwitchRow icon={CenterFocusIcon} title="Picture-relative stick" value={relative} onChange={setRelative} />
+        <SwitchRow icon={SquareLock02Icon} title="Direction lock" value={lock} onChange={setLock} last />
       </Group>
       <Group
         label="On-screen joystick"
@@ -127,7 +141,7 @@ export function MotionSection() {
           />
         }
       >
-        <FieldRow icon={Resize01Icon} title="Size" subtitle={SettingsRowCopy.virtualJoystickSize}>
+        <FieldRow icon={Resize01Icon} title="Size">
           <Segments
             label="Joystick size"
             options={[
@@ -139,9 +153,9 @@ export function MotionSection() {
             onChange={setSize}
           />
         </FieldRow>
-        <SwitchRow icon={ArrowLeftRightIcon} title="Invert pan" subtitle={SettingsRowCopy.invertPan} value={invertPan} onChange={setInvertPan} />
-        <SwitchRow icon={ArrowUpDownIcon} title="Invert tilt" subtitle={SettingsRowCopy.invertTilt} value={invertTilt} onChange={setInvertTilt} />
-        <FieldRow icon={Target01Icon} title="Dead zone" subtitle={SettingsRowCopy.deadZone} value={`${deadzone}%`}>
+        <SwitchRow icon={ArrowLeftRightIcon} title="Invert pan" value={invertPan} onChange={setInvertPan} />
+        <SwitchRow icon={ArrowUpDownIcon} title="Invert tilt" value={invertTilt} onChange={setInvertTilt} />
+        <FieldRow icon={Target01Icon} title="Dead zone" value={`${deadzone}%`}>
           <Slider
             value={deadzone}
             min={0}
@@ -155,7 +169,7 @@ export function MotionSection() {
             }}
           />
         </FieldRow>
-        <FieldRow icon={EaseInOutIcon} title="Response curve" subtitle={SettingsRowCopy.response} last>
+        <FieldRow icon={EaseInOutIcon} title="Response curve" last>
           <Segments
             label="Response curve"
             options={[
@@ -170,11 +184,7 @@ export function MotionSection() {
       </Group>
       <Group
         label="Programmed moves"
-        note={
-          gimbal
-            ? `${SettingsCopy.programLegs} Capture A, B and C from the gimbal sheet in Live View, then run the move there.`
-            : 'Connect a camera with a gimbal (Osmo Pocket) to set programmed moves.'
-        }
+        note={gimbal ? SettingsCopy.programMoves : SettingsCopy.noGimbal}
       >
         <SettingsRow
           icon={Route01Icon}
@@ -211,7 +221,6 @@ export function MotionSection() {
         <SettingsRow
           icon={EaseCurveControlPointsIcon}
           title="Smoothness"
-          subtitle={SettingsRowCopy.programSmoothness}
           disabled={!gimbal}
           last
           accessory={
@@ -230,4 +239,14 @@ export function MotionSection() {
       </Group>
     </>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    map: { paddingBottom: spacing.md },
+    mapRow: { flexDirection: 'row' as const, alignItems: 'center' as const, minHeight: 44, gap: spacing.md },
+    mapBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+    mapButton: { flex: 1, fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    mapAction: { fontFamily: fonts.medium, fontSize: 14, color: colors.mutedForeground },
+  };
 }

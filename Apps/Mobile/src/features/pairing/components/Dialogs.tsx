@@ -54,7 +54,7 @@ export function TextPromptDialog({
 }: {
   visible: boolean;
   title: string;
-  message: string;
+  message?: string;
   initialValue: string;
   placeholder?: string;
   confirmTitle?: string;

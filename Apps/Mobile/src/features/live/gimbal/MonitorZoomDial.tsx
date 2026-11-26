@@ -128,7 +128,6 @@ export function MonitorZoomDial() {
       </View>
       <StepperRow
         title="Preset ramp"
-        detail="Travel time to a preset"
         value={rampLabel(rampSeconds)}
         minusLabel="Shorter ramp"
         plusLabel="Longer ramp"

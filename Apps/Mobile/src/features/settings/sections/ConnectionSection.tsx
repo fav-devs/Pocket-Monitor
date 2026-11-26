@@ -7,7 +7,6 @@ import { SettingsRow } from '@/components/settings-ui';
 import { LinkHealthScale } from '../components/LinkHealthScale';
 import { Group, SwitchRow, ValueRow } from '../components/ui';
 import { usePref } from '../components/usePref';
-import { SettingsCopy, SettingsRowCopy } from '../copy';
 
 function transportLabel(transport: string, live: boolean): string {
   if (!live) return 'Not connected';
@@ -46,23 +45,22 @@ export function ConnectionSection() {
 
   return (
     <>
-      <Group label="Link health" note={SettingsCopy.linkHealthHelp}>
+      <Group label="Link health">
         <LinkHealthScale caption={caption} score={score} />
       </Group>
-      <Group label="Connection" note={`${SettingsCopy.currentTransport} ${live ? SettingsCopy.networkHelp : ''}`.trim()}>
+      <Group label="Connection">
         <ValueRow icon={Link04Icon} title="Transport" value={transportLabel(connection.transport, live)} />
         <ValueRow
           icon={Activity01Icon}
           title="Phase"
-          subtitle="BLE → Wi-Fi → datalink handshake"
           value={connectionPhaseLabel(connection.phase)}
           last={!live}
         />
-        {ssid ? <ValueRow icon={Wifi01Icon} title="Camera Wi-Fi" subtitle="Password kept in secure storage" value={ssid} /> : null}
+        {ssid ? <ValueRow icon={Wifi01Icon} title="Camera Wi-Fi" value={ssid} /> : null}
         {stream ? <ValueRow icon={Video01Icon} title="Live stream" value={stream} /> : null}
         {live ? <ValueRow icon={SignalFull02Icon} title="Signal" value={`${connection.signalBars} of 4`} last /> : null}
       </Group>
-      <Group label="Your cameras" note={SettingsRowCopy.savedHelp}>
+      <Group label="Your cameras">
         {saved.length === 0 ? (
           <ValueRow icon={Camera01Icon} title="Saved" value="None" last />
         ) : (
@@ -81,7 +79,6 @@ export function ConnectionSection() {
         <SwitchRow
           icon={Activity01Icon}
           title="Link stats"
-          subtitle={SettingsRowCopy.linkStats}
           value={linkStats}
           onChange={setLinkStats}
           last

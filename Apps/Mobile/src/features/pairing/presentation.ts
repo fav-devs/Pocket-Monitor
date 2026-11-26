@@ -47,7 +47,7 @@ export type StepState = 'done' | 'active' | 'waiting';
 export interface SpineStep {
   id: 'bluetooth' | 'approve' | 'wifi' | 'datalink' | 'live';
   title: string;
-  subtitle: string;
+  subtitle?: string;
   state: StepState;
   stateLabel: string;
 }
@@ -77,32 +77,19 @@ export function phaseIndex(phase: ConnectionPhase): number {
 export function spineSteps(
   connection: ConnectionState,
   reached: ConnectionPhase,
-  options: { cameraName: string; network?: string; transport?: CameraNetworkPath['kind'] },
+  options: { network?: string; transport?: CameraNetworkPath['kind'] },
 ): SpineStep[] {
   const failed = connection.phase === 'failed' || connection.phase === 'disconnected';
   const at = phaseIndex(connection.phase === 'failed' || connection.phase === 'recovering' || connection.phase === 'disconnected' ? reached : connection.phase);
   const wifiTitle =
     options.transport === 'station' ? 'Shared Wi-Fi' : options.transport === 'hotspot' ? 'Phone hotspot' : 'Camera Wi-Fi';
-  const rows: { id: SpineStep['id']; title: string; subtitle: string; from: number; to: number; activeLabel: string }[] = [
-    { id: 'bluetooth', title: 'Bluetooth link', subtitle: options.cameraName, from: 1, to: 3, activeLabel: 'FINDING' },
-    {
-      id: 'approve',
-      title: 'Camera approval',
-      subtitle: 'Tap Approve if the camera asks',
-      from: 3,
-      to: 4,
-      activeLabel: 'WAITING',
-    },
-    {
-      id: 'wifi',
-      title: wifiTitle,
-      subtitle: options.network ?? 'Waiting for the camera network',
-      from: 4,
-      to: 6,
-      activeLabel: 'JOINING',
-    },
-    { id: 'datalink', title: 'Camera link', subtitle: 'Opening the control and video link', from: 6, to: 7, activeLabel: 'OPENING' },
-    { id: 'live', title: 'Live picture', subtitle: 'Starts after the link opens', from: 7, to: 8, activeLabel: 'STARTING' },
+  // Rows are labels; the only subtitle is a value (the network being joined).
+  const rows: { id: SpineStep['id']; title: string; subtitle?: string; from: number; to: number; activeLabel: string }[] = [
+    { id: 'bluetooth', title: 'Bluetooth link', from: 1, to: 3, activeLabel: 'FINDING' },
+    { id: 'approve', title: 'Camera approval', from: 3, to: 4, activeLabel: 'WAITING' },
+    { id: 'wifi', title: wifiTitle, subtitle: options.network, from: 4, to: 6, activeLabel: 'JOINING' },
+    { id: 'datalink', title: 'Camera link', from: 6, to: 7, activeLabel: 'OPENING' },
+    { id: 'live', title: 'Live picture', from: 7, to: 8, activeLabel: 'STARTING' },
   ];
   return rows.map((r) => {
     const done = at >= r.to;
@@ -112,7 +99,7 @@ export function spineSteps(
     return {
       id: r.id,
       title: r.title,
-      subtitle: r.id === 'live' && active ? 'Starting live view…' : r.subtitle,
+      subtitle: r.subtitle,
       state: done ? 'done' : active ? 'active' : 'waiting',
       stateLabel,
     };

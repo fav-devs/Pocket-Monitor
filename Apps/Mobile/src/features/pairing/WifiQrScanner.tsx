@@ -6,7 +6,6 @@ import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'r
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
-import { NetworkSetupCopy } from './copy';
 import { parseWifiQr, type WifiQr } from './presentation';
 
 /** QR scanning is available on phones; web shows the typed form only. */
@@ -75,8 +74,7 @@ export function WifiQrScanner({
             <View style={styles.gateIcon}>
               <Icon icon={QrCodeIcon} size={28} color="#ffffff" />
             </View>
-            <Text style={styles.gateTitle}>Allow the camera to scan a Wi-Fi code</Text>
-            <Text style={styles.gateText}>{NetworkSetupCopy.scanQrHint}</Text>
+            <Text style={styles.gateTitle}>Allow camera to scan Wi-Fi codes</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Allow camera"
@@ -151,14 +149,6 @@ function createStyles(colors: ThemeColors) {
       backgroundColor: 'rgba(255,255,255,0.18)',
     },
     gateTitle: { fontFamily: fonts.semibold, fontSize: 20, color: '#ffffff', textAlign: 'center' as const, ...shadow },
-    gateText: {
-      fontFamily: fonts.regular,
-      fontSize: 14,
-      lineHeight: 20,
-      color: 'rgba(255,255,255,0.7)',
-      textAlign: 'center' as const,
-      maxWidth: 360,
-    },
     pill: { marginTop: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: 12, borderRadius: 999, backgroundColor: '#ffffff' },
     pillText: { fontFamily: fonts.semibold, fontSize: 15, color: '#111111' },
     pressed: { opacity: 0.7 },

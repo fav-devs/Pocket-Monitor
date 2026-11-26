@@ -13,7 +13,6 @@ import { ProgressLabel } from './StatusBits';
 
 export interface PairStep {
   title: string;
-  subtitle: string;
 }
 
 export interface PairMenuItem {
@@ -28,7 +27,7 @@ export interface PairPageProps {
   steps: readonly PairStep[];
   currentStep: number;
   title: string;
-  body: string;
+  body?: string | null;
   /** The camera this page is about; hidden when nothing is chosen yet. */
   target?: string | null;
   hint?: string | null;
@@ -50,7 +49,7 @@ export interface PairPageProps {
 const FLOW_MAX_WIDTH = 560;
 
 /**
- * One step of the pair / connect flow (`PairCameraPage`): a big title and one line, the step's
+ * One step of the pair / connect flow (`PairCameraPage`): a big title and at most one line, the step's
  * content, and a large primary button pinned at the bottom with a ghost secondary under it.
  * Phones in landscape put the title and buttons on the left and the content on the right.
  */
@@ -120,7 +119,6 @@ export function PairPage({
           <View key={s.title} style={[styles.stepBar, i <= step && styles.stepBarOn]} />
         ))}
       </View>
-      <Text style={styles.stepCaption}>{`Step ${step + 1} of ${steps.length} · ${steps[step]?.subtitle ?? ''}`}</Text>
     </View>
   );
 
@@ -145,7 +143,7 @@ export function PairPage({
       <Text accessibilityRole="header" style={[styles.title, split && styles.titleCompact, empty && styles.titleEmpty]}>
         {title}
       </Text>
-      <Text style={[styles.body, empty && styles.bodyEmpty]}>{body}</Text>
+      {body ? <Text style={[styles.body, empty && styles.bodyEmpty]}>{body}</Text> : null}
       {target ? (
         <View style={styles.target}>
           <Icon icon={Camera01Icon} size={15} color={colors.mutedForeground} />
@@ -276,11 +274,10 @@ function createStyles(colors: ThemeColors) {
       color: colors.foreground,
     },
     content: { gap: spacing.md, paddingTop: spacing.xs, paddingBottom: spacing.lg },
-    stepper: { gap: 10, paddingTop: spacing.sm, paddingBottom: spacing.sm },
+    stepper: { paddingTop: spacing.sm, paddingBottom: spacing.sm },
     stepBars: { flexDirection: 'row' as const, gap: 6 },
     stepBar: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.surfaceStrong },
     stepBarOn: { backgroundColor: colors.ink },
-    stepCaption: { fontFamily: fonts.medium, fontSize: 12, color: colors.mutedForeground },
     intro: { gap: spacing.sm, paddingBottom: spacing.sm },
     hero: { marginBottom: spacing.sm },
     heroEmpty: { marginBottom: spacing.xs },

@@ -173,7 +173,7 @@ export default function CamerasScreen() {
           Try the demo camera
         </Text>
         <Text numberOfLines={2} style={styles.featureDetail}>
-          {demoLive ? 'Demo is live' : `Simulated ${modelDisplayName(DEMO_CAMERA.model)} · no camera needed`}
+          {demoLive ? 'Live' : `Simulated ${modelDisplayName(DEMO_CAMERA.model)}`}
         </Text>
       </View>
       <View testID={`cameras.action.${DEMO_CAMERA.id}`} style={styles.featureAction}>
@@ -188,7 +188,6 @@ export default function CamerasScreen() {
         <SettingsRow
           icon={GridViewIcon}
           title="Multiview"
-          subtitle="Several cameras on one screen"
           chevron
           disabled={busy}
           onPress={() => router.push('/multiview')}
@@ -196,7 +195,6 @@ export default function CamerasScreen() {
         <SettingsRow
           icon={EyeIcon}
           title="Join as watcher"
-          subtitle="Watch a feed from another phone"
           chevron
           onPress={() => router.push('/watcher')}
           last
@@ -286,7 +284,6 @@ export default function CamerasScreen() {
               <Icon icon={Camera01Icon} size={28} color={colors.mutedForeground} />
             </Squircle>
             <Text style={styles.emptyTitle}>No cameras yet</Text>
-            <Text style={styles.emptyText}>Pair a camera to start monitoring.</Text>
             <Button title="Pair a camera" icon={PlusSignIcon} size="lg" disabled={busy} onPress={() => router.push('/pair')} style={styles.emptyButton} />
           </View>
         ) : null}
@@ -309,7 +306,6 @@ export default function CamerasScreen() {
       <TextPromptDialog
         visible={!!renameTarget}
         title="Rename camera"
-        message="Give this camera a name you'll recognize."
         initialValue={renameTarget?.name ?? ''}
         placeholder="Name"
         onCancel={() => setRenameTarget(null)}
@@ -321,7 +317,7 @@ export default function CamerasScreen() {
       <ConfirmDialog
         visible={!!removeTarget}
         title="Forget camera?"
-        message={`This removes ${removeTarget?.name ?? 'the camera'} from this phone. You can pair it again later.`}
+        message={`Removes ${removeTarget?.name ?? 'the camera'} and its Wi-Fi password from this phone.`}
         confirmTitle="Forget"
         destructive
         onCancel={() => setRemoveTarget(null)}
@@ -421,7 +417,6 @@ function createStyles(colors: ThemeColors) {
     featureActionText: { fontFamily: fonts.semibold, fontSize: 13, color: colors.inkForeground },
     empty: { alignItems: 'center' as const, gap: spacing.sm, paddingVertical: spacing.xl },
     emptyTitle: { fontFamily: fonts.semibold, fontSize: 20, color: colors.foreground, marginTop: spacing.sm },
-    emptyText: { fontFamily: fonts.regular, fontSize: 14, color: colors.mutedForeground, textAlign: 'center' as const },
     emptyButton: { marginTop: spacing.md, minWidth: 220 },
     pressed: { opacity: 0.75 },
     disabled: { opacity: 0.45 },

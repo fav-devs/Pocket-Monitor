@@ -5,7 +5,7 @@ import { useCamera, useCameraSession, type MotionWaypoint } from '@/camera';
 import { Icon } from '@/components/icon';
 import { Squircle } from '@/components/squircle';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
-import { FieldLabel, Hint, ModeBar, StepperRow } from '../capture/controls';
+import { FieldLabel, ModeBar, StepperRow } from '../capture/controls';
 import { angleLabel } from '../format';
 import { haptics } from '../haptics';
 import type { Rect } from '../layout/fieldMonitorLayout';
@@ -143,7 +143,6 @@ export function MotionControlEditor() {
   const smoothIndex = SMOOTHNESS.reduce((b, v, i) => (Math.abs(v - p.smoothness) < Math.abs(SMOOTHNESS[b] - p.smoothness) ? i : b), 0);
   return (
     <View style={styles.stack}>
-      <Hint>Experimental · a repeatable A → B → C pan and tilt.</Hint>
       <View style={styles.waypoints}>
         <WaypointRow slot="a" point={p.a} disabled={busy} />
         <WaypointRow slot="b" point={p.b} disabled={busy} />

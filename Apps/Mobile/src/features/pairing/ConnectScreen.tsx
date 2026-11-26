@@ -12,7 +12,7 @@ import {
 import type { IconSvgElement } from '@hugeicons/react-native';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Linking, Platform, View } from 'react-native';
+import { Linking, View } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
 import { modelDisplayName } from '@/camera/defaults';
 import type { ConnectionPhase } from '@/camera/types';
@@ -20,7 +20,7 @@ import { recordConnectionEvent } from '@/features/settings/diagnostics';
 import { ProblemReportSheet } from '@/features/settings/ProblemReportSheet';
 import { useShareDiagnostics } from '@/features/settings/useShareDiagnostics';
 import { useSavedCameras } from '@/state/savedCameras';
-import { InstructionCard, SummaryGrid, type Instruction } from './components/PairPieces';
+import { SummaryGrid } from './components/PairPieces';
 import { PairPage } from './components/PairPage';
 import { PairingCheckRow } from './components/PairingCheckRow';
 import {
@@ -33,8 +33,7 @@ import {
 import { usePendingConnect } from './pairingStore';
 import { pathKindTitle, phaseIndex, spineSteps, wizardPage, type SpineStep } from './presentation';
 
-const steps = PairingWizardCopy.titles.map((title, i) => ({ title, subtitle: PairingWizardCopy.rail[i] }));
-const phoneTitle = Platform.OS === 'ios' ? 'On iPhone' : 'On this phone';
+const steps = PairingWizardCopy.titles.map((title) => ({ title }));
 const stepIcons: Record<SpineStep['id'], IconSvgElement> = {
   bluetooth: BluetoothIcon,
   approve: TouchInteraction01Icon,
@@ -110,7 +109,7 @@ export default function ConnectScreen() {
     session.retry().catch(() => {});
   };
 
-  const checks = spineSteps(connection, reached, { cameraName, network, transport }).map((s) => ({
+  const checks = spineSteps(connection, reached, { network, transport }).map((s) => ({
     title: s.title,
     subtitle: s.subtitle,
     state: s.state === 'done' ? ('complete' as const) : s.state === 'active' ? (failed || disconnected ? ('failed' as const) : ('active' as const)) : ('waiting' as const),
@@ -118,24 +117,8 @@ export default function ConnectScreen() {
     icon: stepIcons[s.id],
   }));
 
-  const instructions: Instruction[] =
-    failed || disconnected || recovering
-      ? []
-      : page === 1
-        ? [
-            { title: 'On the camera', icon: 'camera', lines: PairingWizardCopy.approveLines },
-            { title: phoneTitle, icon: 'phone', lines: PairingWizardCopy.approvePhoneLines },
-          ]
-        : page === 2
-          ? [
-              { title: 'On the camera', icon: 'camera', lines: PairingWizardCopy.joinLines },
-              { title: phoneTitle, icon: 'phone', lines: PairingWizardCopy.joinPhoneLines },
-            ]
-          : [];
-
   let title: string = PairingWizardCopy.titles[page];
-  let body: string = PairingWizardCopy.bodies[page];
-  let hint: string = PairingWizardCopy.hints[page];
+  let body: string | null = PairingWizardCopy.bodies[page] || null;
   let error: string | null = null;
   let primary: { title: string; enabled: boolean; onPress: () => void } | null = null;
   let back: { title: string; onPress: () => void } | null = { title: 'Cancel', onPress: exit };
@@ -143,8 +126,7 @@ export default function ConnectScreen() {
 
   if (idle) {
     title = 'Nothing to connect';
-    body = 'Choose a camera on Cameras, pair a new one, or try the demo camera.';
-    hint = 'Cameras lists every camera saved on this phone';
+    body = null;
     primary = { title: 'Cameras', enabled: true, onPress: () => router.replace('/') };
     back = null;
     hero = { icon: Camera01Icon };
@@ -152,8 +134,7 @@ export default function ConnectScreen() {
     const raw = connection.error;
     error = friendlyConnectionError(raw);
     title = `Couldn't connect to ${cameraName}`;
-    body = 'Nothing was changed on the camera. Fix what the message says, then try again.';
-    hint = 'Retry keeps the camera you chose';
+    body = null;
     hero = { icon: AlertCircleIcon, tone: 'destructive' };
     primary = opensSettings(raw)
       ? { title: StartupConnectionCopy.openSettings, enabled: true, onPress: () => Linking.openSettings().catch(() => {}) }
@@ -161,14 +142,12 @@ export default function ConnectScreen() {
     back = { title: 'Back', onPress: exit };
   } else if (recovering) {
     title = SessionRecoveryCopy.retryingTitle;
-    body = SessionRecoveryCopy.retrying(cameraName);
-    hint = 'The camera reconnects on its own when it comes back';
+    body = SessionRecoveryCopy.retrying;
     primary = { title: SessionRecoveryCopy.retryAction, enabled: true, onPress: retry };
     back = { title: SessionRecoveryCopy.menuAction, onPress: exit };
   } else if (disconnected) {
     title = SessionRecoveryCopy.waitingTitle;
-    body = SessionRecoveryCopy.waiting(cameraName);
-    hint = 'Turn the camera off and on if it does not come back';
+    body = SessionRecoveryCopy.waiting;
     primary = { title: SessionRecoveryCopy.retryAction, enabled: !!pending.target || !!identity, onPress: retry };
     back = { title: SessionRecoveryCopy.menuAction, onPress: exit };
   }
@@ -188,9 +167,8 @@ export default function ConnectScreen() {
         currentStep={idle ? 0 : page}
         title={title}
         body={body}
-        target={idle || failed ? null : cameraName}
         hero={hero}
-        hint={diagnostics.note ?? hint}
+        hint={diagnostics.note}
         progress={busy ? connection.detail ?? 'Connecting' : null}
         error={error}
         primaryAction={primary}
@@ -209,9 +187,6 @@ export default function ConnectScreen() {
                 <PairingCheckRow key={c.title} check={c} />
               ))}
             </View>
-            {instructions.map((ins) => (
-              <InstructionCard key={ins.title} instruction={ins} />
-            ))}
             {summary.length ? <SummaryGrid items={summary} /> : null}
           </>
         )}
