@@ -254,7 +254,7 @@ impl ConnectApp {
             let mut browser = match opc_relay::discovery::Browser::start(&info) {
                 Ok(browser) => browser,
                 Err(error) => {
-                    let _ = tx.send(Err(format!("could not look for phones: {error}")));
+                    let _ = tx.send(Err(format!("could not look for shared feeds: {error}")));
                     return;
                 }
             };
@@ -275,7 +275,7 @@ impl ConnectApp {
 
     /// The links under a screen: go on without pairing, or watch a phone instead.
     fn secondary_buttons(&mut self, ui: &mut egui::Ui) -> Option<ConnectOutcome> {
-        if ghost_button(ui, "Watch a phone's shared feed  \u{2192}").clicked() {
+        if ghost_button(ui, "Watch a shared feed  \u{2192}").clicked() {
             self.want_phones = true;
             return None;
         }
@@ -303,18 +303,15 @@ impl ConnectApp {
                 note,
             } => {
                 ui.label(
-                    RichText::new("Watch a phone's shared feed")
+                    RichText::new("Watch a shared feed")
                         .color(TEXT)
                         .font(FontId::proportional(16.0)),
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    RichText::new(
-                        "Join the camera's Wi-Fi on this PC. On the phone: Operator Setup \u{203a} \
-                         Sharing \u{203a} Share this feed.",
-                    )
-                    .color(DIM)
-                    .font(FontId::proportional(13.0)),
+                    RichText::new("Join the same Wi-Fi as the device sharing the feed.")
+                        .color(DIM)
+                        .font(FontId::proportional(13.0)),
                 );
                 ui.add_space(16.0);
                 let mut chosen = None;
@@ -322,7 +319,7 @@ impl ConnectApp {
                     ui.add(egui::Spinner::new().size(24.0).color(ACCENT));
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("Looking for phones\u{2026}")
+                        RichText::new("Looking for shared feeds\u{2026}")
                             .color(DIM)
                             .font(FontId::proportional(13.0)),
                     );
@@ -348,7 +345,7 @@ impl ConnectApp {
                     ui.add(
                         egui::TextEdit::singleline(passcode)
                             .password(true)
-                            .hint_text("if the phone set one")
+                            .hint_text("if the host set one")
                             .desired_width(180.0),
                     );
                 });

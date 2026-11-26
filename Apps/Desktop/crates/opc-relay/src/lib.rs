@@ -11,6 +11,8 @@
 pub mod buffer;
 pub mod discovery;
 pub mod ffi;
+#[cfg(opc_core_linked)]
+pub mod host;
 pub mod session;
 pub mod transport;
 

@@ -371,6 +371,22 @@ What to know:
 The order and every reply reading come from the core's station commands and policies,
 observed on hardware by the upstream project; none of it has been run from this PC yet.
 
+## Sharing from Windows
+
+Open the camera's live HEVC preview. In **Settings → System → Share this feed**, choose
+**On**. On a second Windows PC, choose **Watch a shared feed** from the connection
+screen and select **PocketMonitor (PC name)**. On an iPhone running OpenPocketCine,
+use its Sharing browser to select the Windows host. Connect the devices to the same
+network as the host's camera connection. This can be home Wi-Fi when the camera is
+joined to it, or the camera's own Wi-Fi. If Windows Firewall prompts for access,
+allow PocketMonitor on the trusted network being used for the preview.
+
+The Windows host shares a clean, view-only feed with up to four watchers. It is
+visible without a passcode on the selected network. Sharing starts off each time
+you run PocketMonitor and stops when you turn it off, disconnect, or enter camera
+playback. It uses the camera's HEVC stream and does not send a second live-view
+request or relay Windows overlays and grading.
+
 ## Watching a phone
 
 An iPhone running OpenPocketCine can share its camera session: Operator Setup › Sharing
@@ -379,7 +395,7 @@ serves watchers on the camera's Wi-Fi. The viewfinder can be one of them, so the
 does the pairing and the laptop does the monitoring, and both see the picture at once.
 
 Join the camera's Wi-Fi on the PC first; hosts are only advertised there. The connection
-screen's **Watch a phone's shared feed** lists the phones it finds, takes the passcode if
+screen's **Watch a shared feed** lists the phones it finds, takes the passcode if
 the phone set one, and opens the viewfinder on the one you pick. From a shell,
 `--phone NAME` finds the phone by its advertised name, `--phone-at IP:PORT` skips the
 search, and the passcode comes from `--passcode` or `OPC_PHONE_PASSCODE`.

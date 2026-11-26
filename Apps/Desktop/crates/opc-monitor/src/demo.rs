@@ -180,6 +180,7 @@ impl Demo {
                 | Intent::Media(_)
                 | Intent::Reconnect
                 | Intent::Diagnostics
+                | Intent::SharePreview(_)
                 | Intent::ComponentInstall
                 | Intent::ComponentRemove
                 | Intent::OpenUrl(_)

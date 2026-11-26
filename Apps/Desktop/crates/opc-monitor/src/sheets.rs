@@ -157,6 +157,8 @@ pub struct SetupInfo {
     pub chrome_visible: bool,
     /// What the virtual camera is doing: "Off", where it writes, or why it cannot.
     pub vcam: String,
+    pub sharing: String,
+    pub sharing_active: bool,
     /// The platform camera component: installed, not, or being worked on.
     pub component: opc_vcam::ComponentReport,
     /// The phone whose shared feed this is, when the source is a phone.
@@ -325,6 +327,7 @@ pub enum Pick {
     ShowPart(Part, bool),
     ClearCache,
     Diagnostics,
+    SharePreview(bool),
     /// The virtual camera: 0 off, 1 device, 2 stream.
     Vcam(u8),
     /// The camera carries the clean picture (true) or the assists too.
@@ -1456,6 +1459,21 @@ fn system_rows(context: Context) -> Vec<RowBuilder> {
         readout("App version", env!("CARGO_PKG_VERSION")),
         readout("Protocol", "OpenPocketViewCore through the desktop facade"),
         readout("Renderer", &context.setup.renderer),
+        RowBuilder::new("Share this feed")
+            .option(
+                "Off",
+                !context.setup.sharing_active,
+                Pick::SharePreview(false),
+            )
+            .option("On", context.setup.sharing_active, Pick::SharePreview(true)),
+        readout(
+            "Preview sharing",
+            if context.setup.sharing.is_empty() {
+                "Off"
+            } else {
+                &context.setup.sharing
+            },
+        ),
         RowBuilder::new("Diagnostics").option("Write a report", false, Pick::Diagnostics),
         RowBuilder::placeholder("Source", "github.com/fav-devs/OpenPocketCine"),
         RowBuilder::placeholder("Licenses", "Apache 2.0 · THIRD-PARTY-NOTICES.md"),
