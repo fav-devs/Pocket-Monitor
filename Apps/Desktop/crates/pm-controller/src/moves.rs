@@ -475,6 +475,43 @@ impl MoveEngine {
         }
     }
 
+    /// The take in the mobile `MotionProgramState.status` words: the approach and the
+    /// hold are `preparing`, a leg (paused or not) and the final check are `running`.
+    pub fn stage(&self) -> &'static str {
+        match self.phase {
+            Phase::Approach | Phase::Hold => "preparing",
+            Phase::Run | Phase::Paused | Phase::Verify => "running",
+            Phase::Done => "done",
+            Phase::Failed(_) => "failed",
+        }
+    }
+
+    /// How far through the timed take, 0…1 (0 while preparing, 1 once checking).
+    pub fn progress(&self) -> f64 {
+        let total: f64 = match &self.curve {
+            Some(curve) => curve.duration(),
+            None => self.legs.iter().map(|leg| leg.duration).sum(),
+        };
+        if total <= 0.0 {
+            return 0.0;
+        }
+        let at = if self.phase == Phase::Paused {
+            self.paused_at
+        } else {
+            self.elapsed
+        };
+        let done = match (&self.phase, &self.curve) {
+            (Phase::Approach | Phase::Hold, _) => 0.0,
+            (Phase::Verify | Phase::Done, _) => total,
+            (_, Some(_)) => at,
+            _ => {
+                let before: f64 = self.legs[..self.index].iter().map(|leg| leg.duration).sum();
+                before + at.min(self.legs[self.index].duration)
+            }
+        };
+        (done / total).clamp(0.0, 1.0)
+    }
+
     /// What the top bar says while the take runs.
     pub fn readout(&self) -> String {
         match &self.phase {

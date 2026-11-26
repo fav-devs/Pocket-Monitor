@@ -131,13 +131,19 @@ mod tests {
 
     #[test]
     fn bad_slots_are_dropped_and_the_time_is_bounded() {
-        let text = format!(
-            "{HEADER}\nseconds=9999\nslot1=nan,0,0\nslot2=1,2\nslot9=1,2,3\nslot3=5,6,7\n"
-        );
+        let text =
+            format!("{HEADER}\nseconds=9999\nslot1=nan,0,0\nslot2=1,2\nslot9=1,2,3\nslot3=5,6,7\n");
         let presets = Presets::parse(&text).unwrap();
         assert_eq!(presets.seconds, 25.0);
         assert_eq!(presets.slots[0], None);
         assert_eq!(presets.slots[1], None);
-        assert_eq!(presets.slots[2], Some(Waypoint { yaw: 5.0, pitch: 6.0, native_pitch: 7.0 }));
+        assert_eq!(
+            presets.slots[2],
+            Some(Waypoint {
+                yaw: 5.0,
+                pitch: 6.0,
+                native_pitch: 7.0
+            })
+        );
     }
 }

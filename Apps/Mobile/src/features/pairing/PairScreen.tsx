@@ -14,6 +14,7 @@ import { saveWifiPassword } from './credentials';
 import { rssiToBars } from './presentation';
 import { HotspotForm, SetupChooser, StationNetworkForm, acceptsPassword, type NetworkDraft } from './SetupFlow';
 import { useConnectActions } from './useConnectActions';
+import { DesktopAlreadyOnCameraWifi, DesktopReturnToCameraWifi, useDesktopSsidPrefill } from './desktop/DesktopPairExtras';
 
 /** Permission explainer → scan → choose a setup → (Wi-Fi or Hotspot) network details. */
 type Stage = 'permission' | 'find' | 'setup' | 'details';
@@ -61,6 +62,7 @@ export default function PairScreen() {
   const [kind, setKind] = useState<SetupKind | null>(null);
   const [draft, setDraft] = useState<NetworkDraft>({ ssid: '', password: '' });
   const [reporting, setReporting] = useState(false);
+  useDesktopSsidPrefill(kind, setDraft);
 
   useEffect(() => {
     if (stage !== 'find') return;
@@ -176,6 +178,7 @@ export default function PairScreen() {
               : { title: StartupConnectionCopy.preCheckTitle, icon: 'phone', lines: [StartupConnectionCopy.preCheck] }
           }
         />
+        <DesktopAlreadyOnCameraWifi />
       </>
     );
   } else if (stage === 'setup') {
@@ -188,14 +191,17 @@ export default function PairScreen() {
     back = { title: 'Back', onPress: () => (addSetupFor ? exit() : setStage('find')) };
     const added = addSetupFor ? { [addSetupFor.path.kind]: addSetupFor.path.ssid || 'saved' } : undefined;
     page = (
-      <SetupChooser
-        selected={kind}
-        added={added}
-        onSelect={(k) => {
-          setKind(k);
-          if (k !== kind) setDraft({ ssid: '', password: '' });
-        }}
-      />
+      <>
+        <SetupChooser
+          selected={kind}
+          added={added}
+          onSelect={(k) => {
+            setKind(k);
+            if (k !== kind) setDraft({ ssid: '', password: '' });
+          }}
+        />
+        <DesktopReturnToCameraWifi address={addSetupFor ? null : (selected?.id ?? null)} />
+      </>
     );
   } else {
     const hotspot = kind === 'hotspot';

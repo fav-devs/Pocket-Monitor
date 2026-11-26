@@ -10,6 +10,7 @@
 //! cube at that raster, and only then stretch. Cubing after the upsample blotched D-Log2
 //! on Android, and it would here too.
 
+mod color;
 mod device;
 mod error;
 mod lut;
@@ -19,6 +20,7 @@ mod renderer;
 mod resources;
 mod still;
 
+pub use color::{DisplayTransform, SceneToneMap, Transfer};
 pub use error::RenderError;
 pub use lut::{
     assist_scalars, built_in_names, false_color_legend, parse_legend, AssistScalars, LegendBand,
@@ -26,7 +28,7 @@ pub use lut::{
 };
 pub use present::Presented;
 pub use renderer::{
-    letterbox, letterbox_in, FalseColorScale, FeedRenderer, GradeOptions, Peaking, PeakingSense,
-    Rgba, Zebra,
+    fit_in, letterbox, letterbox_in, Desqueeze, FalseColorScale, FeedRenderer, GradeOptions, Look,
+    Peaking, PeakingSense, PictureFit, Rgba, Zebra,
 };
 pub use still::{encode, write_png};

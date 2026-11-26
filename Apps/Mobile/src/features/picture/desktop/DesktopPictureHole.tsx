@@ -25,6 +25,10 @@ export function DesktopPictureHole({ resizeMode = 'fit', onPictureRect, effects:
   const fitted = useRef(false);
   const report = useRef(onPictureRect);
   report.current = onPictureRect;
+  // 'fill' fills the hole and crops in the native blit; Rust's `picture://fit` reports it.
+  const fit = useRef(resizeMode);
+  fit.current = resizeMode;
+  const resend = useRef<() => void>(() => {});
 
   const publish = (rect: LayoutRectangle) => {
     if (sameRect(lastRect.current, rect)) return;
@@ -47,11 +51,12 @@ export function DesktopPictureHole({ resizeMode = 'fit', onPictureRect, effects:
     const send = () => {
       const r = node.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      const key = `${r.left}|${r.top}|${r.width}|${r.height}|${dpr}`;
+      const key = `${r.left}|${r.top}|${r.width}|${r.height}|${dpr}|${fit.current}`;
       if (key === last) return;
       last = key;
-      invoke('picture_layout', { rect: { x: r.left, y: r.top, width: r.width, height: r.height }, dpr }).catch(() => {});
+      invoke('picture_layout', { rect: { x: r.left, y: r.top, width: r.width, height: r.height }, dpr, fit: fit.current }).catch(() => {});
     };
+    resend.current = send;
     send();
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(send) : null;
     observer?.observe(node);
@@ -80,10 +85,15 @@ export function DesktopPictureHole({ resizeMode = 'fit', onPictureRect, effects:
     [],
   );
 
-  // Until the first fit arrives, the shared formula (the native letterbox is always 'fit').
+  // A changed resizeMode goes to Rust at once, not on the next poll.
+  useEffect(() => {
+    resend.current();
+  }, [resizeMode]);
+
+  // Until the first fit arrives, the shared formula (the native blit fits or fills the same way).
   useEffect(() => {
     if (fitted.current || size.width <= 0) return;
-    publish(pictureRect(size, pictureAspect(effects, streamW, streamH), resizeMode === 'fill' ? 'fit' : resizeMode));
+    publish(pictureRect(size, pictureAspect(effects, streamW, streamH), resizeMode));
   });
 
   const onLayout = (e: LayoutChangeEvent) => {

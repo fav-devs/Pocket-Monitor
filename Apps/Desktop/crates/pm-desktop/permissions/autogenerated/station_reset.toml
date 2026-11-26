@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-station-reset"
+description = "Enables the station_reset command without any pre-configured scope."
+commands.allow = ["station_reset"]
+
+[[permission]]
+identifier = "deny-station-reset"
+description = "Denies the station_reset command without any pre-configured scope."
+commands.deny = ["station_reset"]

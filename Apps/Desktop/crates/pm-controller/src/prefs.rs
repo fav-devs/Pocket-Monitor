@@ -497,6 +497,224 @@ pub fn save(path: &Path, saved: &Saved) -> std::io::Result<()> {
     std::fs::write(path, saved.to_lines())
 }
 
+// ---- The Tauri app's web UI ----------------------------------------------------------
+//
+// The Tauri app keeps this file as the owner of the desktop's settings (X1, X2): the Rust
+// side reads it for the gimbal, the countdown and the virtual camera, and the web reads
+// and writes the desktop-only lines through `prefs_get`/`prefs_set`. The web UI also has
+// its own stores in the mobile shape (`pm.preferences.v1`, `pm.assists.v1`); on the
+// first run on a PC that the old viewfinder was used on, those are seeded once from this
+// file ([`web_seed`]) so the operator's zebra, peaking, guides and stick feel carry over.
+
+/// Beside the settings file once the web stores have been seeded from it.
+pub const WEB_SEED_MARKER: &str = "pocket-monitor-web-seeded-v1.txt";
+
+fn camel_to_snake(key: &str) -> String {
+    let mut out = String::with_capacity(key.len() + 4);
+    for c in key.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('_');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn snake_to_camel(key: &str) -> String {
+    let mut out = String::with_capacity(key.len());
+    let mut upper = false;
+    for c in key.chars() {
+        if c == '_' {
+            upper = true;
+        } else if upper {
+            out.push(c.to_ascii_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The prefs lines as a camelCase JSON object, typed (`true`, `3`), for the web.
+pub fn prefs_json(prefs: &Prefs) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for line in prefs.to_lines().lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let typed = match value {
+            "true" => serde_json::Value::Bool(true),
+            "false" => serde_json::Value::Bool(false),
+            number => number.parse::<u64>().map_or_else(
+                |_| serde_json::Value::String(number.to_string()),
+                Into::into,
+            ),
+        };
+        map.insert(snake_to_camel(key), typed);
+    }
+    serde_json::Value::Object(map)
+}
+
+/// The prefs with a camelCase patch from the web laid over them. Each value goes through
+/// the file's own reader, so a value out of range is clamped or ignored exactly as a
+/// hand-edited file would be. Unknown keys are ignored.
+pub fn apply_prefs_patch(prefs: &Prefs, patch: &serde_json::Value) -> Prefs {
+    let mut text = prefs.to_lines();
+    if let Some(map) = patch.as_object() {
+        for (key, value) in map {
+            let value = match value {
+                serde_json::Value::Bool(on) => on.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) if !s.contains(['\n', '\r']) => s.clone(),
+                _ => continue,
+            };
+            text.push_str(&format!("{}={value}\n", camel_to_snake(key)));
+        }
+    }
+    Prefs::from_lines(&text)
+}
+
+/// The assists, scopes and stick feel the old viewfinder remembered, as patches for the
+/// mobile stores: `{ preferences, assists: { on, options }, desktop }`. `desktop` carries
+/// the prefs the mobile stores have no field for (as [`prefs_json`] writes them), and the
+/// drop-folder cube when one was in use (`lutFile`).
+pub fn web_seed(saved: &Saved) -> serde_json::Value {
+    use crate::assists::sense_label;
+    use serde_json::json;
+
+    let t = saved.toggles;
+    let a = &saved.assists;
+    let sc = &saved.scopes;
+    let p = &saved.prefs;
+    let false_mode = match a.false_color.scale {
+        FalseColorScale::Stops => "cinestop",
+        FalseColorScale::ElZone => "video",
+        FalseColorScale::Ire => "ire",
+        FalseColorScale::Limits => "limits",
+    };
+    let zoom = if sc.vector_gain >= 4.0 {
+        "4x"
+    } else if sc.vector_gain >= 2.0 {
+        "2x"
+    } else {
+        "1x"
+    };
+    // The phones' five crush/clip steps, by their stops.
+    let crush_clip = [(0.0, 0), (0.25, 2), (0.5, 5), (0.75, 7), (1.0, 10)]
+        .into_iter()
+        .min_by(|a: &(f64, u8), b| {
+            (a.0 - sc.lights_compensation)
+                .abs()
+                .total_cmp(&(b.0 - sc.lights_compensation).abs())
+        })
+        .map_or(0, |(_, value)| value);
+    let (selection, lut_file) = match &saved.lut {
+        LutChoice::BuiltIn(name) => (format!("look:{name}"), None),
+        LutChoice::File(name) => ("auto".to_string(), Some(name.clone())),
+        LutChoice::Off => ("auto".to_string(), None),
+    };
+    let frames: Vec<&str> = a.guides.frames().iter().map(|f| f.label()).collect();
+    let brightness = sc.brightness.min(200);
+    json!({
+        "preferences": {
+            "stickSensitivity": p.stick_sensitivity.clamp(1, 5),
+            "shutterUsesAngle": p.shutter_angle,
+            "gamepadEnabled": p.gamepad,
+        },
+        "assists": {
+            "on": {
+                "LUT": t.grade,
+                "PEAK": t.peaking,
+                "FALSE": t.false_color,
+                "ZEBRA": t.zebra,
+                "WAVE": t.wave,
+                "PARADE": t.parade,
+                "HISTO": t.histo,
+                "VECTOR": t.vector,
+                "LIGHTS": t.lights,
+                "ND": t.nd,
+                "AUDIO": t.audio,
+                "GUIDES": t.guides,
+                "GRID": t.grid,
+                "CROSS": t.cross,
+                "MIRROR": t.mirror,
+            },
+            "options": {
+                "lut": { "selection": selection },
+                "peaking": {
+                    "color": a.peaking_color.label(),
+                    "sense": sense_label(a.peaking_sense),
+                },
+                "falseColor": { "mode": false_mode, "reference": a.false_color.reference },
+                "zebra": {
+                    "unit": if a.zebra.ire_units { "IRE" } else { "Native" },
+                    "highlight": a.zebra.highlight_on,
+                    "highlightIRE": a.zebra.highlight_ire,
+                    "highlightColor": a.zebra.highlight_color.label(),
+                    "midtone": a.zebra.midtone_on,
+                    "midtoneIRE": a.zebra.midtone_ire,
+                    "midtoneColor": a.zebra.midtone_color.label(),
+                },
+                "waveform": {
+                    "mode": match sc.wave { WaveMode::Luma => "Luma", WaveMode::Rgb => "RGB" },
+                    "brightness": brightness,
+                    "guides": {
+                        "clip": sc.wave_guides.0,
+                        "crush": sc.wave_guides.1,
+                        "middle": sc.wave_guides.2,
+                    },
+                },
+                "parade": {
+                    "mode": match sc.parade { ParadeMode::Rgb => "RGB", ParadeMode::Yrgb => "YRGB" },
+                    "brightness": brightness,
+                },
+                "vectorscope": { "zoom": zoom, "brightness": brightness },
+                "crushClip": crush_clip,
+                "nd": {
+                    "notation": match sc.nd_notation {
+                        NdNotation::Stops => "stops",
+                        NdNotation::Factor => "factor",
+                        NdNotation::Density => "density",
+                    },
+                },
+                "guides": {
+                    "family": a.guides.family.label(),
+                    "selected": frames,
+                    "mask": a.guides.mask,
+                },
+                "grid": { "thirds": a.grid.thirds, "phi": a.grid.phi, "diagonal": a.grid.diagonal },
+            },
+        },
+        "desktop": prefs_json(p),
+        "lutFile": lut_file,
+    })
+}
+
+/// The one-time seed for the web stores, if it is still owed: the settings file exists
+/// and no marker says it was taken. A PC the old viewfinder never ran on owes nothing.
+pub fn pending_web_seed(prefs_file: &Path) -> Option<serde_json::Value> {
+    let marker = prefs_file.with_file_name(WEB_SEED_MARKER);
+    if marker.exists() {
+        return None;
+    }
+    load(prefs_file).map(|saved| web_seed(&saved))
+}
+
+/// Records that the web stores took the seed, so it is never applied twice.
+pub fn mark_web_seeded(prefs_file: &Path) -> std::io::Result<()> {
+    let marker = prefs_file.with_file_name(WEB_SEED_MARKER);
+    if let Some(folder) = marker.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    std::fs::write(
+        marker,
+        "The Pocket Monitor web UI took its first settings from desktop-prefs.txt.\n",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,5 +793,97 @@ mod tests {
         );
         assert_eq!(older.lut, LutChoice::Off);
         assert_eq!(older.prefs.ramp, 1);
+    }
+
+    #[test]
+    fn the_web_reads_and_patches_the_prefs_through_the_files_own_reader() {
+        let prefs = Prefs {
+            countdown_seconds: 10,
+            show_pad: false,
+            ..Prefs::default()
+        };
+        let json = prefs_json(&prefs);
+        assert_eq!(json["countdownSeconds"], 10);
+        assert_eq!(json["showPad"], false);
+        assert_eq!(json["vcamPort"], u64::from(opc_vcam::DEFAULT_PORT));
+        let patched = apply_prefs_patch(
+            &prefs,
+            &serde_json::json!({ "timecode": true, "stickSensitivity": 9, "nonsense": 1, "ramp": "x" }),
+        );
+        assert!(patched.timecode);
+        assert_eq!(
+            patched.stick_sensitivity, 5,
+            "clamped like a hand-edited file"
+        );
+        assert_eq!(
+            patched.ramp, prefs.ramp,
+            "a value that does not parse is ignored"
+        );
+        assert_eq!(patched.countdown_seconds, 10, "untouched lines stay");
+    }
+
+    #[test]
+    fn the_web_seed_carries_the_old_viewfinders_assists() {
+        let mut saved = Saved::default();
+        saved.prefs.stick_sensitivity = 2;
+        saved.prefs.shutter_angle = true;
+        saved.toggles.zebra = true;
+        saved.toggles.grade = true;
+        saved.assists.zebra.highlight_ire = 95.0;
+        saved.assists.zebra.midtone_color = ZebraPaint::Cyan;
+        saved.assists.peaking_color = PeakingColor::Blue;
+        saved.assists.peaking_sense = PeakingSense::High;
+        saved.assists.false_color.scale = FalseColorScale::ElZone;
+        saved.assists.guides = saved.assists.guides.with_bits(0);
+        saved.scopes.vector_gain = 2.0;
+        saved.scopes.lights_compensation = 0.5;
+        saved.scopes.wave = WaveMode::Luma;
+        saved.lut = LutChoice::BuiltIn("Contrast".into());
+        let seed = web_seed(&saved);
+        assert_eq!(seed["preferences"]["stickSensitivity"], 2);
+        assert_eq!(seed["preferences"]["shutterUsesAngle"], true);
+        let on = &seed["assists"]["on"];
+        assert_eq!(on["ZEBRA"], true);
+        assert_eq!(on["LUT"], true);
+        assert_eq!(on["PEAK"], false);
+        let options = &seed["assists"]["options"];
+        assert_eq!(options["zebra"]["highlightIRE"], 95.0);
+        assert_eq!(options["zebra"]["midtoneColor"], "Cyan");
+        assert_eq!(options["zebra"]["unit"], "IRE");
+        assert_eq!(options["peaking"]["color"], "Blue");
+        assert_eq!(options["peaking"]["sense"], "High");
+        assert_eq!(options["falseColor"]["mode"], "video");
+        assert_eq!(options["guides"]["selected"], serde_json::json!(["2.39:1"]));
+        assert_eq!(options["vectorscope"]["zoom"], "2x");
+        assert_eq!(options["crushClip"], 5);
+        assert_eq!(options["waveform"]["mode"], "Luma");
+        assert_eq!(options["lut"]["selection"], "look:Contrast");
+        assert_eq!(seed["lutFile"], serde_json::Value::Null);
+        saved.lut = LutChoice::File("mine.cube".into());
+        let seed = web_seed(&saved);
+        assert_eq!(seed["assists"]["options"]["lut"]["selection"], "auto");
+        assert_eq!(seed["lutFile"], "mine.cube");
+        assert_eq!(seed["desktop"]["shutterAngle"], true);
+    }
+
+    #[test]
+    fn the_web_seed_is_owed_once_and_only_where_the_old_app_ran() {
+        let dir = std::env::temp_dir().join(format!("pm-web-seed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("desktop-prefs.txt");
+        assert!(pending_web_seed(&file).is_none(), "a fresh PC owes nothing");
+        let mut saved = Saved::default();
+        saved.toggles.peaking = true;
+        save(&file, &saved).unwrap();
+        let seed = pending_web_seed(&file).expect("owed after the old app ran");
+        assert_eq!(seed["assists"]["on"]["PEAK"], true);
+        mark_web_seeded(&file).unwrap();
+        assert!(pending_web_seed(&file).is_none(), "never twice");
+        assert_eq!(
+            load(&file),
+            Some(saved),
+            "the file itself is left as it was"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-moves-stop"
+description = "Enables the moves_stop command without any pre-configured scope."
+commands.allow = ["moves_stop"]
+
+[[permission]]
+identifier = "deny-moves-stop"
+description = "Denies the moves_stop command without any pre-configured scope."
+commands.deny = ["moves_stop"]

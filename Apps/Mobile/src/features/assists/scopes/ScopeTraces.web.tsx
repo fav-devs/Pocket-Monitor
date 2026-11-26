@@ -9,6 +9,8 @@ import {
 } from '@/core/media';
 import type { ScopeTracesProps } from './ScopeTraces.types';
 import { TRACE, TRAIL_DECAY, histogramPlotRect, laneX, plotX, plotY, vectorscopeSquare, waveformPlotRect, type PlotRect } from './scopeGeometry';
+import { DesktopScopeTraces } from '@/features/picture/desktop/DesktopScopeTraces';
+import { desktopFrameOf } from '@/features/picture/desktop/scopes';
 
 export type { ScopeTracesProps } from './ScopeTraces.types';
 
@@ -216,8 +218,18 @@ function drawVectorscope(ctx: CanvasRenderingContext2D, sq: PlotRect, props: Sco
   ctx.restore();
 }
 
-/** Web scope traces: 2D canvas fed by the shared frame sample bundle. */
+/**
+ * Desktop seam: inside the desktop app the bundle comes from the Rust scope thread and carries
+ * grids instead of a point cloud; WAVE, PARADE and VECTOR draw from those. HISTO draws here
+ * either way (the desktop bundle carries the same `HistogramDisplay`).
+ */
 export default function ScopeTraces(props: ScopeTracesProps) {
+  if (props.kind !== 'histogram' && desktopFrameOf(props.bundle)) return <DesktopScopeTraces {...props} />;
+  return <WebScopeTraces {...props} />;
+}
+
+/** Web scope traces: 2D canvas fed by the shared frame sample bundle. */
+function WebScopeTraces(props: ScopeTracesProps) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const { width, height, bundle, kind } = props;
   useEffect(() => {

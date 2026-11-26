@@ -24,9 +24,22 @@ raw-window-handle = "0.6"
 opc-camera = { path = "../opc-camera" }
 opc-core-sys = { path = "../opc-core-sys" }
 opc-decode = { path = "../opc-decode" }
+opc-media = { path = "../opc-media" }
+opc-relay = { path = "../opc-relay" }
 opc-render = { path = "../opc-render" }
+opc-vcam = { path = "../opc-vcam" }
+# The player's sound (§1.V V2), as opc-monitor's `audio.rs`.
+cpal = "0.15"
 pm-controller = { path = "../pm-controller" }
 pm-surface = { path = "../pm-surface" }
+# The live controls (§1.R–§1.T): the key type, and the game controller read in Rust.
+opc-ui = { path = "../opc-ui" }
+gilrs = "0.11"
+# Bluetooth pairing and station mode (§1.C, §1.D), as opc-monitor's `ble_impl.rs`.
+btleplug = "0.11"
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+uuid = "1"
 
 [lints]
 workspace = true

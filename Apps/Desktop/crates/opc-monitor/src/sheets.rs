@@ -76,45 +76,7 @@ pub struct SetupInfo {
     pub phone: Option<PhoneInfo>,
 }
 
-/// Who holds camera control on a phone's shared feed.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum PhoneControl {
-    /// The phone does not take control requests.
-    #[default]
-    NotOffered,
-    /// Nobody holds it; a request would put the Grant sheet on the phone.
-    Available,
-    /// Asked; waiting for the phone's operator.
-    Requested,
-    /// This viewfinder holds it.
-    Held,
-    /// Another watcher holds it.
-    HeldBy(String),
-}
-
-impl PhoneControl {
-    pub fn label(&self) -> String {
-        match self {
-            Self::NotOffered => "Not offered by the phone".to_string(),
-            Self::Available => "Not requested".to_string(),
-            Self::Requested => "Requested · grant it on the phone".to_string(),
-            Self::Held => "Held by this viewfinder".to_string(),
-            Self::HeldBy(name) => format!("Held by {name}"),
-        }
-    }
-}
-
-/// The phone hosting the shared feed, as its hello and state messages describe it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PhoneInfo {
-    pub host: String,
-    pub camera: String,
-    /// The format label the phone shows, e.g. "4K/60".
-    pub format: String,
-    pub color: String,
-    pub live_fps: String,
-    pub control: PhoneControl,
-}
+pub use pm_controller::phone::{PhoneControl, PhoneInfo};
 
 /// What a chip does when tapped.
 #[derive(Debug, Clone, PartialEq)]

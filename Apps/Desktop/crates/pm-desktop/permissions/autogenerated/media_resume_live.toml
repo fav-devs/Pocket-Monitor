@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-resume-live"
+description = "Enables the media_resume_live command without any pre-configured scope."
+commands.allow = ["media_resume_live"]
+
+[[permission]]
+identifier = "deny-media-resume-live"
+description = "Denies the media_resume_live command without any pre-configured scope."
+commands.deny = ["media_resume_live"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-moves-clear-point"
+description = "Enables the moves_clear_point command without any pre-configured scope."
+commands.allow = ["moves_clear_point"]
+
+[[permission]]
+identifier = "deny-moves-clear-point"
+description = "Denies the moves_clear_point command without any pre-configured scope."
+commands.deny = ["moves_clear_point"]

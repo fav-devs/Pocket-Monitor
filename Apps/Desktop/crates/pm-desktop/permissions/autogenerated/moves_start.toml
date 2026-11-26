@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-moves-start"
+description = "Enables the moves_start command without any pre-configured scope."
+commands.allow = ["moves_start"]
+
+[[permission]]
+identifier = "deny-moves-start"
+description = "Denies the moves_start command without any pre-configured scope."
+commands.deny = ["moves_start"]

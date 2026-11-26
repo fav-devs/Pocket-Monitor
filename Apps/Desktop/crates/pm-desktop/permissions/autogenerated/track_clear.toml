@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-track-clear"
+description = "Enables the track_clear command without any pre-configured scope."
+commands.allow = ["track_clear"]
+
+[[permission]]
+identifier = "deny-track-clear"
+description = "Denies the track_clear command without any pre-configured scope."
+commands.deny = ["track_clear"]

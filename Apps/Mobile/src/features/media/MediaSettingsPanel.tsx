@@ -44,6 +44,7 @@ import { byteLabel } from './format';
 import { urlScheme, useFrameioAccount, validateFrameioConfig } from './frameio';
 import { useMediaLibrary } from './libraryStore';
 import { Busy, SwitchRow, Tag, TextAction } from './MediaChips';
+import DesktopOutputSettings from './desktop/DesktopOutputSettings';
 
 const NATIVE = 'Native exporter';
 
@@ -200,6 +201,9 @@ export default function MediaSettingsPanel() {
         {toggle('playbackAssists', ChartHistogramIcon, 'Open with assists')}
         {toggle('playbackAudioMeters', AudioWave01Icon, 'Audio meters', { last: true })}
       </SettingsGroup>
+
+      {/* Desktop app only: the virtual camera and this computer's media cache. */}
+      <DesktopOutputSettings />
 
       <SettingsGroup label="Delivery">
         <ChoiceRow<MediaPreferences['postExportAction']>

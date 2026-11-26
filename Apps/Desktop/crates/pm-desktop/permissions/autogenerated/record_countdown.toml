@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-record-countdown"
+description = "Enables the record_countdown command without any pre-configured scope."
+commands.allow = ["record_countdown"]
+
+[[permission]]
+identifier = "deny-record-countdown"
+description = "Denies the record_countdown command without any pre-configured scope."
+commands.deny = ["record_countdown"]

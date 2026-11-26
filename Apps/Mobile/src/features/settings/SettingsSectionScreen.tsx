@@ -15,6 +15,7 @@ import { SharingSection } from './sections/SharingSection';
 import { StorageSection } from './sections/StorageSection';
 import { SupportSection } from './sections/SupportSection';
 import { sectionInfo } from './sections';
+import { DesktopAppRows, DesktopNetworkRows, DesktopSupportRows } from './desktop/DesktopSettings';
 
 /** `/settings/<section>`: one Operator Setup section as its own settings page (e.g. `/settings/assists`). */
 export default function SettingsSectionScreen() {
@@ -27,13 +28,23 @@ export default function SettingsSectionScreen() {
   let body: ReactNode;
   switch (info.id) {
     case 'connection':
-      body = <ConnectionSection />;
+      body = (
+        <>
+          <ConnectionSection />
+          <DesktopNetworkRows />
+        </>
+      );
       break;
     case 'display':
       body = <DisplaySection />;
       break;
     case 'operator':
-      body = <OperatorSection />;
+      body = (
+        <>
+          <OperatorSection />
+          <DesktopAppRows />
+        </>
+      );
       break;
     case 'input':
       body = <InputSection />;
@@ -57,7 +68,12 @@ export default function SettingsSectionScreen() {
       body = <StorageSection />;
       break;
     case 'support':
-      body = <SupportSection onReport={() => setReporting(true)} onPrivacy={() => setLegal('privacy')} />;
+      body = (
+        <>
+          <SupportSection onReport={() => setReporting(true)} onPrivacy={() => setLegal('privacy')} />
+          <DesktopSupportRows />
+        </>
+      );
       break;
     case 'about':
       body = <AboutSection onLegal={setLegal} />;

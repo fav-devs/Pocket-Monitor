@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preset-seconds"
+description = "Enables the preset_seconds command without any pre-configured scope."
+commands.allow = ["preset_seconds"]
+
+[[permission]]
+identifier = "deny-preset-seconds"
+description = "Denies the preset_seconds command without any pre-configured scope."
+commands.deny = ["preset_seconds"]

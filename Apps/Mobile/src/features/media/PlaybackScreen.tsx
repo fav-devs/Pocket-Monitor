@@ -1,6 +1,7 @@
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  Camera01Icon,
   ChartHistogramIcon,
   Delete02Icon,
   GoBackward15SecIcon,
@@ -48,6 +49,7 @@ import { favoriteColor, Glyph } from './MediaChips';
 import { ConfirmSheet, NoticeToast } from './MediaOverlays';
 import { ClipInfoList, clipInfoRows, PlaybackMeters, PlaybackScrubber, SideButton, StarRating, ToolWell, videoText } from './PlaybackParts';
 import { usePlaybackEngine } from './usePlaybackEngine';
+import { useDesktopPlayback } from './desktop/useDesktopPlayback';
 
 function fit(aspect: number, w: number, h: number): LayoutRectangle {
   if (w <= 0 || h <= 0) return { x: 0, y: 0, width: 0, height: 0 };
@@ -94,6 +96,8 @@ export default function PlaybackScreen() {
   const id = decodeURIComponent(String(params.id ?? ''));
   const router = useRouter();
   const session = useCameraSession();
+  // Desktop app: the clip plays natively through the graded Vulkan picture (§1.V).
+  const desktop = session.kind === 'desktop';
   const insets = useSafeAreaInsets();
   const styles = useThemedStyles(createStyles);
   const { width, height } = useWindowDimensions();
@@ -151,23 +155,49 @@ export default function PlaybackScreen() {
   const localUri = item ? lib.localFiles[item.id] : undefined;
   const uri = isVideo ? localUri || item?.previewUrl || item?.originalUrl || null : null;
   const fps = item?.fps ?? 30;
-  const targets = conformTargets(item?.fps);
-  const engine = usePlaybackEngine({
-    uri,
+  const baseEngine = usePlaybackEngine({
+    uri: desktop ? null : uri,
     durationSec: item?.durationSec ?? 10,
     fps,
     loop: prefs.loopPlayback,
     muted: prefs.mutePlayback || conform != null,
     rate: conform && item?.fps ? conform / item.fps : 1,
-    autoplay: true,
+    autoplay: !desktop,
     itemKey: `${id}|${uri ?? 'sim'}`,
   });
+  const desktopEngine = useDesktopPlayback({
+    enabled: desktop,
+    item,
+    loop: prefs.loopPlayback,
+    muted: prefs.mutePlayback || conform != null,
+    conform,
+  });
+  const engine = desktop ? desktopEngine : baseEngine;
+  const targets = desktop ? desktopEngine.conformTargets : conformTargets(item?.fps);
+  const takeStill = () => {
+    desktopEngine
+      .screenshot()
+      .then((path) => lib.showNotice(`Saved ${path.split(/[\\/]/).pop() ?? 'still'}`))
+      .catch((e) => lib.showNotice(typeof e === 'string' ? e : 'Could not take the screenshot.'));
+  };
 
   // Keyboard transport on web: Space play/pause, ←/→ one frame, Shift ±1 s.
   useEffect(() => {
-    if (Platform.OS !== 'web' || !isVideo || typeof window === 'undefined') return;
+    if (Platform.OS !== 'web' || (!isVideo && !desktop) || typeof window === 'undefined') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target && (e.target as HTMLElement).tagName === 'INPUT') return;
+      // Desktop: S takes the graded screenshot, Esc goes back (the old player's keys).
+      if (desktop && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        takeStill();
+        return;
+      }
+      if (desktop && e.key === 'Escape') {
+        e.preventDefault();
+        goBack();
+        return;
+      }
+      if (!isVideo) return;
       if (e.key === ' ') {
         e.preventDefault();
         engine.toggle();
@@ -176,7 +206,8 @@ export default function PlaybackScreen() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [engine, isVideo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine, isVideo, desktop]);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -203,7 +234,15 @@ export default function PlaybackScreen() {
   const timecode = prefs.playbackTimecode;
   const positionText = timecode ? timecodeLabel(position, item.fps) : durationLabel(position);
   const durationText = timecode ? timecodeLabel(engine.duration, item.fps) : durationLabel(engine.duration);
-  const source = localUri ? 'Original · on phone' : !isVideo ? 'On camera' : engine.kind === 'simulated' ? 'On camera · demo picture' : 'Preview · on camera';
+  const source = desktop
+    ? (engine.kind === 'desktop' && engine.rendition) || (localUri ? 'Original · on this computer' : 'On camera')
+    : localUri
+      ? 'Original · on phone'
+      : !isVideo
+        ? 'On camera'
+        : engine.kind === 'simulated'
+          ? 'On camera · demo picture'
+          : 'Preview · on camera';
   const aspect = item.width && item.height ? item.width / item.height : 16 / 9;
   const rect = fit(aspect, canvas.width, canvas.height);
   const t = engine.position;
@@ -222,8 +261,7 @@ export default function PlaybackScreen() {
     else goBack();
   };
 
-  const picture =
-    item.kind === 'photo' ? (
+  const picture = desktop ? null : item.kind === 'photo' ? (
       <Image source={{ uri: localUri || item.originalUrl || item.previewUrl || item.thumbnailUrl }} style={{ width: '100%', height: '100%' }} contentFit="contain" transition={150} />
     ) : engine.kind === 'video' ? (
       <VideoView player={engine.player} style={{ width: '100%', height: '100%' }} contentFit="contain" nativeControls={false} />
@@ -267,6 +305,7 @@ export default function PlaybackScreen() {
     ),
     remove: <ToolWell key="delete" icon={Delete02Icon} label="Delete clip from camera" caption="Delete" destructive onPress={() => setConfirmDelete(true)} />,
     hide: <ToolWell key="hide" icon={ViewOffSlashIcon} label="Hide playback controls" caption="Clean" onPress={() => setChrome(false)} />,
+    still: desktop ? <ToolWell key="still" icon={Camera01Icon} label="Screenshot (S)" caption="Still" onPress={takeStill} /> : null,
   };
 
   const transport = (
@@ -300,7 +339,14 @@ export default function PlaybackScreen() {
     <View style={styles.root}>
       {/* Picture canvas: fixed child, assists drawn inside the fitted picture rect. */}
       <View style={styles.fill} onLayout={(e) => setCanvas({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
-        <View style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, overflow: 'hidden' }}>{picture}</View>
+        {desktop ? (
+          // The native player's picture shows through this hole; Rust letterboxes it.
+          <View style={styles.fill} pointerEvents="none">
+            <LivePicture source={{ kind: 'desktop' }} resizeMode="fit" context="playback" />
+          </View>
+        ) : (
+          <View style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, overflow: 'hidden' }}>{picture}</View>
+        )}
         {assists && isVideo ? (
           <AssistOverlays
             context="playback"
@@ -328,11 +374,18 @@ export default function PlaybackScreen() {
         ) : null}
       </View>
 
-      {isVideo && engine.kind === 'video' && (!engine.ready || engine.error) ? (
-        <View pointerEvents="none" style={styles.loading}>
-          {engine.error ? null : <Spinner opacity={1} size={24} color="#ffffff" />}
-          <Text style={styles.loadingText}>{engine.error ?? 'Preparing playback…'}</Text>
-        </View>
+      {(isVideo && engine.kind === 'video') || engine.kind === 'desktop' ? (
+        !engine.ready || engine.error ? (
+          <View pointerEvents="none" style={styles.loading}>
+            {engine.error ? null : <Spinner opacity={1} size={24} color="#ffffff" />}
+            <Text style={styles.loadingText}>
+              {engine.error ??
+                (engine.kind === 'desktop' && engine.fetching?.total
+                  ? `Preparing playback… ${Math.round((engine.fetching.done / engine.fetching.total) * 100)}%`
+                  : 'Preparing playback…')}
+            </Text>
+          </View>
+        ) : null
       ) : null}
 
       {chrome ? (
@@ -416,6 +469,21 @@ export default function PlaybackScreen() {
               ) : null}
               {isVideo ? (
                 <>
+                  {engine.kind === 'desktop' && engine.strip.length ? (
+                    <View style={styles.strip}>
+                      {engine.strip.map((src, i) => (
+                        <Pressable
+                          key={src}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Go to ${durationLabel((engine.duration * i) / engine.strip.length)}`}
+                          onPress={() => engine.seek((engine.duration * i) / engine.strip.length)}
+                          style={styles.stripFrame}
+                        >
+                          <Image source={{ uri: src }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
                   <View style={styles.clockRow}>
                     <Pressable
                       accessibilityRole="button"
@@ -447,18 +515,18 @@ export default function PlaybackScreen() {
                   {portrait ? (
                     <>
                       {transport}
-                      <View style={[styles.tools, roomy && styles.toolsRoomy]}>{[tool.assists, tool.conform, tool.sound, tool.loop, tool.rate, tool.remove, tool.hide]}</View>
+                      <View style={[styles.tools, roomy && styles.toolsRoomy]}>{[tool.assists, tool.conform, tool.sound, tool.loop, tool.still, tool.rate, tool.remove, tool.hide]}</View>
                     </>
                   ) : (
                     <View style={styles.landscapeRow}>
                       <View style={[styles.toolGroup, { justifyContent: 'flex-start' }]}>{[tool.assists, tool.conform, tool.sound, tool.loop]}</View>
                       {transport}
-                      <View style={[styles.toolGroup, { justifyContent: 'flex-end' }]}>{[tool.rate, tool.remove, tool.hide]}</View>
+                      <View style={[styles.toolGroup, { justifyContent: 'flex-end' }]}>{[tool.still, tool.rate, tool.remove, tool.hide]}</View>
                     </View>
                   )}
                 </>
               ) : (
-                <View style={[styles.tools, styles.photoTools]}>{[tool.rate, tool.remove, tool.hide]}</View>
+                <View style={[styles.tools, styles.photoTools]}>{[tool.still, tool.rate, tool.remove, tool.hide]}</View>
               )}
             </View>
           </View>
@@ -556,6 +624,8 @@ function createStyles(colors: ThemeColors) {
     bottom: { position: 'absolute' as const, left: 0, right: 0, bottom: 0, paddingTop: 28, alignItems: 'center' as const },
     bottomColumn: { width: '100%' as const, maxWidth: 760, gap: 4 },
     filmstrip: { gap: 6, paddingVertical: 4 },
+    strip: { flexDirection: 'row' as const, gap: 2, height: 44, borderRadius: 8, overflow: 'hidden' as const },
+    stripFrame: { flex: 1, minHeight: 44 },
     frame: { width: 64, height: 44, borderRadius: 8, overflow: 'hidden' as const, borderWidth: 2, borderColor: 'transparent' },
     frameOn: { borderColor: '#ffffff' },
     clockRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },

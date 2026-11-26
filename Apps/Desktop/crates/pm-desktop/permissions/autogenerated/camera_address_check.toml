@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-camera-address-check"
+description = "Enables the camera_address_check command without any pre-configured scope."
+commands.allow = ["camera_address_check"]
+
+[[permission]]
+identifier = "deny-camera-address-check"
+description = "Denies the camera_address_check command without any pre-configured scope."
+commands.deny = ["camera_address_check"]

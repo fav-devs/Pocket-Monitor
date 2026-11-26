@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
+import { desktopInput } from '@/camera/desktop/input';
 import type { LiveInputActions } from './actions';
+import { attachDesktopKeys } from './desktopKeys';
+import { useDesktopInputSync } from './desktopSync';
 import { postDrive, releaseDrive } from './gimbalDrive';
 
 /** Arrow keys pan/tilt at this share of full throw (keyboard has no analog depth). */
@@ -13,13 +16,18 @@ const KEY_ZOOM_RATE = 0.6;
  * +/- zoom · 0 wide · F selfie flip · V cycle gimbal mode · X stop tracking ·
  * [ / ] step resolution / frame rate · G gallery · Z P L M zebra/peaking/cube/mirror ·
  * H hide chrome · Esc close the viewfinder.
+ *
+ * Inside the desktop app the keys are the desktop viewfinder's superset instead (§1.R of
+ * `docs/desktop-expo-port.md`, `./desktopKeys.ts`): Rust decides every key.
  */
 export function useKeyboardShortcuts(actions: LiveInputActions, enabled: boolean) {
   const ref = useRef(actions);
   ref.current = actions;
+  useDesktopInputSync(enabled);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || !enabled || typeof window === 'undefined') return;
+    if (desktopInput()) return attachDesktopKeys(() => ref.current);
     const arrows = new Set<string>();
     let zoomKey: string | null = null;
 

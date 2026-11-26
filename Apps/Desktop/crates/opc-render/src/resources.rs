@@ -191,6 +191,49 @@ impl HostBuffer {
         Ok(())
     }
 
+    /// Packs `rows` rows of `width` bytes, `stride` apart in `source`, straight into the
+    /// mapped buffer: one copy, no intermediate allocation.
+    pub fn write_rows(
+        &self,
+        device: &Device,
+        source: &[u8],
+        stride: usize,
+        width: usize,
+        rows: usize,
+    ) -> Result<(), RenderError> {
+        let needed = width * rows;
+        if needed == 0 {
+            return Ok(());
+        }
+        if needed as vk::DeviceSize > self.size
+            || (rows > 0 && source.len() < (rows - 1) * stride + width)
+        {
+            // A plane shorter than its stated raster: refuse it rather than read past it.
+            return Err(RenderError::UnsupportedRaster {
+                width: width as u32,
+                height: rows as u32,
+            });
+        }
+        // Safety: the memory is host-visible and coherent, and nothing else maps it.
+        let pointer =
+            unsafe { device.map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty()) }
+                .context("vkMapMemory")?;
+        // Safety: the mapping covers `self.size` ≥ `width × rows` bytes, and every source
+        // row was bounds-checked above.
+        unsafe {
+            let base = pointer.cast::<u8>();
+            for row in 0..rows {
+                std::ptr::copy_nonoverlapping(
+                    source.as_ptr().add(row * stride),
+                    base.add(row * width),
+                    width,
+                );
+            }
+            device.unmap_memory(self.memory);
+        }
+        Ok(())
+    }
+
     pub fn read_bytes(&self, device: &Device, length: usize) -> Result<Vec<u8>, RenderError> {
         // Safety: host-visible and coherent memory with no other mapping outstanding.
         let pointer =

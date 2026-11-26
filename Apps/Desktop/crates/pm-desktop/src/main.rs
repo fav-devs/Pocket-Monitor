@@ -17,8 +17,27 @@
 //! presents; `pm-input` streams the gimbal at 100 Hz.
 
 mod camera;
+mod connect;
+mod diagnostics;
+mod gamepad;
+mod gestures;
 mod input;
+mod keys;
+mod known;
+mod launch;
+mod luts;
+mod media;
+mod moves;
 mod picture;
+mod player;
+mod pointer;
+mod prefs;
+mod relay;
+mod scopes;
+mod station;
+mod stills;
+mod uri;
+mod vcam;
 
 use std::sync::{Arc, Mutex};
 
@@ -27,50 +46,10 @@ use pm_controller::effects::PictureEffects;
 use pm_controller::gimbal::DriveSource;
 use pm_controller::link::log_line;
 use pm_controller::state::CameraState;
-use serde::Serialize;
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 
 use camera::{CameraService, Target};
 use picture::{CssRect, PictureHost, PictureHub};
-
-/// What the command line asked for, for the web's first route (B1, phase 1 subset).
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LaunchArgs {
-    /// `--camera HOST[:PORT]` (or `PM_CAMERA`): connect at launch.
-    camera: Option<String>,
-    /// `--model ID` (decimal or 0x hex).
-    model: Option<i32>,
-    /// `demo`: stay on the web demo camera.
-    demo: bool,
-}
-
-fn flag(args: &[String], name: &str) -> Option<String> {
-    args.iter()
-        .position(|argument| argument == &format!("--{name}"))
-        .and_then(|at| args.get(at + 1))
-        .cloned()
-}
-
-fn parse_model(text: &str) -> Option<i32> {
-    match text.strip_prefix("0x") {
-        Some(hex) => i32::from_str_radix(hex, 16).ok(),
-        None => text.parse().ok(),
-    }
-}
-
-fn launch_args_from(args: &[String]) -> LaunchArgs {
-    LaunchArgs {
-        camera: flag(args, "camera").or_else(|| std::env::var("PM_CAMERA").ok()),
-        model: flag(args, "model").as_deref().and_then(parse_model),
-        demo: args.iter().any(|argument| argument == "demo"),
-    }
-}
-
-#[tauri::command]
-fn launch_args(args: State<'_, LaunchArgs>) -> LaunchArgs {
-    args.inner().clone()
-}
 
 // Connect, disconnect and reconnect join threads (the old link's camera thread can take a
 // reconnect pause to notice), so they run off the main thread (§3.3 rule 1).
@@ -131,8 +110,17 @@ fn gimbal_release(camera: State<'_, CameraService>, source: Option<DriveSource>)
 /// Where `<LivePicture>`'s transparent hole is (CSS px of the viewport) and the device
 /// pixel ratio; `rect: null` when no live picture is on screen.
 #[tauri::command]
-fn picture_layout(hub: State<'_, Arc<PictureHub>>, rect: Option<CssRect>, dpr: Option<f64>) {
+fn picture_layout(
+    hub: State<'_, Arc<PictureHub>>,
+    rect: Option<CssRect>,
+    dpr: Option<f64>,
+    fit: Option<String>,
+) {
     hub.layout(rect.map(|rect| (rect, dpr.unwrap_or(1.0).max(0.1))));
+    // `resizeMode`: "fill" fills the hole and crops; absent or "fit" keeps the bars.
+    if let Some(fit) = fit {
+        hub.fit_mode(fit == "fill");
+    }
 }
 
 /// The mobile `PictureEffects`, sent when it changes.
@@ -156,15 +144,21 @@ fn window_fullscreen(window: tauri::WebviewWindow, on: Option<bool>) -> Result<b
 fn main() {
     // First thing: no power throttling, 1 ms timers (A14, P9).
     pm_controller::platform::keep_timers_fast();
+    // The log (D3): per user when installed, beside the exe when portable.
+    pm_controller::platform::set_log_name("pocket-monitor.log");
+    // keys / version / --help / headless exit here; a second launch hands over (B6, A1).
+    let launch = launch::from_command_line();
+    launch::ensure_webview_runtime();
+    if launch::hand_to_running(&launch) {
+        return;
+    }
+    pm_controller::platform::rotate_log();
     log_line("pm-desktop", "starting");
+    launch::log_args();
     std::panic::set_hook(Box::new(|info| {
         log_line("PANIC", info);
         eprintln!("pocket monitor panic: {info}");
     }));
-
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    log_line("args", format_args!("{args:?}"));
-    let launch = launch_args_from(&args);
 
     let commander = Arc::new(Mutex::new(None));
     let hub = PictureHub::new(commander.clone());
@@ -173,9 +167,18 @@ fn main() {
         .manage(launch.clone())
         .manage(hub.clone())
         .manage(PictureHost::default())
+        // Thumbnails, filmstrip frames and stills for the web view, never over JSON.
+        .register_asynchronous_uri_scheme_protocol("pm", uri::handle)
         .setup(move |app| {
             let service = CameraService::new(app.handle().clone(), commander.clone(), hub.clone());
             app.manage(service);
+            input::attach(app.handle());
+            app.manage(connect::BleService::new(app.handle().clone()));
+            launch::listen_for_launches(app.handle());
+            if let Some(window) = app.get_webview_window("main") {
+                launch::restore_window(&window);
+            }
+            media::start_services(app.handle());
             if let Some(window) = app.get_webview_window("main") {
                 picture::start(window, hub.clone());
             }
@@ -191,6 +194,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            launch::on_window_event(window, event);
             let app = window.app_handle();
             match event {
                 WindowEvent::Resized(size) => {
@@ -231,7 +235,33 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            launch_args,
+            launch::launch_args,
+            launch::keyboard_shortcuts,
+            connect::ble_scan_start,
+            connect::ble_scan_stop,
+            connect::ble_pair,
+            connect::ble_cancel,
+            connect::wifi_join_camera,
+            connect::wifi_join_saved,
+            connect::camera_open,
+            connect::station_join,
+            connect::station_reset,
+            connect::station_find,
+            connect::station_current_ssid,
+            known::known_cameras,
+            known::forget_camera,
+            known::probe_camera,
+            known::camera_address_check,
+            prefs::prefs_get,
+            prefs::prefs_set,
+            prefs::app_settings_get,
+            prefs::app_settings_set,
+            prefs::prefs_web_seed,
+            prefs::prefs_web_seeded,
+            diagnostics::diagnostics_paths,
+            diagnostics::diagnostics_write,
+            diagnostics::log_tail,
+            diagnostics::open_folder,
             camera_connect,
             camera_disconnect,
             camera_reconnect,
@@ -241,7 +271,70 @@ fn main() {
             gimbal_release,
             picture_layout,
             picture_set_effects,
+            luts::lut_list,
+            luts::lut_load,
+            luts::lut_select,
+            luts::lut_unload,
+            scopes::scopes_configure,
+            stills::still_capture,
             window_fullscreen,
+            keys::control_key,
+            keys::control_keys,
+            pointer::picture_pointer,
+            pointer::focus_at,
+            pointer::track_clear,
+            moves::zoom_write,
+            moves::zoom_rate,
+            moves::zoom_step,
+            moves::record_countdown,
+            moves::gimbal_lock_all,
+            moves::input_configure,
+            moves::input_resend,
+            moves::moves_set_point,
+            moves::moves_clear_point,
+            moves::moves_configure,
+            moves::moves_start,
+            moves::moves_stop,
+            moves::moves_pause,
+            moves::moves_resume,
+            moves::preset_save,
+            moves::preset_go,
+            moves::preset_clear,
+            moves::preset_seconds,
+            gestures::gestures_set,
+            gestures::gestures_state,
+            media::media_list,
+            media::media_refresh,
+            media::media_play,
+            media::media_view,
+            media::media_download,
+            media::media_favorite,
+            media::media_delete,
+            media::media_close,
+            media::media_resume_live,
+            media::media_cache_size,
+            media::media_cache_clear,
+            player::player_state,
+            player::player_toggle,
+            player::player_seek,
+            player::player_speed,
+            player::player_conform_next,
+            player::player_conform,
+            player::player_options,
+            player::player_screenshot,
+            player::player_close,
+            vcam::vcam_get,
+            vcam::vcam_set,
+            vcam::vcam_component_probe,
+            vcam::vcam_component_install,
+            vcam::vcam_component_remove,
+            vcam::open_url,
+            relay::relay_browse,
+            relay::relay_info,
+            relay::relay_join,
+            relay::relay_leave,
+            relay::relay_control,
+            relay::relay_command,
         ])
         .build(tauri::generate_context!());
 
@@ -250,11 +343,18 @@ fn main() {
         Err(error) => {
             log_line("pm-desktop", format_args!("could not start: {error}"));
             eprintln!("pocket monitor: {error}");
+            // No terminal in the release build: say it in a dialog (A12).
+            pm_controller::platform::message_box(
+                "Pocket Monitor",
+                &format!("Pocket Monitor could not start: {error}"),
+                true,
+            );
             std::process::exit(1);
         }
     };
     app.run(|app, event| {
         if let RunEvent::Exit = event {
+            media::stop_services(app);
             if let Some(camera) = app.try_state::<CameraService>() {
                 camera.shutdown();
             }

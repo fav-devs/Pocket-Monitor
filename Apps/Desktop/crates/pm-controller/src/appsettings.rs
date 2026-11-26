@@ -3,7 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+use serde::{Deserialize, Serialize};
+
+/// `desktop-app-v1.txt` (X3). The web reads and writes it through `app_settings_get/set`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     /// Webcam gestures on whenever the viewfinder opens.
     pub gestures: bool,
@@ -52,16 +56,23 @@ pub fn path() -> PathBuf {
 }
 
 pub fn load() -> AppSettings {
-    std::fs::read_to_string(path())
-        .map_or_else(|_| AppSettings::default(), |t| AppSettings::parse(&t))
+    load_from(&path())
 }
 
 pub fn save(settings: &AppSettings) {
-    let path = path();
+    let _ = save_to(&path(), settings);
+}
+
+pub fn load_from(path: &Path) -> AppSettings {
+    std::fs::read_to_string(path)
+        .map_or_else(|_| AppSettings::default(), |t| AppSettings::parse(&t))
+}
+
+pub fn save_to(path: &Path, settings: &AppSettings) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
-    let _ = std::fs::write(path, settings.to_text());
+    std::fs::write(path, settings.to_text())
 }
 
 /// The model's name as an operator knows it.
@@ -93,5 +104,31 @@ mod tests {
     fn the_pocket_3_is_named() {
         assert_eq!(model_label(Some(0x20)), "Osmo Pocket 3");
         assert_eq!(model_label(None), "DJI camera");
+    }
+
+    #[test]
+    fn the_web_speaks_camel_case_and_a_missing_field_is_default() {
+        let json = serde_json::to_string(&AppSettings {
+            gestures: true,
+            open_camera_at_launch: false,
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"gestures":true,"openCameraAtLaunch":false}"#);
+        let back: AppSettings = serde_json::from_str(r#"{"openCameraAtLaunch":true}"#).unwrap();
+        assert!(back.open_camera_at_launch && !back.gestures);
+    }
+
+    #[test]
+    fn a_file_is_written_where_it_is_read() {
+        let dir = std::env::temp_dir().join(format!("pm-appsettings-{}", std::process::id()));
+        let file = dir.join("desktop-app-v1.txt");
+        let settings = AppSettings {
+            gestures: true,
+            open_camera_at_launch: true,
+        };
+        save_to(&file, &settings).unwrap();
+        assert_eq!(load_from(&file), settings);
+        assert_eq!(load_from(&dir.join("missing.txt")), AppSettings::default());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

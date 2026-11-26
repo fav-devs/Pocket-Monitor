@@ -154,3 +154,103 @@ impl GradeOptions {
         self.peaking.is_some()
     }
 }
+
+/// Which way an anamorphic lens squeezed the picture, and by how much.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Desqueeze {
+    /// 1 is off. Clamped to 1…4 when used.
+    pub factor: f32,
+    /// The lens squeezed vertically: the picture is shown taller rather than wider.
+    pub vertical: bool,
+}
+
+impl Default for Desqueeze {
+    fn default() -> Self {
+        Self {
+            factor: 1.0,
+            vertical: false,
+        }
+    }
+}
+
+impl Desqueeze {
+    fn factor(self) -> f64 {
+        f64::from(self.factor).clamp(1.0, 4.0)
+    }
+
+    /// The shape the picture is *shown* at: the source raster with the squeeze undone
+    /// (display aspect × factor horizontally, ÷ factor vertically, as the phones do).
+    pub fn display_size(self, source: (u32, u32)) -> (u32, u32) {
+        let factor = self.factor();
+        if factor <= 1.000_5 {
+            return source;
+        }
+        if self.vertical {
+            (source.0, (f64::from(source.1) * factor).round() as u32)
+        } else {
+            ((f64::from(source.0) * factor).round() as u32, source.1)
+        }
+    }
+}
+
+/// How the picture fills its rectangle: whole with bars (`Contain`, the monitor's default)
+/// or filling it and cropped at the edges (`Cover`, the phones' `resizeMode: 'fill'`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PictureFit {
+    #[default]
+    Contain,
+    Cover,
+}
+
+/// The parts of the mobile `PictureEffects` contract that `GradeOptions` predates: the
+/// display transform, the cube's intensity and input exposure, the mono and vertical-flip
+/// views, solid zebra and the anamorphic desqueeze. Set once on the renderer when they
+/// change ([`crate::FeedRenderer::set_look`]); the default changes nothing, so a shell that
+/// never sets one paints exactly what it did before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Look {
+    /// The curve the feed is in (`signal`): exposure compensation linearises through it.
+    pub signal: crate::color::Transfer,
+    /// The display transform applied before the cube (`sourceColor`); Rec.709 is none.
+    pub display: crate::color::Transfer,
+    /// Input exposure in stops of `signal`, before the cube and the display transform.
+    pub exposure_stops: f32,
+    /// How much of the cube shows over the display transform, 0…1.
+    pub lut_intensity: f32,
+    /// Rec.709 luma of the graded picture; false colour still paints in colour.
+    pub monochrome: bool,
+    /// Top-to-bottom flip (MIRROR Vertical).
+    pub mirror_vertical: bool,
+    /// Zebra in 45° stripes (`true`) or solid.
+    pub zebra_stripes: bool,
+    pub desqueeze: Desqueeze,
+    /// The mobile contract's own peaking ratio threshold and noise gate, when it sent
+    /// them; `None` uses [`Peaking::sense`]'s presets (the same three pairs).
+    pub peaking_thresholds: Option<[f32; 2]>,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self {
+            signal: crate::color::Transfer::Rec709,
+            display: crate::color::Transfer::Rec709,
+            exposure_stops: 0.0,
+            lut_intensity: 1.0,
+            monochrome: false,
+            mirror_vertical: false,
+            zebra_stripes: true,
+            desqueeze: Desqueeze::default(),
+            peaking_thresholds: None,
+        }
+    }
+}
+
+impl Look {
+    /// The same look without the diagnostic views (the virtual camera's "Clean").
+    pub fn clean(self) -> Self {
+        Self {
+            monochrome: false,
+            ..self
+        }
+    }
+}

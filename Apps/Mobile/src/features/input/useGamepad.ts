@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { PocketGamepad } from '@modules/pocket-native/src';
 import type { GamepadState } from '@modules/pocket-native/src';
+import { configureInput, desktopInput, useDesktopInput } from '@/camera/desktop/input';
 import type { LiveInputActions } from './actions';
 import { postDrive, releaseDrive } from './gimbalDrive';
 import { applyStickMapping, type StickMapping } from './stickMath';
@@ -75,6 +76,24 @@ export function useGamepadInput(
   const [status, setStatus] = useState<{ connected: boolean; name?: string }>({ connected: false });
 
   useEffect(() => {
+    // Desktop app: the controller is read in Rust (gilrs) at the input thread's rate and
+    // applied there; the web only shows it and toasts plug and unplug.
+    if (desktopInput()) {
+      configureInput({ gamepad: enabled });
+      if (!enabled) return;
+      let connected = useDesktopInput.getState().gamepad.connected;
+      setStatus({ connected, name: useDesktopInput.getState().gamepad.name });
+      const stop = useDesktopInput.subscribe(({ gamepad }) => {
+        if (gamepad.connected === connected) return;
+        connected = gamepad.connected;
+        setStatus({ connected, name: gamepad.name });
+        actionsRef.current.notice(connected ? 'Gamepad connected' : 'Gamepad disconnected', connected ? 'success' : 'info');
+      });
+      return () => {
+        stop();
+        configureInput({ gamepad: false });
+      };
+    }
     if (!enabled) return;
     let prev: GamepadState = REST;
     let zoom = 0;

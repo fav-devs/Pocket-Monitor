@@ -25,14 +25,12 @@ pub fn diagnostic(message: impl std::fmt::Display) {
     log_line("view", message);
 }
 
-/// Appends `<tag>: <message>` to `opc-monitor.log` beside the executable — the file and
+/// Appends `<tag>: <message>` to the log ([`crate::platform::log_path`]) — the file and
 /// line formats the benchmark in `docs/desktop-expo-port.md` §4 parses. Never pass
 /// credentials or payloads.
 pub fn log_line(tag: &str, message: impl std::fmt::Display) {
-    let Some(path) = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|dir| dir.join("opc-monitor.log")))
-    else {
+    // Beside the exe for a portable copy, per user for an installed one (D3).
+    let Some(path) = crate::platform::log_path() else {
         return;
     };
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
@@ -205,9 +203,7 @@ fn run(
 ) {
     // The window is normally launched without a terminal on Windows. Keep the network
     // state beside the executable, but never log BLE credentials or camera payloads.
-    let mut log = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|dir| dir.join("opc-monitor.log")))
+    let mut log = crate::platform::log_path()
         .and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok());
     macro_rules! link_log {
         ($($t:tt)*) => {
@@ -266,7 +262,15 @@ fn run(
             Ok(polled) => polled,
             Err(error) => {
                 link_log!("UDP poll failed: {error}");
-                match reconnect(&error.to_string(), remote, session_id, base_seq, commands, events, &mut log) {
+                match reconnect(
+                    &error.to_string(),
+                    remote,
+                    session_id,
+                    base_seq,
+                    commands,
+                    events,
+                    &mut log,
+                ) {
                     Some(fresh) => {
                         session = fresh;
                         if let Some(model_id) = model_id {
@@ -379,7 +383,9 @@ fn run(
                 SessionEvent::Unreachable => {
                     link_log!("camera did not answer its UDP session handshake");
                     let reason = "the camera did not answer — is this machine on its Wi-Fi?";
-                    match reconnect(reason, remote, session_id, base_seq, commands, events, &mut log) {
+                    match reconnect(
+                        reason, remote, session_id, base_seq, commands, events, &mut log,
+                    ) {
                         Some(fresh) => {
                             session = fresh;
                             if let Some(model_id) = model_id {

@@ -1021,3 +1021,143 @@ Windows build and the DPI.
    build.
 8. **R9.** The Swift facade (with `mimalloc-redirect.dll`) and WebView2 in one process:
    any crash at start goes into `PANIC:` in the log.
+
+### 5.7 Phase 2: media library, player, virtual camera, watcher (§1.U, §1.V, §1.W, §1.E)
+
+Written and checked in the Linux container (`cargo check`, `cargo test -p pm-controller`,
+`tsc`, vitest). **Not run on Windows or a camera.** This supersedes the `media_*`,
+`player_*`, `vcam_*` and `relay_*` entries of §5.2's "Not started" line.
+
+**Where it lives.** Rust: `pm-desktop/src/{media,player,vcam,relay,uri}.rs` (services and
+commands), `pm-controller/src/{library,playback,vcam,phone}.rs` (decisions, tested;
+`phone.rs` **moved** from `opc-monitor` with `PhoneControl`/`PhoneInfo`, which `opc-monitor`
+re-exports, so its paths and tests are unchanged). Web: `src/camera/desktop/{media,vcam,relay}.ts`,
+`src/features/media/desktop/*` (player bridge, list sync, Output settings),
+`src/features/watcher/WatcherScreen.tsx`. Hooks into phase-1 code, all additive:
+`camera.rs` hands catalogue frames, the playback bit and the link's address/model to the
+library (`media::tap_*`); `picture.rs` gained `push_player`/`set_player` (live pictures are
+held back while a clip or still is up), a live-push counter (the resume loop's "fresh
+picture" test) and one call per real present into `vcam::after_present`.
+
+**Threads.** `pm-media` (50 Hz while listing/resuming, 5 Hz idle) runs `opc_media::Browse`
+and the resume loop, drains the fetch worker (`opc-media` thread) and emits; `pm-player`
+owns the `FileReader`, the clock and the cpal stream (not `Send`, so it never leaves the
+thread); `pm-vcam` fits frames and writes stills off the render thread; `pm-relay` and
+`pm-relay-browse` run the phone link and mDNS. Every command that touches disk or joins a
+thread is `async` on the blocking pool. Thumbnails and filmstrip frames go through the
+asynchronous `pm://` scheme (`uri.rs`; `http://pm.localhost/…` on WebView2), never JSON.
+
+| Row | State |
+| --- | --- |
+| U1 | **Done (web + R).** The mobile grid, tabs, sort, day headers, bursts, stars and select mode now run on the camera's real list; the cached list opens at once and pages fill in (`media://list` → `useDesktopMediaSync`). Device/Local split: Rust keeps `cached`/`proxyCached` per item and the old Local rule (`Library::visible_files(local)`, tested); **TODO** a Local chip in the web gallery (mobile has none). Mobile's sorts (newest/oldest/largest/longest) are kept; the desktop's Name/Rating sorts are **TODO** in `gallery.ts`. |
+| U2 | **Done.** PLAY fetches the `.LRF`/`.XRF` proxy (original as fallback) and opens the native player; VIEW decodes the still and shows it graded; DOWNLOAD fetches the original to `files/` with `media://progress` (≤ 4 Hz) and resolves on `media://ready`; STAR is local and goes to the camera when the record has a handle; DELETE (and the batch) sends only vouched handles, one counter each, and reports the refused ones (the web's confirm sheet is the arm step). |
+| U3, U4 | Done on the web (mobile's select mode and burst folding); the batch delete is `media_delete` with every id. |
+| U5 | **Done**, the old sequence unchanged (`opc_media::Browse`), pages merged by path (a fresh page replaces a record so a delete uses the fresh handle; nothing is dropped on a short listing, as before). List and stars cached per camera (`model-XXXX`). |
+| U6 | **Done**: `media_close`/`media_resume_live` (the web's `useMediaBrowsing` calls it when the last media screen goes) closes the player, exits playback until the bit clears, then enables (`link: enable reason=media-resume`). "Fresh" = a live picture pushed after the resume started (counted even while held back). |
+| U7 | **Done**: repairs are held while the library, the player or the resume loop is up. |
+| U8 | **Done**: Settings › Media & Delivery › *On this computer* shows this camera's cache size and **Clear** (desktop only). The LUT folder line lives with the LUT work. |
+| U9 | **Done**: `pm://thumb/<path>` from the cache or `/v2` (one fetch at a time, own `StorageMemo`), cached as `thumbs/*.jpg`. |
+| D-6 | **Done**: `camera_connect` names the link's address to `opc_media::model::set_host`, so a station camera serves media from its own address. |
+| V1 | **Done** except the auto LUT: the player is the native feed pipeline (the playback screen renders the desktop picture hole and sends the playback effects), filmstrip of 8 frames on `pm://strip` (tap to seek), Low-Res/Original label, Space/←/→ (existing), **S** screenshot (graded, at the source raster, to `Pictures/Pocket Monitor`, D11) and **Esc** back. **TODO**: the auto LUT from the original's tail (`player://state.colorMode` is emitted; the web's playback effects do not use it yet). |
+| V2 | **Done** (moved verbatim; numbers in `pm_controller::playback`, tested): 48 kHz preferred, 80 ms lead, behind-the-clock drop after a scrub, silent at conform speeds, ≤ 2 s queued, pause holds the device. The web's Mute and Loop map to `player_options`. |
+| V3 | **Done**: the chip row uses the core's targets (`player://state.conformTargets`); `player_conform`/`player_conform_next`; reset on a new clip. Without the core linked there are no targets (as before). |
+| V4 | Done (unchanged `FileReader`, 8-frame look-ahead). |
+| W1 | **Done**, with D4 mitigated: frames come from the render thread after each real present, ≤ 30 fps, from the viewfinder and the player, never the library grid. The renderer draws at the swapchain's own size, so its targets are no longer rebuilt per vcam frame; `pm-vcam` cuts the picture back out and letterboxes it into 1280×720. **Still TODO (`opc-render`)**: a dedicated vcam target with a fenced asynchronous readback; `render` still waits for the device per vcam frame. Clean/As shown, Off/Camera device/Stream and the 1 s *Camera output* readout are in Settings › Media & Delivery › *Virtual camera*. |
+| W2 | **Done**: status, Install/Remove, detail; probed at start and after each action on `pm-component`; the camera restarts after an action; "CAMERA COMPONENT NOT INSTALLED · SETTINGS › OUTPUT" when Camera device is picked without it. **Windows**: `opc_vcam_win.dll` must sit beside `pm-desktop.exe`; `build-tauri-debug.ps1` does not stage it yet (**TODO**). |
+| W3, W5, W6 | Unchanged `opc-vcam` / macOS project. |
+| W4 | **Done**: stream address, *Open in the browser* (`open_url`, http(s) only), the OBS line. The port is settable through `vcam_set {port}`; there is no port field on the web yet (**TODO**, the old tab had none either). |
+| E1 | **Done**: the Watcher screen (desktop only; phones keep the placeholder) browses while it is open (`relay_browse`, `relay://hosts`), passcode field, **Watch**. |
+| E2 | **Done**: `relay_join` closes any camera link and decodes the phone's HEVC into the same picture hub (LUTs, assists, scopes, vcam); the phone's state is emitted as `camera://state` with `transport: 'watcher'`, so `/live` runs on it; `relay://info` carries the phone's format, colour, fps and lease. **TODO**: the FORMAT chip should show the phone's own label (`relay://info.format`), and the audio meters should stay dark on `watcher`. |
+| E3 | **Done** in Rust and on the Watcher screen (Request/Release, the five lease lines as notices); on a phone feed `DesktopCameraSession` sends calls to `relay_command`, which proxies record, tap-focus, ISO, shutter, WB, colour and zoom and refuses the rest with "… NEEDS A DIRECT CAMERA LINK". **TODO**: Request/Release in the Link section of Settings (`ConnectionSection.tsx`) and the gimbal stick/keys refusal note (they go to `gimbal_drive`, which has no link on a phone feed and does nothing). |
+| E4 | Unchanged (`opc-relay` + core). E5: `opc-watcher` unchanged. |
+
+**What `src/core` would need so mobile can follow.** Mobile decodes the manifest
+(`core/status/mediaManifest.ts`, including `thumbPath` and the proxy extension) but has no
+media transport, which is why `mediaMap.ts` leaves every URL empty. The rules live only in
+`opc-media` today (transcribed from `MediaManifest.swift`): the URL
+`http://<camera host>/v2?storage=<0|1>&path=<path>` (slashes **not** percent-encoded, or the
+camera answers 404) on port 80 at the camera's real address; the store order
+(`resolved_storage`: a single-card body is always 0, then the store that last answered for
+that path, then the manifest's stamp, then the handle's internal bit `0x4000_0000`; try the
+other store second); the preview chain (listed proxy → derived `.LRF` for `DJI_*` / `.XRF`
+for `CAM_*` → original); the playback cache name (separators flattened, proxies renamed
+`.mp4`); the listing sequence `Browse` (playback entry `0x02/0x0C` × 3 at 0.9 s, the
+Pocket 3 `0x01/0x01` special entry at 20 Hz for 3 s, the 1.7 s settle, query gaps
+0/0.8/0.4 s, 0.8 s quiet, 8 s page cap, older pages only while playback holds); and the
+resume policy. A `core/media/http.ts` + `core/media/browse.ts` port of those, with the
+`opc-media` tests, would let `NativeCameraSession.media` fill `thumbnailUrl`,
+`previewUrl`, `originalUrl` and `download`.
+
+**Windows checks for this phase.** Library on a Pocket 3 over SoftAP and over station
+(thumbnails appear; `media: listed N files`); play a clip with a LUT and zebra on (graded,
+with sound in step); scrub (≤ 30 seeks/s, no stalls); conform chip; **S** writes a PNG;
+leave the library and watch for exactly one `enable reason=media-resume` and the live
+picture back; vcam Stream in a browser and OBS, Camera device after Install (UAC), with
+the window at odd sizes (no per-frame target rebuild: `view: pace:` holds); watch an
+iPhone's shared feed, request control, record from the desktop.
+
+### 5.7 Phase 2: input and live controls (§1.I, §1.J, §1.K, §1.Q, §1.R, §1.S, §1.T, H2)
+
+Not run on Windows yet: compiled and unit-tested in the Linux container only.
+
+**Where it lives.** The decisions moved out of the Slint shell into
+`pm-controller/src/input.rs` (`LiveInput`: keys, the stick from every source, the
+controller map, zoom, the countdown, moves, presets, gestures), `tracking.rs` (`Tracker`:
+drag to track, click to focus, poll and push, the touch ownership rules) and `keys.rs` (the
+one key table). `pm-desktop/src/input.rs` runs `LiveInput` on the 100 Hz `pm-input` thread
+and polls the controller there (`gamepad.rs`, gilrs). The session thread forwards status,
+tracking frames, SET outcomes and link up/down with one call (`input::observe`). IPC is in
+`keys.rs`, `pointer.rs`, `moves.rs` and `gestures.rs`; the web side is
+`Apps/Mobile/src/camera/desktop/input.ts`, `src/features/input/desktopKeys.ts` and
+`desktopSync.ts`, and `src/features/live/gimbal/GimbalPresets.tsx`.
+`pm-controller/tests/input.rs` ports every `tests/shell.rs` case of this area (48 tests).
+
+**New IPC.**
+
+| Name | What |
+| --- | --- |
+| `control_key {key, down, repeat}` → `UiAction?` | Every §1.R key, by `KeyboardEvent.key`. Camera keys run on the input thread; `V` goes through `camera_command` so the commanded mode stays true; `F11` toggles fullscreen in Rust (D1); the rest come back to the web (`toggle-settings`, `toggle-exposure`, `toggle-moves`, `toggle-assists`, zebra/peaking/grade/mirror, `toggle-chrome`, `library`, `still`, `escape`). Held arrows get a 100 ms `repeat` heartbeat; 250 ms without one rests the gimbal. `control_keys` lists them (B6). |
+| `picture_pointer {phase, x, y, id, mirror?}`, `focus_at`, `track_clear` | Picture fractions as seen. One pointer owns a drag; ≥ 2 % is a box (centre and size, mirror undone, FRAME TOO SMALL under the core minimum); a click focuses (`0x22`+`0x30`, then `0x68`+`0x32` on the region ACK or after 0.4 s). Polls every 0.5 s, six idle answers end a search, pushes eased by the core, 0.35 s of silence drops the lock, a clear ignores the leftover push. |
+| `zoom_write {factor, mode}`, `zoom_rate {rate}`, `zoom_step {direction}` | Clamped to the body's stops. The D-Log2 hop (J2) and the rolling lock are now wired: hop to D-Log, hold the write until the body reports it (2 s), restore D-Log2 at 1×. `zoomBy` and the triggers write the dial at 20 Hz on the input thread. The web calls a lone `setZoom` a jump and a stream of them (< 200 ms apart) the dial. |
+| `record_countdown` | `T` and `startRecording({countdown: true})`: arms or cancels; fires `RecordStart` on the input thread. Length from desktop prefs `countdown_seconds` (3/5/10). |
+| `gimbal_lock_all {on}` | The all-axes hold latch: rests now, ignores every stick source until released. |
+| `moves_set_point/clear_point/configure/start/stop/pause/resume` | Q1 on the input thread: Set here from the live pose, legs snapped to native tenths, 3-2-1, the engine's approach/hold/legs with the 40 ms late abort and the 0.3 s attitude freshness, stop on manual control. |
+| `preset_save/go/clear/seconds` | Q2: six slots, one timed move or two halves through the midpoint, the follow-up 0.3 s after the first half lands; `desktop-gimbal-presets-v1.txt` beside the prefs (X4). Keys 1–6, swipes and point step through them. |
+| `input_configure {stickSensitivity, ramp, countdownSeconds, gamepad, directionLock, mirror}`, `input_resend` | The operator's feel, sent on change; a reloaded web view asks for the events again. |
+| `gestures_set {on}`, `gestures_state` | T1–T5: the ffmpeg webcam reader starts and stops live and the home setting is saved. On at launch with the setting, `--gestures` or `OPC_GESTURES`. |
+| Events `input://state` (≤ 15 Hz, on change), `tracking://box` (≤ 15 Hz), `gamepad://state` (≤ 60 Hz) | Countdown, program, presets and the lock; the box and the reticle as seen; the controller for display. Notices go out on `camera://event`. `DesktopCameraSession` folds them into `recording.countdown`, `gimbal.program`, `gimbal.lockedAllAxes`, `tracking` and `focus`. |
+
+The phase 1 refusals for the countdown, the D-Log2 hop and `zoomBy` are gone on the web path
+(`camera_command` still refuses them if called directly). The controller is no longer read
+from `navigator.getGamepads()` inside Tauri: `useGamepadInput` only toasts and reports.
+
+**Decisions recorded (D7).** On the desktop `Space` starts and `R` stops, `+`/`-` step the
+body's stops, `S` is a graded still of the picture (not a camera photo), controller `Y` clears
+tracking (no face detector), `V` cycles Follow → Tilt locked → FPV. A click focuses whatever
+`tapToFocus` says (the mobile `onTap` still routes it).
+
+**TODO (precise, not done here).**
+
+- `A` (assist toolbar) does nothing yet: `AssistBar` keeps its open state in local React
+  state. It needs a store flag (assists area) for `toggle-assists` to drive.
+- `S` calls `still_capture`, which is not registered yet (picture area); until it is, `S` shows
+  "Still not available".
+- K3 palm rejection: the web sends the feed well's finished tap or box as a pointer sequence,
+  not the raw pointer stream, so a second finger is filtered by react-native-gesture-handler,
+  not by `Tracker`. Streaming raw Pointer Events from `FeedGestureWell` (live area) to
+  `picture_pointer` would put the Rust rules in charge; the Rust side is ready and tested.
+- Keys on the library and the player (`R` refresh, `Space` pause, `Z P L M` there): the key hook
+  is mounted by the live screen only; the media screens need their own `control_key` use.
+- The gimbal ramp (I3) and the countdown length have no web control yet; `input_configure`
+  takes `ramp` and `countdownSeconds` for whoever adds them to settings (desktop prefs are read at
+  start meanwhile).
+- `ffmpeg.exe` is still not staged by the release scripts (D8); gestures need it on `PATH` or in
+  winget's `Gyan.FFmpeg`.
+- Key hints on every button (G5) are a chrome change; `control_keys` gives the list.
+
+**Verify on Windows.** Every key in §1.R (Tab, Space and F11 must not reach WebView2; arrows
+with diagonals; hold an arrow and Alt-Tab: `input: rest: focus lost`), an Xbox/DualSense pad
+through gilrs (WGI) including unplug while held, the 40 ms late rule in `link: stick tx` /
+move readouts under load, tap focus and drag to track on a Pocket 3 with `0x02/0x89` pushes,
+the D-Log2 hop on a Pocket 3, the countdown, presets 1–6 across the pan gap, and the webcam
+reader under DirectShow with the virtual camera installed (it must not pick it).

@@ -173,7 +173,10 @@ mod tests {
     #[test]
     fn a_sweep_across_is_one_swipe() {
         let mut tracker = Tracker::new(false);
-        assert_eq!(sweep(&mut tracker, (4, 20), (48, 20)), [Gesture::SwipeRight]);
+        assert_eq!(
+            sweep(&mut tracker, (4, 20), (48, 20)),
+            [Gesture::SwipeRight]
+        );
         let mut tracker = Tracker::new(false);
         assert_eq!(sweep(&mut tracker, (48, 20), (4, 20)), [Gesture::SwipeLeft]);
     }

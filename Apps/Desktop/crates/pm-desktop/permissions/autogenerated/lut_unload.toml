@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lut-unload"
+description = "Enables the lut_unload command without any pre-configured scope."
+commands.allow = ["lut_unload"]
+
+[[permission]]
+identifier = "deny-lut-unload"
+description = "Denies the lut_unload command without any pre-configured scope."
+commands.deny = ["lut_unload"]

@@ -1,6 +1,7 @@
 import { useCamera } from '@/camera';
 import { SCOPE_BASE_SIZE, falseColorReference, middleGrayPaperIRE, transferLabel, type Insets, type Point, type Rect, type Size } from '@/core/media';
 import { useScopeBundle } from '@/features/picture/frameSample';
+import { platesFor, useDesktopScopeBundle, useDesktopScopeSource } from '@/features/picture/desktop/scopes';
 import { useAssists, useSourceTransfer, type AssistContext, type AssistTool } from '@/state/assists';
 import type { DemoScene, PictureEffects } from '@modules/pocket-native/src/types';
 import { AudioMeter, FALSE_COLOR_LEGEND_SIZE, FalseColorLegend, NDChip, TrafficLightsMeter, useAudioBallistics } from '../overlays/Meters';
@@ -48,7 +49,11 @@ export function FloatingPanels({ context, canvas, clearance, obstacles, effects,
   const openInspector = useAssists((s) => s.openInspector);
   const { transfer, clipByte } = useSourceTransfer(colorModeOverride);
   const needsSample = on.WAVE || on.PARADE || on.HISTO || on.VECTOR || on.LIGHTS || on.ND || on.EV;
-  const bundle = useScopeBundle(context, transfer, clipByte, options.crushClip, needsSample);
+  // Desktop seam: the Rust scope thread serves the plates there (`scope://samples`).
+  const desktop = useDesktopScopeSource();
+  const webBundle = useScopeBundle(context, transfer, clipByte, options.crushClip, needsSample && !desktop);
+  const desktopBundle = useDesktopScopeBundle(desktop && needsSample ? platesFor(on, options) : null, transfer, clipByte);
+  const bundle = desktop ? desktopBundle : webBundle;
   const common = { canvas, clearance, obstacles, enabled };
   const open = (t: AssistTool) => () => openInspector(t, context);
   const traces = { bundle, effects, sessionId, demoScene };

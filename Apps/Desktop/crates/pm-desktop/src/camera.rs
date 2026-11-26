@@ -154,6 +154,8 @@ impl CameraService {
         }
         let (session_id, base_seq) = fresh_session();
         let link = Link::open(remote, session_id, base_seq, target.model);
+        // The library serves media from this address and caches per body (D-6).
+        crate::media::tap_target(&self.app, remote, target.model);
         if let Ok(mut slot) = self.commander.lock() {
             *slot = Some(link.commander());
         }
@@ -355,6 +357,7 @@ fn run(
         let mut changed = false;
         for event in events {
             changed = true;
+            crate::input::observe(&event);
             match event {
                 FromCamera::Opened => {
                     set_phase(snapshot, "live-start", Some("Waiting for live view".into()))
@@ -365,6 +368,7 @@ fn run(
                     changed = false;
                 }
                 FromCamera::Status(status) => {
+                    crate::media::tap_status(app, status.in_playback);
                     let next_axis = ColorAxis::from_status(&status);
                     if next_axis != axis {
                         axis = next_axis;
@@ -413,7 +417,11 @@ fn run(
                     prefs_sent = false;
                 }
                 // Tracking replies and media frames: not wired in phase 1.
-                FromCamera::Frame(_) => changed = false,
+                // Catalogue chunks and playback replies go to the library.
+                FromCamera::Frame(frame) => {
+                    crate::media::tap_frame(app, frame);
+                    changed = false;
+                }
                 FromCamera::Set(SetOutcome::Unanswered { .. }) => {
                     notice(app, "NO ANSWER FROM THE CAMERA", "warning");
                     changed = false;

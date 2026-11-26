@@ -64,7 +64,9 @@ pub fn classify(rgb: &[u8]) -> Option<Pose> {
     let edge: Vec<(i32, i32)> = blob
         .iter()
         .map(|&i| ((i % WIDTH) as i32, (i / WIDTH) as i32))
-        .filter(|&(x, y)| outside(x - 1, y) || outside(x + 1, y) || outside(x, y - 1) || outside(x, y + 1))
+        .filter(|&(x, y)| {
+            outside(x - 1, y) || outside(x + 1, y) || outside(x, y - 1) || outside(x, y + 1)
+        })
         .collect();
     let (mut cx, mut cy, mut best) = (0.0f32, 0.0f32, -1i32);
     for &i in &blob {
@@ -120,9 +122,12 @@ pub fn classify(rgb: &[u8]) -> Option<Pose> {
         let at = |d: i32| profile[(k as i32 + d).rem_euclid(RAYS as i32) as usize];
         // The longest within a hand-width, the first of equals, so one finger is one hit.
         let top = (1..=2).all(|d| at(-d) < r && at(d) <= r);
-        let valleys = [-1, 1]
-            .iter()
-            .all(|&sign| (2..=side as i32).map(|d| at(sign * d)).fold(f32::MAX, f32::min) < 0.75 * r);
+        let valleys = [-1, 1].iter().all(|&sign| {
+            (2..=side as i32)
+                .map(|d| at(sign * d))
+                .fold(f32::MAX, f32::min)
+                < 0.75 * r
+        });
         if top && valleys {
             fingers += 1;
         }

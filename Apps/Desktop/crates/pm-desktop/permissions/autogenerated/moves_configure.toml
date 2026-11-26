@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-moves-configure"
+description = "Enables the moves_configure command without any pre-configured scope."
+commands.allow = ["moves_configure"]
+
+[[permission]]
+identifier = "deny-moves-configure"
+description = "Denies the moves_configure command without any pre-configured scope."
+commands.deny = ["moves_configure"]

@@ -4,6 +4,7 @@ import { useCamera, useCameraSession } from '@/camera';
 import type { ColorMode, PictureRect } from '@/camera/types';
 import { evMeterFrame, evMeterValue, type Insets, type Rect } from '@/core/media';
 import { useScopeBundle } from '@/features/picture/frameSample';
+import { useDesktopScopeBundle, useDesktopScopeSource } from '@/features/picture/desktop/scopes';
 import { useAssists, usePictureEffects, useSourceTransfer, type AssistContext } from '@/state/assists';
 import { AssistInspectorHost, type AssistSheetPlacement } from './AssistInspector';
 import { CrosshairOverlay, GridOverlay, GuidesOverlay, LevelOverlay } from './overlays/Framing';
@@ -107,10 +108,15 @@ function EVOverlay({ feed, context, colorMode }: { feed: Rect; context: AssistCo
   const metered = useCamera((s) => (context === 'live' ? s.exposure.meteredEv : null));
   const crushClip = useAssists((s) => s.options.crushClip);
   const { transfer, clipByte } = useSourceTransfer(colorMode);
-  const bundle = useScopeBundle(context, transfer, clipByte, crushClip, metered == null);
+  // Desktop seam: the core's picture stops come from the Rust scope thread.
+  const desktop = useDesktopScopeSource();
+  const bundle = useScopeBundle(context, transfer, clipByte, crushClip, metered == null && !desktop);
+  const desktopBundle = useDesktopScopeBundle(desktop && metered == null ? { nd: true } : null, transfer, clipByte);
   const frame = evMeterFrame(feed);
   if (!frame) return null;
-  const value = evMeterValue(metered, bundle ? bundle.samples.histLuma : null, transfer);
+  const value = desktop
+    ? (evMeterValue(metered, null, transfer) ?? desktopBundle?.pictureStops ?? null)
+    : evMeterValue(metered, bundle ? bundle.samples.histLuma : null, transfer);
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: frame.x, top: frame.y }}>
       <EVMeter value={value} width={frame.width} height={frame.height} />

@@ -35,6 +35,7 @@ import { storageReadout } from './format';
 import { categoryTitles, deriveGallery, selectedItems } from './gallery';
 import { FilterSheet, ViewSheet } from './LibrarySheets';
 import { activeFilterCount, emptyFilters, type MediaCategory, useMediaBrowsing, useMediaLibrary } from './libraryStore';
+import { useDesktopMediaSync } from './desktop/useDesktopMediaSync';
 import { HeaderButton, TextAction } from './MediaChips';
 import { MediaGallery } from './MediaGallery';
 import { BusyOverlay, ConfirmSheet, NoticeToast } from './MediaOverlays';
@@ -117,6 +118,8 @@ export default function MediaLibraryScreen() {
   const { width, large, landscape } = useScreenSize();
   const wide = width >= 700;
   useMediaBrowsing();
+  // Desktop app: each page of the card's listing fills the grid as it arrives.
+  useDesktopMediaSync();
 
   const identityName = useCamera((s) => s.identity?.name);
   const phase = useCamera((s) => s.connection.phase);

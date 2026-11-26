@@ -11,6 +11,7 @@ import { haptics } from '../haptics';
 import type { Rect } from '../layout/fieldMonitorLayout';
 import { useLiveUi } from '../liveUiStore';
 import { onVideo, textShadow } from '../chrome/primitives';
+import { GimbalPresets } from './GimbalPresets';
 
 type Slot = 'a' | 'b' | 'c';
 const SMOOTHNESS = [0, 0.25, 0.5, 0.75, 1];
@@ -186,6 +187,7 @@ export function MotionControlEditor() {
       </View>
       <Progress />
       <RunButton />
+      <GimbalPresets disabled={busy} />
     </View>
   );
 }

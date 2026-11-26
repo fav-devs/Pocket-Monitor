@@ -5720,6 +5720,8 @@ dependencies = [
  "opc-camera",
  "opc-core-sys",
  "opc-decode",
+ "opc-media",
+ "opc-relay",
  "opc-render",
  "opc-ui",
  "opc-vcam",
@@ -5731,10 +5733,18 @@ dependencies = [
 name = "pm-desktop"
 version = "0.1.0"
 dependencies = [
+ "btleplug",
+ "cpal",
+ "futures",
+ "gilrs",
  "opc-camera",
  "opc-core-sys",
  "opc-decode",
+ "opc-media",
+ "opc-relay",
  "opc-render",
+ "opc-ui",
+ "opc-vcam",
  "pm-controller",
  "pm-surface",
  "raw-window-handle",
@@ -5742,6 +5752,8 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

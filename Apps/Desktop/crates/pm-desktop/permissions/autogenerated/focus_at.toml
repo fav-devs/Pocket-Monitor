@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-focus-at"
+description = "Enables the focus_at command without any pre-configured scope."
+commands.allow = ["focus_at"]
+
+[[permission]]
+identifier = "deny-focus-at"
+description = "Denies the focus_at command without any pre-configured scope."
+commands.deny = ["focus_at"]

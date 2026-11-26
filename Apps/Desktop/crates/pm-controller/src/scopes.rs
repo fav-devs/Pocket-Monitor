@@ -9,6 +9,8 @@
 
 use opc_decode::OwnedPicture;
 
+pub mod tap;
+
 pub const HIST: usize = 256;
 /// Waveform columns across the picture, and rows: one per native code.
 pub const WAVE_COLS: usize = 256;
@@ -186,7 +188,6 @@ pub struct LightsReading {
 impl LightsReading {
     /// The core's reading of the histograms; `previous` keeps a lamp lit until the
     /// energy halves. Without the core, dark.
-    #[cfg(opc_core_linked)]
     pub fn from_core(
         samples: &ScopeSamples,
         color_mode: i32,
@@ -194,12 +195,31 @@ impl LightsReading {
         threshold: f64,
         previous: Option<&LightsReading>,
     ) -> Self {
+        Self::from_histograms(
+            [&samples.red, &samples.green, &samples.blue, &samples.luma],
+            color_mode,
+            iso,
+            threshold,
+            previous,
+        )
+    }
+
+    /// [`from_core`](Self::from_core) on bare native-code histograms: red, green, blue
+    /// and luma, in that order.
+    #[cfg(opc_core_linked)]
+    pub fn from_histograms(
+        bins: [&[u32; HIST]; 4],
+        color_mode: i32,
+        iso: i32,
+        threshold: f64,
+        previous: Option<&LightsReading>,
+    ) -> Self {
         let to_i32 =
             |bins: &[u32; HIST]| bins.map(|count| i32::try_from(count).unwrap_or(i32::MAX));
-        let red = to_i32(&samples.red);
-        let green = to_i32(&samples.green);
-        let blue = to_i32(&samples.blue);
-        let luma = to_i32(&samples.luma);
+        let red = to_i32(bins[0]);
+        let green = to_i32(bins[1]);
+        let blue = to_i32(bins[2]);
+        let luma = to_i32(bins[3]);
         let last = previous.map(|reading| reading.floats());
         let mut out = [0.0_f32; 9];
         // Safety: every pointer is to a 256- or 9-slot array that outlives the call.
@@ -233,8 +253,8 @@ impl LightsReading {
     }
 
     #[cfg(not(opc_core_linked))]
-    pub fn from_core(
-        _samples: &ScopeSamples,
+    pub fn from_histograms(
+        _bins: [&[u32; HIST]; 4],
         _color_mode: i32,
         _iso: i32,
         _threshold: f64,
@@ -284,11 +304,14 @@ impl NdReading {
         }
     }
 
-    #[cfg(opc_core_linked)]
     pub fn from_core(samples: &ScopeSamples, color_mode: i32, iso: i32) -> Option<Self> {
-        let luma = samples
-            .luma
-            .map(|count| i32::try_from(count).unwrap_or(i32::MAX));
+        Self::from_luma(&samples.luma, color_mode, iso)
+    }
+
+    /// [`from_core`](Self::from_core) on a bare native-code luma histogram.
+    #[cfg(opc_core_linked)]
+    pub fn from_luma(luma: &[u32; HIST], color_mode: i32, iso: i32) -> Option<Self> {
+        let luma = luma.map(|count| i32::try_from(count).unwrap_or(i32::MAX));
         // Safety: probing with a null destination only reports the size needed.
         let needed = unsafe {
             opc_core_sys::opc_scope_nd(color_mode, iso, luma.as_ptr(), std::ptr::null_mut(), 0)
@@ -314,7 +337,7 @@ impl NdReading {
     }
 
     #[cfg(not(opc_core_linked))]
-    pub fn from_core(_samples: &ScopeSamples, _color_mode: i32, _iso: i32) -> Option<Self> {
+    pub fn from_luma(_luma: &[u32; HIST], _color_mode: i32, _iso: i32) -> Option<Self> {
         None
     }
 

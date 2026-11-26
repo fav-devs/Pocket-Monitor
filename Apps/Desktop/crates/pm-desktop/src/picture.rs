@@ -9,16 +9,18 @@
 //! the watchdog's "presented" signal comes from here, not from the web view.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use opc_decode::OwnedPicture;
-use opc_render::{letterbox_in, FalseColorScale, FeedRenderer, Lut, Presented};
+use opc_render::{fit_in, FalseColorScale, FeedRenderer, Lut, PictureFit, Presented, Rgba};
 use pm_controller::decode::READY_LIMIT;
-use pm_controller::effects::{feed_state, ColorAxis, FeedState, PictureEffects};
+use pm_controller::effects::{feed_state, ColorAxis, FeedState, LutSource, PictureEffects};
 use pm_controller::link::{diagnostic, LinkCommander};
-use pm_controller::luts::{self, LutChoice};
+
+use crate::luts::{Lookup, LutStore};
+use crate::scopes::ScopeService;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
@@ -37,8 +39,9 @@ pub struct CssRect {
     pub height: f64,
 }
 
-/// `picture://fit`: the letterboxed picture inside the hole, in CSS pixels, from the same
-/// formula the blit draws with (`opc_render::letterbox_in`).
+/// `picture://fit`: the picture inside the hole, in CSS pixels, from the same formula the
+/// blit draws with (`opc_render::fit_in`, on the desqueezed shape, fit or fill). With
+/// `fill` it can start outside the hole (the crop).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Fit {
@@ -69,6 +72,12 @@ enum RenderMsg {
     Layout(Option<(CssRect, f64)>),
     Effects(Box<PictureEffects>),
     Axis(ColorAxis),
+    /// `resizeMode`: whole with bars, or filling the hole.
+    Fit(PictureFit),
+    /// A cube the LUT store was loading has landed (or failed): bind it now.
+    LutReady,
+    /// `still_capture`: the graded frame at its source raster, back to the command.
+    Still(mpsc::Sender<Result<Rgba, String>>),
     /// Drop the picture (decoder rebuilt, link replaced): black until the next one.
     Clear,
     Stop,
@@ -76,7 +85,8 @@ enum RenderMsg {
 
 #[derive(Default)]
 struct Inbox {
-    ready: VecDeque<OwnedPicture>,
+    /// Shared, so the scope thread can read the latest picture without a copy.
+    ready: VecDeque<Arc<OwnedPicture>>,
     messages: Vec<RenderMsg>,
     decoded: u32,
     skipped: u32,
@@ -90,6 +100,14 @@ pub struct PictureHub {
     pub commander: Arc<Mutex<Option<LinkCommander>>>,
     /// The last second's numbers, for the session's `connection.videoFps`.
     pub stats: Mutex<Stats>,
+    /// The media player owns the picture: live pictures are held back (`player.rs`).
+    player: std::sync::atomic::AtomicBool,
+    /// Live pictures pushed so far, for the media resume loop's "fresh picture" test.
+    live_pushed: std::sync::atomic::AtomicU64,
+    /// Parsed cubes (`luts.rs`): the render thread only uploads them.
+    pub luts: Arc<LutStore>,
+    /// The scope thread (`scopes.rs`), fed the latest picture by reference count.
+    pub scopes: Arc<ScopeService>,
 }
 
 impl std::fmt::Debug for PictureHub {
@@ -105,6 +123,10 @@ impl PictureHub {
             wake: Condvar::new(),
             commander,
             stats: Mutex::new(Stats::default()),
+            player: std::sync::atomic::AtomicBool::new(false),
+            live_pushed: std::sync::atomic::AtomicU64::new(0),
+            luts: Arc::new(LutStore::default()),
+            scopes: Arc::new(ScopeService::default()),
         })
     }
 
@@ -117,15 +139,41 @@ impl PictureHub {
 
     /// A decoded picture. More than [`READY_LIMIT`] waiting drops the oldest.
     pub fn push(&self, picture: OwnedPicture) {
+        use std::sync::atomic::Ordering;
+        self.live_pushed.fetch_add(1, Ordering::Relaxed);
+        if self.player.load(Ordering::Relaxed) {
+            return;
+        }
         if let Ok(mut inbox) = self.inbox.lock() {
             inbox.decoded += 1;
-            inbox.ready.push_back(picture);
+            inbox.ready.push_back(Arc::new(picture));
             while inbox.ready.len() > READY_LIMIT {
                 inbox.ready.pop_front();
                 inbox.skipped += 1;
             }
         }
         self.wake.notify_one();
+    }
+
+    /// A media player picture (a clip frame at its time, or a still). Same queue as live.
+    pub fn push_player(&self, picture: OwnedPicture) {
+        if let Ok(mut inbox) = self.inbox.lock() {
+            inbox.ready.push_back(Arc::new(picture));
+            while inbox.ready.len() > READY_LIMIT {
+                inbox.ready.pop_front();
+            }
+        }
+        self.wake.notify_one();
+    }
+
+    /// The player takes the picture over (`true`) or gives it back to live view.
+    pub fn set_player(&self, on: bool) {
+        self.player.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Live pictures pushed so far (counted even while the player holds them back).
+    pub fn live_count(&self) -> u64 {
+        self.live_pushed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn clear(&self) {
@@ -152,7 +200,27 @@ impl PictureHub {
         self.post(RenderMsg::Axis(axis));
     }
 
+    /// `picture_layout`'s `fit`: `"fill"` fills the hole and crops; anything else fits.
+    pub fn fit_mode(&self, fill: bool) {
+        self.post(RenderMsg::Fit(if fill {
+            PictureFit::Cover
+        } else {
+            PictureFit::Contain
+        }));
+    }
+
+    /// A cube landed in the LUT store.
+    pub fn lut_ready(&self) {
+        self.post(RenderMsg::LutReady);
+    }
+
+    /// Asks the render thread for a still; the pixels (or why not) come back on `reply`.
+    pub fn still(&self, reply: mpsc::Sender<Result<Rgba, String>>) {
+        self.post(RenderMsg::Still(reply));
+    }
+
     fn stop(&self) {
+        self.scopes.stop();
         self.post(RenderMsg::Stop);
     }
 }
@@ -270,7 +338,7 @@ fn attach(
     let thread_app = app.clone();
     let thread = std::thread::Builder::new()
         .name("pm-render".to_string())
-        .spawn(move || render_loop(renderer, &thread_hub, &thread_app, (width, height)))
+        .spawn(move || render_loop(renderer, thread_hub, &thread_app, (width, height)))
         .map_err(|error| error.to_string())?;
     if let Ok(mut slot) = host.thread.lock() {
         *slot = Some(thread);
@@ -281,12 +349,15 @@ fn attach(
 /// The render thread's state between presents.
 struct Render {
     renderer: FeedRenderer,
+    hub: Arc<PictureHub>,
     surface: (u32, u32),
     hole: Option<(CssRect, f64)>,
+    fit: PictureFit,
     effects: PictureEffects,
     axis: ColorAxis,
     feed: FeedState,
-    lut_loaded: LutChoice,
+    lut_loaded: LutSource,
+    lut_failed: Option<(LutSource, String)>,
     false_color_loaded: Option<(FalseColorScale, ColorAxis)>,
     unsupported_logged: Vec<&'static str>,
     last_fit: Option<Fit>,
@@ -299,38 +370,19 @@ impl Render {
         if self.feed.unsupported != self.unsupported_logged {
             if !self.feed.unsupported.is_empty() {
                 diagnostic(format_args!(
-                    "picture: not painted on the desktop yet: {}",
+                    "picture: not painted on the desktop: {}",
                     self.feed.unsupported.join(", ")
                 ));
             }
             self.unsupported_logged = self.feed.unsupported.clone();
         }
-        // The cube: loaded here, between frames, because the built-in looks come from
-        // the core and an upload waits for the device.
-        if self.feed.lut != self.lut_loaded {
-            let loaded: Result<Option<Lut>, String> = match &self.feed.lut {
-                LutChoice::Off => Ok(None),
-                LutChoice::BuiltIn(name) => Lut::built_in(name, 33)
-                    .map(Some)
-                    .map_err(|error| error.to_string()),
-                LutChoice::File(file) => std::fs::read_to_string(luts::custom_folder().join(file))
-                    .map_err(|error| error.to_string())
-                    .and_then(|text| Lut::parse(&text).map_err(|error| error.to_string()))
-                    .map(Some),
-            };
-            match loaded.and_then(|cube| {
-                self.renderer
-                    .set_lut(cube.as_ref())
-                    .map_err(|error| error.to_string())
-            }) {
-                Ok(()) => self.lut_loaded = self.feed.lut.clone(),
-                Err(error) => {
-                    report(app, format!("could not load the cube: {error}"));
-                    self.lut_loaded = self.feed.lut.clone();
-                }
-            }
-        }
-        let wanted = self.feed.false_color.map(|scale| (scale, self.axis));
+        self.renderer.set_look(self.feed.look);
+        self.hub
+            .scopes
+            .set_axis(self.feed.axis, self.feed.look.signal);
+        self.bind_lut(app);
+        // The false-colour lattices sit on the signal's axis, as the zebra does.
+        let wanted = self.feed.false_color.map(|scale| (scale, self.feed.axis));
         if wanted != self.false_color_loaded {
             let cubes = wanted.and_then(|(scale, axis)| {
                 let paint = Lut::false_color(scale, axis.color_mode, axis.iso, true);
@@ -353,6 +405,46 @@ impl Render {
         }
     }
 
+    /// The cube for `lutId`: parsed by the LUT store off this thread, uploaded here
+    /// between frames. Until it lands the previous cube stays bound (no flash to the
+    /// ungraded picture for a cube that is one parse away).
+    fn bind_lut(&mut self, app: &AppHandle) {
+        let wanted = self.feed.lut.clone();
+        if wanted == self.lut_loaded {
+            return;
+        }
+        if wanted == LutSource::Off {
+            if let Err(error) = self.renderer.set_lut(None) {
+                report(app, format!("could not clear the cube: {error}"));
+            }
+            self.lut_loaded = LutSource::Off;
+            return;
+        }
+        let hub = Arc::clone(&self.hub);
+        match self.hub.luts.lattice(&wanted, move || hub.lut_ready()) {
+            Lookup::Ready(lattice) => {
+                match self.renderer.set_lut_rgba(lattice.size, &lattice.rgba) {
+                    Ok(()) => {
+                        self.lut_loaded = wanted.clone();
+                        self.lut_failed = None;
+                        self.hub.luts.retain(&[wanted]);
+                    }
+                    Err(error) => self.lut_failure(app, wanted, error.to_string()),
+                }
+            }
+            Lookup::Loading => {}
+            Lookup::Failed(error) => self.lut_failure(app, wanted, error),
+        }
+    }
+
+    fn lut_failure(&mut self, app: &AppHandle, source: LutSource, error: String) {
+        let failure = Some((source, error.clone()));
+        if self.lut_failed != failure {
+            report(app, format!("could not load the cube: {error}"));
+            self.lut_failed = failure;
+        }
+    }
+
     /// The hole in surface pixels, or the whole surface without one.
     fn hole_pixels(&self) -> (u32, u32, u32, u32) {
         match self.hole {
@@ -371,7 +463,8 @@ impl Render {
 
     fn emit_fit(&mut self, app: &AppHandle, source: (u32, u32)) {
         let dpr = self.hole.map_or(1.0, |(_, dpr)| dpr).max(0.1);
-        let (x, y, width, height) = letterbox_in(source, self.hole_pixels());
+        let shown = self.feed.look.desqueeze.display_size(source);
+        let (x, y, width, height) = fit_in(shown, self.hole_pixels(), self.fit);
         let fit = Fit {
             x: f64::from(x) / dpr,
             y: f64::from(y) / dpr,
@@ -385,24 +478,41 @@ impl Render {
             let _ = app.emit("picture://fit", fit);
         }
     }
+
+    /// The graded frame at its source raster, desqueezed, without chrome.
+    fn still(&mut self, picture: Option<&OwnedPicture>) -> Result<Rgba, String> {
+        let picture = picture.ok_or_else(|| "There is no picture yet.".to_string())?;
+        let size = self
+            .feed
+            .look
+            .desqueeze
+            .display_size((picture.width, picture.height));
+        self.renderer
+            .render_picture(&picture.picture(), size, self.feed.grade)
+            .map_err(|error| error.to_string())
+    }
 }
 
-fn render_loop(renderer: FeedRenderer, hub: &PictureHub, app: &AppHandle, size: (u32, u32)) {
+fn render_loop(renderer: FeedRenderer, hub: Arc<PictureHub>, app: &AppHandle, size: (u32, u32)) {
+    let hub = &hub;
     let mut render = Render {
         renderer,
+        hub: Arc::clone(hub),
         surface: size,
         hole: None,
+        fit: PictureFit::Contain,
         effects: PictureEffects::default(),
         axis: ColorAxis::default(),
         feed: feed_state(&PictureEffects::default(), ColorAxis::default()),
-        lut_loaded: LutChoice::Off,
+        lut_loaded: LutSource::Off,
+        lut_failed: None,
         false_color_loaded: None,
         unsupported_logged: Vec::new(),
         last_fit: None,
         error: None,
     };
     let placeholder = OwnedPicture::black(1280, 720);
-    let mut latest: Option<OwnedPicture> = None;
+    let mut latest: Option<Arc<OwnedPicture>> = None;
     let mut latest_at = Instant::now();
     // Black is presented once, then not again until something changes (A10).
     let mut placeholder_presented = false;
@@ -472,6 +582,20 @@ fn render_loop(renderer: FeedRenderer, hub: &PictureHub, app: &AppHandle, size: 
                         dirty = true;
                     }
                 }
+                RenderMsg::Fit(fit) => {
+                    if fit != render.fit {
+                        render.fit = fit;
+                        render.renderer.set_picture_fit(fit);
+                        dirty = true;
+                    }
+                }
+                RenderMsg::LutReady => {
+                    render.bind_lut(app);
+                    dirty = true;
+                }
+                RenderMsg::Still(reply) => {
+                    let _ = reply.send(render.still(latest.as_deref()));
+                }
                 RenderMsg::Clear => {
                     latest = None;
                     dirty = true;
@@ -482,6 +606,8 @@ fn render_loop(renderer: FeedRenderer, hub: &PictureHub, app: &AppHandle, size: 
             placeholder_presented = false;
         }
         if let Some(picture) = next {
+            // The scopes read the camera signal on their own thread (P20).
+            hub.scopes.offer(&picture);
             latest = Some(picture);
             latest_at = Instant::now();
             second.1 += 1;
@@ -491,7 +617,7 @@ fn render_loop(renderer: FeedRenderer, hub: &PictureHub, app: &AppHandle, size: 
         let gap = started.duration_since(last_draw);
         let showing_placeholder = latest.is_none();
         if !(showing_placeholder && placeholder_presented) {
-            let shown = latest.as_ref().unwrap_or(&placeholder);
+            let shown: &OwnedPicture = latest.as_deref().unwrap_or(&placeholder);
             render.emit_fit(app, (shown.width, shown.height));
             let picture = shown.picture();
             match render.renderer.present(&picture, render.feed.grade) {
@@ -503,6 +629,13 @@ fn render_loop(renderer: FeedRenderer, hub: &PictureHub, app: &AppHandle, size: 
                     }
                     placeholder_presented = showing_placeholder;
                     if !showing_placeholder {
+                        // The virtual camera's frame and any still asked for (vcam.rs).
+                        crate::vcam::after_present(
+                            app,
+                            &mut render.renderer,
+                            &picture,
+                            render.feed.grade,
+                        );
                         second.2 += 1;
                         if let Ok(commander) = hub.commander.lock() {
                             if let Some(commander) = commander.as_ref() {

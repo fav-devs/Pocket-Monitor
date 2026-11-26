@@ -29,7 +29,10 @@ import type {
   VideoSource,
 } from '../session';
 import type { CameraModelId, CameraNotice, CameraState, DiscoveredCamera, MotionWaypoint, SavedCamera } from '../types';
+import { DesktopMediaService } from './media';
+import { cancelDesktopConnect, desktopConnect, startDesktopScan, type ConnectReport } from './connect';
 import { invoke, listen, type Unlisten } from './tauri';
+import * as input from './input';
 
 type Listener<T> = (value: T) => void;
 
@@ -97,6 +100,8 @@ export class DesktopCameraSession implements CameraSession {
   constructor() {
     this.unlisten.push(listen<CameraState>('camera://state', (next) => this.apply(next)));
     this.unlisten.push(listen<RustEvent>('camera://event', (event) => this.relay(event)));
+    // Live controls (countdown, tracking, Motion Control, lock) live in Rust: ./input.ts.
+    this.unlisten.push(...input.watchInput(() => this.apply(this.backend ?? this.state)));
     // Re-attach to whatever the backend is already doing (a reload never reconnects).
     invoke<CameraState>('camera_state')
       .then((next) => this.apply(next))
@@ -109,6 +114,7 @@ export class DesktopCameraSession implements CameraSession {
     this.releaseStick();
     this.unlisten.forEach((stop) => stop());
     this.unlisten = [];
+    if (this.media instanceof DesktopMediaService) this.media.dispose();
     if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('blur', this.onBlur);
   }
 
@@ -126,8 +132,19 @@ export class DesktopCameraSession implements CameraSession {
     return () => this.eventListeners.delete(listener);
   }
 
-  private apply(next: CameraState) {
-    if (!next || typeof next !== 'object' || !next.connection) return;
+  /** Pairing and Wi-Fi phases laid over the backend's connection until its link takes over. */
+  private overlay: Partial<CameraState['connection']> | null = null;
+  private backend: CameraState | null = null;
+  private lastConnect: { target: DiscoveredCamera | SavedCamera; options?: ConnectOptions } | null = null;
+  private report: ConnectReport = (patch) => {
+    this.overlay = patch ? { ...(this.overlay ?? {}), ...patch } : null;
+    this.apply(this.backend ?? this.state);
+  };
+
+  private apply(incoming: CameraState) {
+    if (!incoming || typeof incoming !== 'object' || !incoming.connection) return;
+    if (incoming !== this.state) this.backend = incoming;
+    const next = input.withInput(this.overlay ? { ...incoming, connection: { ...incoming.connection, ...this.overlay } } : incoming);
     const shared = shareSlices(this.state, next);
     if (shared === this.state) return;
     this.state = shared;
@@ -151,7 +168,9 @@ export class DesktopCameraSession implements CameraSession {
   /** Sends one controller call; a refusal becomes a notice (once per few seconds). */
   private async call(type: string, args: Record<string, unknown> = {}): Promise<void> {
     try {
-      await invoke('camera_command', { command: { type, ...args } });
+      // On a phone's shared feed the relay proxies what its wire carries (§1.E E3).
+      const target = this.state.connection.transport === 'watcher' ? 'relay_command' : 'camera_command';
+      await invoke(target, { command: { type, ...args } });
     } catch (error) {
       const message = typeof error === 'string' ? error : error instanceof Error ? error.message : 'The camera did not take that.';
       const now = Date.now();
@@ -165,21 +184,33 @@ export class DesktopCameraSession implements CameraSession {
   // ───────────── Discovery and connection ─────────────
 
   startScan(onFound: (cameras: DiscoveredCamera[]) => void): Unsubscribe {
-    // Bluetooth pairing on the desktop is not wired through IPC yet (phase 1).
-    onFound([]);
-    return () => {};
+    // Bluetooth in the backend (`ble_scan_start`, `ble://adverts`); see ./connect.ts.
+    return startDesktopScan(onFound);
   }
 
-  async connect(target: DiscoveredCamera | SavedCamera, _options?: ConnectOptions): Promise<void> {
-    await invoke('camera_connect', { target: desktopTarget(target) });
+  async connect(target: DiscoveredCamera | SavedCamera, options?: ConnectOptions): Promise<void> {
+    // Pairing, the Wi-Fi join or the LAN search first, then the link (./connect.ts).
+    this.lastConnect = { target, options };
+    await desktopConnect(target, options, this.report);
   }
 
   async disconnect(): Promise<void> {
     this.releaseStick();
+    if (this.overlay) {
+      void cancelDesktopConnect();
+      this.report(null);
+    }
+    // Watching a phone's feed: leaving it is the disconnect (§1.E).
+    if (this.state.connection.transport === 'watcher') await invoke('relay_leave').catch(() => {});
     await invoke('camera_disconnect');
   }
 
   async retry(): Promise<void> {
+    // A failure before the link (pairing, Wi-Fi) is retried from the start.
+    if (this.overlay?.phase === 'failed' && this.lastConnect) {
+      await this.connect(this.lastConnect.target, this.lastConnect.options);
+      return;
+    }
     await invoke('camera_reconnect');
   }
 
@@ -227,23 +258,23 @@ export class DesktopCameraSession implements CameraSession {
     flip: () => this.call('gimbalFlip'),
     setMode: (mode) => this.call('gimbalSetMode', { mode }),
     setSpeed: (speed) => this.call('gimbalSetSpeed', { speed }),
-    setLockedAllAxes: () => this.notice('All-axes lock is not on the desktop yet.', 'info'),
-    captureWaypoint: async (slot): Promise<MotionWaypoint> => {
-      const { yaw, pitch } = this.state.gimbal;
-      this.notice(`Motion control is not on the desktop yet (point ${slot.toUpperCase()} not kept).`, 'info');
-      return { yaw, pitch, zoom: this.state.zoom.factor };
-    },
-    clearWaypoint: () => {},
-    configureProgram: () => {},
-    runProgram: async () => this.notice('Motion control is not on the desktop yet.', 'info'),
-    stopProgram: () => {},
+    setLockedAllAxes: (locked) => input.lockAllAxes(locked),
+    captureWaypoint: (slot): Promise<MotionWaypoint> =>
+      input.movesSetPoint(slot).catch((error) => {
+        this.notice(typeof error === 'string' ? error : 'NO GIMBAL ATTITUDE YET', 'warning');
+        throw error;
+      }),
+    clearWaypoint: (slot) => input.movesClearPoint(slot),
+    configureProgram: (options) => input.movesConfigure(options),
+    runProgram: async () => input.movesStart(),
+    stopProgram: () => input.movesStop(),
     level: () => this.call('gimbalLevel'),
   };
 
   // ───────────── Camera controls ─────────────
 
   readonly control: CameraController = {
-    startRecording: (options) => this.call('startRecording', { countdown: !!options?.countdown }),
+    startRecording: async (options) => (options?.countdown ? input.recordCountdown() : this.call('startRecording', { countdown: false })),
     stopRecording: () => this.call('stopRecording'),
     capturePhoto: () => this.call('capturePhoto'),
     setShootingMode: (mode) => this.call('setShootingMode', { mode }),
@@ -256,29 +287,22 @@ export class DesktopCameraSession implements CameraSession {
     setWhiteBalance: (change) => this.call('setWhiteBalance', { ...change }),
     setFormat: (change) => this.call('setFormat', { ...change }),
     setFocusMode: (mode) => this.call('setFocusMode', { mode }),
-    focusAt: (point) => this.call('focusAt', { x: point.x, y: point.y }),
+    focusAt: async (point) => input.focusAt(point),
     setManualFocus: (position) => this.call('setManualFocus', { position }),
-    setZoom: (factor) => this.call('setZoom', { factor }),
+    setZoom: async (factor) => input.zoomWrite(factor),
     zoomBy: (rate) => {
       // Called repeatedly while a control is held: only a change goes over IPC.
       if (rate === this.zoomRate) return;
       this.zoomRate = rate;
-      void this.call('zoomBy', { rate });
+      input.zoomRate(rate);
     },
-    startTracking: (target) => this.call('startTracking', { ...target }),
-    stopTracking: () => this.call('stopTracking'),
+    startTracking: (target) => ('width' in target ? input.trackBox(target) : this.call('startTracking', { ...target })),
+    stopTracking: async () => input.trackClear(),
     setAudio: (change) => this.call('setAudio', { ...change }),
   };
 
-  // ───────────── Media (phase 1: not wired) ─────────────
+  // ───────────── Media ─────────────
 
-  readonly media: CameraMediaService = {
-    list: async () => [],
-    setFavorite: async () => this.notice('The camera library is not on the desktop yet.', 'info'),
-    delete: async () => this.notice('The camera library is not on the desktop yet.', 'info'),
-    download: async () => {
-      throw new Error('Downloads are not on the desktop yet.');
-    },
-    resumeLive: async () => {},
-  };
+  /** The camera library and the native player's fetches (`media.ts`, §1.U). */
+  readonly media: CameraMediaService = new DesktopMediaService();
 }

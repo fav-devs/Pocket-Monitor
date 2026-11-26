@@ -91,7 +91,7 @@ describe('DesktopCameraSession', () => {
       camera_state: () => ({ ...initialCameraState(), connection: { ...initialCameraState().connection, phase: 'live' } }),
       camera_command: (args) => {
         const command = args!.command as { type: string };
-        if (command.type === 'setZoom') throw 'ZOOM IS LOCKED WHILE ROLLING IN D-LOG2';
+        if (command.type === 'setAperture') throw 'THIS CAMERA HAS A FIXED APERTURE';
         return null;
       },
     });
@@ -133,11 +133,11 @@ describe('DesktopCameraSession', () => {
       { type: 'setWhiteBalance', kelvin: 5600 },
       { type: 'gimbalSetMode', mode: 'fpv' },
     ]);
-    await session.control.setZoom(2);
-    await session.control.setZoom(2);
+    await session.control.setAperture(2.8);
+    await session.control.setAperture(2.8);
     const notices = events.filter((e) => e.type === 'notice');
     expect(notices).toHaveLength(1);
-    expect(notices[0].type === 'notice' && notices[0].notice.message).toBe('ZOOM IS LOCKED WHILE ROLLING IN D-LOG2');
+    expect(notices[0].type === 'notice' && notices[0].notice.message).toBe('THIS CAMERA HAS A FIXED APERTURE');
     session.dispose();
   });
 
@@ -160,7 +160,8 @@ describe('DesktopCameraSession', () => {
   it('connects and disconnects through the backend', async () => {
     const session = new DesktopCameraSession();
     await session.connect({ id: 'x', name: 'Pocket 3', model: 'osmo-pocket-3', path: { kind: 'softap', ssid: 'Osmo' } });
-    expect(tauri.named('camera_connect')[0].args).toEqual({ target: { model: 0x20 } });
+    // A saved SoftAP camera joins its Windows profile, then links (./connect.ts).
+    expect(tauri.named('camera_open')[0].args).toEqual({ target: { kind: 'softap', ssid: 'Osmo', model: 0x20 } });
     await session.disconnect();
     expect(tauri.named('camera_disconnect')).toHaveLength(1);
     await session.retry();

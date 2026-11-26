@@ -38,6 +38,9 @@ import { ConfirmDialog, TextPromptDialog } from './components/Dialogs';
 import { deleteWifiPassword } from './credentials';
 import { pathKindTitle, relativeTime, rssiToBars } from './presentation';
 import { DEMO_CAMERA, useConnectActions } from './useConnectActions';
+import { desktopCameraEnabled } from '@/camera/bootstrap';
+import { forgetDesktopCamera } from '@/camera/desktop/connect';
+import { DesktopHomeSection, useDesktopHome } from './desktop/DesktopHome';
 
 const busyPhases = new Set(['scanning', 'bluetooth', 'authorizing', 'wifi-handoff', 'joining-wifi', 'datalink', 'live-start', 'recovering']);
 
@@ -76,6 +79,7 @@ export default function CamerasScreen() {
   const [removeTarget, setRemoveTarget] = useState<SavedCamera | null>(null);
 
   const busy = busyPhases.has(phase);
+  const desktop = useDesktopHome(saved);
 
   // Discovery runs while this page is in front and nothing is connecting.
   useFocusEffect(
@@ -236,12 +240,14 @@ export default function CamerasScreen() {
                         ? { label: 'Live', dot: colors.dotPink }
                         : sighting
                           ? { label: 'Nearby', dot: colors.success }
-                          : i === 0 && camera.lastConnectedAt
-                            ? { label: 'Last used' }
-                            : undefined,
+                          : desktop.online[camera.id]
+                            ? { label: 'Online', dot: colors.success }
+                            : i === 0 && camera.lastConnectedAt
+                              ? { label: 'Last used' }
+                              : undefined,
                       path: { icon: pathIcons[camera.path.kind], label: camera.path.ssid || pathKindTitle(camera.path.kind) },
                       signalBars: sighting ? rssiToBars(sighting.rssi) : undefined,
-                      away: !sighting && !live,
+                      away: !sighting && !live && !desktop.online[camera.id],
                     }}
                     onPress={() => openCamera(camera)}
                     onMore={() => setActionsFor(camera)}
@@ -288,6 +294,8 @@ export default function CamerasScreen() {
           </View>
         ) : null}
 
+        <DesktopHomeSection disabled={busy} />
+
         <View style={styles.section}>
           <SectionTitle title="More ways to monitor" dot={colors.accent} />
           <View style={[styles.extras, sideBySide && styles.extrasRow]}>
@@ -317,13 +325,14 @@ export default function CamerasScreen() {
       <ConfirmDialog
         visible={!!removeTarget}
         title="Forget camera?"
-        message={`Removes ${removeTarget?.name ?? 'the camera'} and its Wi-Fi password from this phone.`}
+        message={`Removes ${removeTarget?.name ?? 'the camera'} and its Wi-Fi password from this ${desktopCameraEnabled ? 'PC' : 'phone'}.`}
         confirmTitle="Forget"
         destructive
         onCancel={() => setRemoveTarget(null)}
         onConfirm={() => {
           if (removeTarget) {
             remove(removeTarget.id);
+            if (desktopCameraEnabled) void forgetDesktopCamera(removeTarget.id).catch(() => {});
             if (removeTarget.path.ssid) deleteWifiPassword(removeTarget.id, removeTarget.path.ssid);
           }
           setRemoveTarget(null);

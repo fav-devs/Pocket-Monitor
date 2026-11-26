@@ -82,6 +82,53 @@ pub fn is_safe_file_name(name: &str) -> bool {
         && name != ".."
 }
 
+/// A file name for an imported cube: the operator's name made safe, `.cube` kept, and a
+/// ` (2)`, ` (3)` … suffix rather than overwriting a cube already in the folder.
+pub fn import_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    let base = display_name(name.rsplit(['/', '\\']).next().unwrap_or(name));
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .filter(|c| !c.is_control())
+        .collect();
+    let cleaned = cleaned.trim().trim_matches('.').trim();
+    let stem = if cleaned.is_empty() {
+        "Imported"
+    } else {
+        cleaned
+    };
+    let stem: String = stem.chars().take(80).collect();
+    let mut candidate = format!("{stem}.cube");
+    let mut n = 2;
+    while taken(&candidate) {
+        candidate = format!("{stem} ({n}).cube");
+        n += 1;
+    }
+    candidate
+}
+
+/// `desktop-lut-v1.txt` beside the LUT folder: the desktop's remembered LUT pick.
+pub fn selection_file() -> PathBuf {
+    let folder = custom_folder();
+    folder
+        .parent()
+        .map_or_else(|| folder.clone(), Path::to_path_buf)
+        .join("desktop-lut-v1.txt")
+}
+
+/// `selected=<id>`; an empty or missing line is no pick.
+pub fn parse_selection(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("selected="))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+pub fn format_selection(id: Option<&str>) -> String {
+    format!("selected={}\n", id.unwrap_or("").replace(['\r', '\n'], ""))
+}
+
 /// The shot colour an original take carries in its `moov` tail, read by the core.
 /// `None` for a proxy, a take without the Keys atom, or without the core linked.
 #[cfg(opc_core_linked)]
@@ -158,6 +205,28 @@ mod tests {
         assert_eq!(display_name("Zebra.CUBE"), "Zebra");
         assert_eq!(display_name("plain"), "plain");
         assert!(!is_safe_file_name("C:evil.cube"));
+    }
+
+    #[test]
+    fn imports_get_a_safe_unique_name() {
+        let taken = |name: &str| name == "Kodak.cube" || name == "Kodak (2).cube";
+        assert_eq!(import_name("Kodak.cube", taken), "Kodak (3).cube");
+        assert_eq!(import_name("C:\\luts\\Fuji.CUBE", |_| false), "Fuji.cube");
+        assert_eq!(import_name("../../evil.cube", |_| false), "evil.cube");
+        assert_eq!(import_name("a:b*c?.cube", |_| false), "abc.cube");
+        assert_eq!(import_name("...", |_| false), "Imported.cube");
+        assert!(is_safe_file_name(&import_name("x/y\\z:.cube", |_| false)));
+    }
+
+    #[test]
+    fn the_selection_round_trips() {
+        assert_eq!(
+            parse_selection(&format_selection(Some("look:Warm"))).as_deref(),
+            Some("look:Warm")
+        );
+        assert_eq!(parse_selection(&format_selection(None)), None);
+        assert_eq!(parse_selection("selected=a\nb\n").as_deref(), Some("a"));
+        assert_eq!(format_selection(Some("x\ny")), "selected=xy\n");
     }
 
     #[test]
