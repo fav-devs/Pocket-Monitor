@@ -16,3 +16,9 @@ export const PocketVideo: PocketVideoNativeModule | null = null;
 export const PocketGamepad: PocketGamepadNativeModule | null = null;
 export const PocketHeadMotion: PocketHeadMotionNativeModule | null = null;
 export const hasNativeCameraIO = false;
+
+export function toBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return new Uint8Array(0);
+}

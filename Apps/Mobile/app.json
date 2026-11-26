@@ -15,11 +15,15 @@
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "Pocket Monitor uses Bluetooth to find and pair with your Osmo camera.",
         "NSLocalNetworkUsageDescription": "Pocket Monitor talks to your camera over its Wi-Fi to show the live picture.",
-        "NSBonjourServices": ["_pocket-mon._tcp"],
+        "NSBonjourServices": [
+          "_pocket-mon._tcp"
+        ],
         "NSCameraUsageDescription": "Scan a camera Wi-Fi QR code.",
         "NSPhotoLibraryAddUsageDescription": "Save clips and stills from your camera to Photos.",
         "NSLocationWhenInUseUsageDescription": "iOS needs location access to read the camera Wi-Fi network name.",
-        "UIBackgroundModes": ["bluetooth-central"],
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
@@ -36,6 +40,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "permissions": [
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.ACCESS_FINE_LOCATION",
@@ -68,21 +74,51 @@
       ],
       [
         "expo-splash-screen",
-        { "image": "./assets/splash-icon.png", "imageWidth": 120, "backgroundColor": "#08090A" }
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 120,
+          "backgroundColor": "#08090A"
+        }
       ],
       [
         "expo-build-properties",
-        { "ios": { "deploymentTarget": "17.0" }, "android": { "minSdkVersion": 29 } }
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          },
+          "android": {
+            "minSdkVersion": 29
+          }
+        }
       ],
-      ["expo-screen-orientation", { "initialOrientation": "DEFAULT" }],
-      ["expo-camera", { "cameraPermission": "Scan a camera Wi-Fi QR code." }],
-      ["expo-media-library", { "savePhotosPermission": "Save clips and stills from your camera to Photos.", "isAccessMediaLocationEnabled": false }],
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "DEFAULT"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan a camera Wi-Fi QR code."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "Save clips and stills from your camera to Photos.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-secure-store",
       "expo-sharing",
       "expo-video",
       "expo-image",
-      "expo-localization"
+      "expo-localization",
+      "./plugins/with-gles3.js"
     ],
-    "experiments": { "typedRoutes": false }
+    "experiments": {
+      "typedRoutes": false
+    }
   }
 }
