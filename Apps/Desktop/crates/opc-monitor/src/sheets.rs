@@ -1664,7 +1664,8 @@ mod tests {
         );
         assert_eq!(output.pick(7, 0), Some(&Pick::OpenStream));
         let system = build(SheetKind::Settings, TAB_SYSTEM, context(&status));
-        assert_eq!(system.pick(3, 0), Some(&Pick::Diagnostics));
+        assert_eq!(system.pick(3, 1), Some(&Pick::SharePreview(true)));
+        assert_eq!(system.pick(5, 0), Some(&Pick::Diagnostics));
     }
 
     static PROGRAM: std::sync::OnceLock<Program> = std::sync::OnceLock::new();
