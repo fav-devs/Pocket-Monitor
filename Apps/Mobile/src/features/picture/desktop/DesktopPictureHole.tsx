@@ -5,6 +5,7 @@ import { invoke, listen } from '@/camera/desktop/tauri';
 import { usePictureEffects } from '@/state/assists';
 import { pictureAspect, pictureRect, sameRect, type LivePictureProps } from '../LivePicture.shared';
 import { punchThrough, type DesktopFit } from './hole';
+import { ensureDesktopLut, useDesktopSplit } from './luts';
 
 /**
  * The live picture inside the desktop app. The picture itself is Vulkan, presented by the Rust
@@ -36,11 +37,18 @@ export function DesktopPictureHole({ resizeMode = 'fit', onPictureRect, effects:
     report.current?.(rect);
   };
 
-  // Effects go to the shader only when they change, never per frame.
-  const effectsKey = JSON.stringify(effects);
+  // Effects go to the shader only when they change, never per frame. The desktop's LUT split
+  // rides along as an extra field while a look is on.
+  const split = useDesktopSplit();
+  const graded = effects.lutId != null || effects.sourceColor !== 'rec709';
+  const effectsKey = JSON.stringify(split !== 'off' && graded ? { ...effects, split } : effects);
   useEffect(() => {
     invoke('picture_set_effects', { effects: JSON.parse(effectsKey) }).catch(() => {});
   }, [effectsKey]);
+  // A cube imported into web storage before is handed to Rust the first time it is used.
+  useEffect(() => {
+    void ensureDesktopLut(effects.lutId);
+  }, [effects.lutId]);
 
   // Where the hole is. A move without a resize (a sheet sliding the layout) is caught by a
   // cheap poll; resizes by the observer.

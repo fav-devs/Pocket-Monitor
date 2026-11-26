@@ -1096,7 +1096,7 @@ picture back; vcam Stream in a browser and OBS, Camera device after Install (UAC
 the window at odd sizes (no per-frame target rebuild: `view: pace:` holds); watch an
 iPhone's shared feed, request control, record from the desktop.
 
-### 5.7 Phase 2: input and live controls (§1.I, §1.J, §1.K, §1.Q, §1.R, §1.S, §1.T, H2)
+### 5.8 Phase 2: input and live controls (§1.I, §1.J, §1.K, §1.Q, §1.R, §1.S, §1.T, H2)
 
 Not run on Windows yet: compiled and unit-tested in the Linux container only.
 
@@ -1110,7 +1110,7 @@ tracking frames, SET outcomes and link up/down with one call (`input::observe`).
 `keys.rs`, `pointer.rs`, `moves.rs` and `gestures.rs`; the web side is
 `Apps/Mobile/src/camera/desktop/input.ts`, `src/features/input/desktopKeys.ts` and
 `desktopSync.ts`, and `src/features/live/gimbal/GimbalPresets.tsx`.
-`pm-controller/tests/input.rs` ports every `tests/shell.rs` case of this area (48 tests).
+`pm-controller/tests/input.rs` ports every `tests/shell.rs` case of this area (49 tests).
 
 **New IPC.**
 
@@ -1133,8 +1133,8 @@ from `navigator.getGamepads()` inside Tauri: `useGamepadInput` only toasts and r
 
 **Decisions recorded (D7).** On the desktop `Space` starts and `R` stops, `+`/`-` step the
 body's stops, `S` is a graded still of the picture (not a camera photo), controller `Y` clears
-tracking (no face detector), `V` cycles Follow → Tilt locked → FPV. A click focuses whatever
-`tapToFocus` says (the mobile `onTap` still routes it).
+tracking (no face detector), `V` cycles Follow → Tilt locked → FPV. A click focuses (K2: the
+mobile `onTap` routes it, so it focuses unless the body is in MF or `tapToTrack` is on).
 
 **TODO (precise, not done here).**
 

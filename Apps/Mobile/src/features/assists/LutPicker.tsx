@@ -10,6 +10,7 @@ import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/c
 import { BUILT_IN_LOOKS, LUT_EXPOSURE, evLabel, isLogTransfer, snapLutExposure, type BuiltInLook, type MonitorTransfer } from '@/core/media';
 import { deleteCustomLut, pickAndImportCube, useLutVersion } from '@/features/picture/lutLibrary';
 import { resolveLut, useAssists, useSourceTransfer, type LutSelection } from '@/state/assists';
+import { useDesktopLuts } from '@/features/picture/desktop/luts';
 import { MenuLead, MenuTabs, Note, ValueRow } from './menuKit';
 
 const TRANSFORMS: { sel: LutSelection; title: string; short: string; curve: MonitorTransfer }[] = [
@@ -64,16 +65,19 @@ export function LutPicker() {
   const [width, setWidth] = useState(340);
   const [tab, setTab] = useState<Tab>(() => (lut.selection.startsWith('look:') ? 'creative' : lut.selection.startsWith('custom:') ? 'custom' : 'display'));
   useLutVersion();
+  // Desktop backend: the drop folder, imports into it, the native pick (null elsewhere).
+  const desktop = useDesktopLuts();
   const resolved = resolveLut(lut, lutOn, transfer);
   const choose = (selection: LutSelection) => {
     set('lut', { selection });
     setOn('LUT', true);
     setMessage(null);
+    desktop?.select(selection);
   };
   const importCube = async () => {
     if (busy) return;
     setBusy(true);
-    const r = await pickAndImportCube();
+    const r = desktop ? await desktop.importCube() : await pickAndImportCube();
     setBusy(false);
     if (r.ok) {
       setOn('LUT', true);
@@ -98,7 +102,8 @@ export function LutPicker() {
               onPress: () => choose(`custom:${c.id}`),
               swatch: CUSTOM_SWATCH,
               icon: CubeIcon,
-              onDelete: () => void deleteCustomLut(c.id),
+              // A drop-folder cube is the operator's file: removed in the folder, not here.
+              onDelete: desktop?.isFile(c.id) ? undefined : () => void deleteCustomLut(c.id),
             })),
           ];
 
@@ -131,11 +136,22 @@ export function LutPicker() {
         {tab === 'custom' ? (
           <>
             {message ? <Note tone={message.startsWith('Imported') ? 'success' : 'warning'}>{message}</Note> : null}
-            <Note>3D .cube, up to 65³.</Note>
+            <Note>{desktop?.folder ? `3D .cube, up to 65³. Also read from ${desktop.folder}` : '3D .cube, up to 65³.'}</Note>
           </>
         ) : null}
       </SheetScrollView>
       <View style={styles.footer}>
+        {desktop ? (
+          <MenuTabs
+            tabs={[
+              { id: 'off', label: 'Full' },
+              { id: 'across', label: 'Split ⬒' },
+              { id: 'down', label: 'Split ◨' },
+            ]}
+            selected={desktop.split}
+            onSelect={desktop.setSplit}
+          />
+        ) : null}
         <Slider label="Intensity" value={Math.round(lut.intensity * 100)} min={0} max={100} step={5} tone="primary" resetValue={100} format={(v) => `${Math.round(v)}%`} onChange={intensity} onEnd={intensity} />
         {isLogTransfer(transfer) ? (
           <Slider
