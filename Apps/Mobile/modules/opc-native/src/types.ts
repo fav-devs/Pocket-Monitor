@@ -152,10 +152,11 @@ export interface PictureEffects {
   lutIntensity: number;
   falseColor: FalseColorMode | null;
   /**
-   * Zebra on the camera signal (before LUT / display transform). `upper` is the highlight
-   * threshold as an encoded code 0…1 compared against max(R,G,B) (values > 1 = highlight off).
-   * `lower` is unused by the assists feature (null). `midtone` (optional, additive) stripes
-   * encoded luma inside [lower, upper] with its own paint.
+   * Zebra on the camera signal (not the graded picture). `upper`: highlight threshold in monitor
+   * IRE (WAVE axis, 0–100, above 100 = headroom over the live ceiling) on max(R,G,B); values far
+   * above the axis (e.g. 1000) = highlight off. `lower`: midtone centre in monitor IRE, ±5 IRE on
+   * luma; null = off. `midtone` (optional, additive): the same midtone band already resolved to
+   * encoded luma codes 0…1, with its own paint (renderers without it use `paint`).
    */
   zebra: {
     upper: number;

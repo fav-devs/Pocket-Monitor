@@ -172,6 +172,9 @@ function described(
   return m;
 }
 
+/** `CameraModel(name:)` — catalogue facts from the name alone (no id / brand resolution). */
+export const describeModel = (name: string) => described(name);
+
 export const DEFAULT_MODEL = described('DJI Osmo camera');
 
 export const MODELS_BY_ID: Readonly<Record<number, CameraModel>> = {

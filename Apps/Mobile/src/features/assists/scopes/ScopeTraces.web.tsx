@@ -208,7 +208,9 @@ function drawVectorscope(ctx: CanvasRenderingContext2D, sq: PlotRect, props: Sco
     ctx.globalAlpha = 1;
     ctx.drawImage(c, sq.x, sq.y, sq.width, sq.height);
     ctx.filter = 'none';
-    ctx.globalAlpha = 0.35;
+    // The upstream crisp pass is 0.35 over Metal point sprites; a 2D canvas has no sprite
+    // footprint, so single-bin targets (bars) need a stronger crisp layer to stay visible.
+    ctx.globalAlpha = 0.85;
     ctx.drawImage(c, sq.x, sq.y, sq.width, sq.height);
   }
   ctx.restore();

@@ -90,7 +90,7 @@ function DisplayControls() {
   const size = useMediaPreferences((s) => s.thumbnailSize);
   const set = useMediaPreferences((s) => s.set);
   const group = { flexDirection: 'row' as const, gap: 2, padding: 3, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.35)' };
-  const cell = (on: boolean) => ({ width: 40, height: minTouch - 6, borderRadius: 7, alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: on ? 'rgba(255,255,255,0.14)' : 'transparent' });
+  const cell = (on: boolean) => ({ width: 33, height: minTouch - 6, borderRadius: 7, alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: on ? 'rgba(255,255,255,0.14)' : 'transparent' });
   return (
     <View accessibilityLabel="Media layout and thumbnail size" style={{ flexDirection: 'row', gap: 6 }}>
       <View style={group}>
@@ -105,7 +105,7 @@ function DisplayControls() {
         {(['small', 'medium', 'large'] as MediaThumbnailSize[]).map((s) => {
           const dot = s === 'small' ? 7 : s === 'medium' ? 10 : 13;
           return (
-            <PressableScale key={s} accessibilityLabel={`${s[0].toUpperCase()}${s.slice(1)} thumbnails`} accessibilityState={{ selected: size === s }} onPress={() => set('thumbnailSize', s)} style={[cell(size === s), { width: 36 }]}>
+            <PressableScale key={s} accessibilityLabel={`${s[0].toUpperCase()}${s.slice(1)} thumbnails`} accessibilityState={{ selected: size === s }} onPress={() => set('thumbnailSize', s)} style={[cell(size === s), { width: 32 }]}>
               <View style={{ width: dot, height: dot, borderRadius: 3, backgroundColor: size === s ? colors.text : colors.faint }} />
             </PressableScale>
           );

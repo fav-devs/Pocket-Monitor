@@ -358,10 +358,11 @@ export function resolveLut(lut: AssistOptions['lut'], enabled: boolean, source: 
     const t = sel.slice('transform:'.length) as MonitorTransfer;
     return { displayTransform: t, lutId: null, label: transformTitle(t) };
   }
-  if (sel.startsWith('look:')) return { displayTransform: 'rec709', lutId: sel, label: sel.slice(5) };
+  // A cube is fed the camera signal; `lutIntensity` mixes it with the source's display transform.
+  if (sel.startsWith('look:')) return { displayTransform: source, lutId: sel, label: sel.slice(5) };
   const id = sel.slice('custom:'.length);
   const entry = lut.custom.find((c) => c.id === id);
-  return entry ? { displayTransform: 'rec709', lutId: sel, label: entry.name } : { displayTransform: 'rec709', lutId: null, label: 'Missing LUT' };
+  return entry ? { displayTransform: source, lutId: sel, label: entry.name } : { displayTransform: source, lutId: null, label: 'Missing LUT' };
 }
 
 export interface EffectsInputs {
@@ -396,8 +397,9 @@ export function derivePictureEffects({ on, options, colorMode, iso }: EffectsInp
     falseColor: on.FALSE ? options.falseColor.mode : null,
     zebra: zebraOn
       ? {
-          upper: zc.highlight ?? 2,
-          lower: null,
+          // Contract units: monitor IRE on the WAVE axis (max RGB for highlight, luma ±5 for midtone).
+          upper: z.highlight ? z.highlightIRE : 1000,
+          lower: z.midtone ? z.midtoneIRE : null,
           paint: ZEBRA_RGB[z.highlightColor],
           stripes: true,
           midtone:

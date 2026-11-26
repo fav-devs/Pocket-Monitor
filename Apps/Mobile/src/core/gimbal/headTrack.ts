@@ -4,7 +4,7 @@
  * Source of truth: OpenCine `OpenCineMotion/HeadTrack.swift`, `HeadTrackNative.swift`.
  * Sensor input (AirPods / device motion) is native; this is pure math.
  */
-import { GimbalPath, type GimbalWaypoint, type MotionBounds, MotionBoundsOps, POCKET_BOUNDS, waypoint, Waypoints } from './program';
+import { type GimbalWaypoint, type MotionBounds, MotionBoundsOps, POCKET_BOUNDS, waypoint, Waypoints } from './program';
 
 export interface Quat {
   w: number;
@@ -209,4 +209,3 @@ export class HeadTrackNativeSampleGate {
   }
 }
 
-export { GimbalPath };

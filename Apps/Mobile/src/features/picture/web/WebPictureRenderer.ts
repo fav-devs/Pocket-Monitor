@@ -1,5 +1,9 @@
 import {
   LogDisplayTransform,
+  ZEBRA_HIGHLIGHT_CEILING_PERCENT,
+  ZEBRA_MIDTONE_HALF_WIDTH_IRE,
+  signalNative,
+  zebraHighlightNative,
   cubeVolumeRGBA,
   falseColorTable,
   peakingGateScale,
@@ -239,15 +243,28 @@ export class WebPictureRenderer {
     gl.uniform1f(this.u(p, 'u_lutIntensity'), fx.lutIntensity);
     gl.uniform1i(this.u(p, 'u_mono'), fx.monochrome ? 1 : 0);
     gl.uniform1i(this.u(p, 'u_fcMode'), fx.falseColor ? (fx.falseColor === 'limits' ? 2 : 1) : 0);
+    // Zebra: contract IRE → encoded codes of the signal (highlight on max RGB, midtone luma ±5).
     const z = fx.zebra;
-    gl.uniform1f(this.u(p, 'u_zebraHi'), z ? z.upper : 9);
-    gl.uniform3f(this.u(p, 'u_zebraHiColor'), ...(z ? z.paint : ([1, 1, 1] as [number, number, number])));
-    const mid = z?.midtone;
-    gl.uniform2f(this.u(p, 'u_zebraMid'), mid ? mid.lower : 1, mid ? mid.upper : 0);
-    gl.uniform3f(this.u(p, 'u_zebraMidColor'), ...(mid ? mid.paint : ([1, 1, 1] as [number, number, number])));
+    const hiOn = !!z && z.upper <= ZEBRA_HIGHLIGHT_CEILING_PERCENT;
+    const rgb = (c: number[]) => (c.some((v) => v > 1) ? c.map((v) => v / 255) : c) as [number, number, number];
+    gl.uniform1f(this.u(p, 'u_zebraHi'), hiOn ? zebraHighlightNative(z!.upper, signal, clipByte) : 9);
+    gl.uniform1f(this.u(p, 'u_zebraHiSoft'), hiOn ? zebraHighlightNative(Math.max(0, z!.upper - 1), signal, clipByte) : 9);
+    gl.uniform1i(this.u(p, 'u_zebraStripes'), z && z.stripes === false ? 0 : 1);
+    gl.uniform3f(this.u(p, 'u_zebraHiColor'), ...rgb(z ? z.paint : [1, 1, 1]));
+    let midLo = 1;
+    let midHi = 0;
+    if (z?.midtone) {
+      midLo = z.midtone.lower;
+      midHi = z.midtone.upper;
+    } else if (z && z.lower != null) {
+      midLo = signalNative(z.lower - ZEBRA_MIDTONE_HALF_WIDTH_IRE, signal, clipByte);
+      midHi = signalNative(z.lower + ZEBRA_MIDTONE_HALF_WIDTH_IRE, signal, clipByte);
+    }
+    gl.uniform2f(this.u(p, 'u_zebraMid'), midLo, midHi);
+    gl.uniform3f(this.u(p, 'u_zebraMidColor'), ...rgb(z?.midtone?.paint ?? z?.paint ?? [1, 1, 1]));
     gl.uniform1i(this.u(p, 'u_peak'), peak ? 1 : 0);
     if (peak) {
-      gl.uniform3f(this.u(p, 'u_peakColor'), ...peak.color);
+      gl.uniform3f(this.u(p, 'u_peakColor'), ...rgb(peak.color));
       gl.uniform1f(this.u(p, 'u_peakThreshold'), peak.ratioThreshold);
       gl.uniform1f(this.u(p, 'u_peakGate'), peak.noiseGate * peakingGateScale(signal));
     }

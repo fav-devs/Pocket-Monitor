@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
-import { PanResponder, RefreshControl, ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, RefreshControl, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import type { MediaLayout, MediaThumbnailSize } from '@/state/media';
 import { MText, colors } from '@/theme';
 import { DragSelection } from './dragSelection';
@@ -127,52 +127,65 @@ export function MediaGallery(p: MediaGalleryProps) {
   selectedRef.current = p.selected;
   const propsRef = useRef(p);
   propsRef.current = p;
-
-  const responder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponderCapture: (_e, g) => {
-          if (!propsRef.current.selecting) return false;
-          if (holdArmed.current) return Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4;
-          return Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.3;
-        },
-        onPanResponderGrant: (_e, g) => {
-          setDragging(true);
-          drag.current = null;
-          const id = hit(g.x0, g.y0);
-          if (id) drag.current = DragSelection.begin(order, id, new Set(selectedRef.current));
-          if (drag.current) propsRef.current.onSelection([...drag.current.selected]);
-        },
-        onPanResponderMove: (_e, g) => {
-          const id = hit(g.moveX, g.moveY);
-          if (!id) return;
-          if (!drag.current) {
-            drag.current = DragSelection.begin(order, id, new Set(selectedRef.current));
-            if (drag.current) propsRef.current.onSelection([...drag.current.selected]);
-            return;
-          }
-          if (drag.current.move(order.indexOf(id))) propsRef.current.onSelection([...drag.current.selected]);
-        },
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderRelease: () => {
-          drag.current = null;
-          holdArmed.current = false;
-          setDragging(false);
-        },
-        onPanResponderTerminate: () => {
-          drag.current = null;
-          holdArmed.current = false;
-          setDragging(false);
-        },
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [order, placed],
-  );
-
   const measureOrigin = () => {
     scrollRef.current?.measureInWindow?.((x: number, y: number) => {
       origin.current = { x, y };
     });
+  };
+
+  /**
+   * Sweep tracking reads raw pointer/touch moves on the content (they bubble whatever view owns
+   * the responder), so a hold on a card can turn straight into a sweep without lifting.
+   */
+  const gesture = useRef<{ x0: number; y0: number; startId: string | null; sweeping: boolean } | null>(null);
+  const sweptAt = useRef(0);
+  const point = (e: { nativeEvent: unknown }) => {
+    const n = e.nativeEvent as { pageX?: number; pageY?: number; clientX?: number; clientY?: number; touches?: { pageX: number; pageY: number }[] };
+    const t = n.touches && n.touches.length ? n.touches[0] : null;
+    return { x: t?.pageX ?? n.pageX ?? n.clientX ?? 0, y: t?.pageY ?? n.pageY ?? n.clientY ?? 0 };
+  };
+  const onDown = (e: { nativeEvent: unknown }) => {
+    measureOrigin();
+    const { x, y } = point(e);
+    gesture.current = { x0: x, y0: y, startId: hit(x, y), sweeping: false };
+    console.log('DBG down', x, y, JSON.stringify(origin.current), gesture.current.startId);
+  };
+  const onMove = (e: { nativeEvent: unknown }) => {
+    const g = gesture.current;
+    const { x, y } = point(e);
+    console.log('DBG move', !!g, x, y, g?.sweeping, propsRef.current.selecting, holdArmed.current);
+    if (!g) return;
+    if (!g.sweeping) {
+      if (!propsRef.current.selecting) return;
+      const dx = x - g.x0;
+      const dy = y - g.y0;
+      const go = holdArmed.current ? Math.hypot(dx, dy) > 6 : Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.3;
+      if (!go || !g.startId) return;
+      // A hold already selected its card: the sweep that follows selects, never clears it.
+      const base = new Set(selectedRef.current);
+      if (holdArmed.current) base.delete(g.startId);
+      drag.current = DragSelection.begin(order, g.startId, base);
+      if (!drag.current) return;
+      g.sweeping = true;
+      setDragging(true);
+      propsRef.current.onSelection([...drag.current.selected]);
+    }
+    const id = hit(x, y);
+    if (id && drag.current?.move(order.indexOf(id))) propsRef.current.onSelection([...drag.current.selected]);
+  };
+  const onUp = () => {
+    if (gesture.current?.sweeping) {
+      sweptAt.current = Date.now();
+      setDragging(false);
+    }
+    gesture.current = null;
+    drag.current = null;
+    holdArmed.current = false;
+  };
+  /** A sweep that ends on a card must not also count as a tap on it. */
+  const guard = <A extends unknown[]>(fn: (...a: A) => void) => (...a: A) => {
+    if (Date.now() - sweptAt.current < 350 || gesture.current?.sweeping) return;
+    fn(...a);
   };
 
   const onLayout = (e: LayoutChangeEvent) => {
@@ -203,7 +216,14 @@ export function MediaGallery(p: MediaGalleryProps) {
         {empty ? (
           <View style={{ flex: 1, minHeight: viewport - 12 }}>{p.empty}</View>
         ) : (
-          <View {...responder.panHandlers} onTouchEnd={() => (holdArmed.current = false)} style={{ height, width: '100%' }}>
+          <View
+            onTouchStart={onDown}
+            onTouchMove={onMove}
+            onTouchEnd={onUp}
+            onTouchCancel={onUp}
+            {...(Platform.OS === 'web' ? { onPointerDown: onDown, onPointerMove: onMove, onPointerUp: onUp, onPointerCancel: onUp } : {})}
+            style={{ height, width: '100%' }}
+          >
             {headers.map((h) => (
               <View key={h.key} style={{ position: 'absolute', left: 2, right: 0, top: h.y, height: sectionHeaderHeight, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <MText size={10} weight="bold" tracking={1.5} color={colors.secondary} uppercase>
@@ -243,8 +263,8 @@ export function MediaGallery(p: MediaGalleryProps) {
                       transferCaption={transferReadout(t, showRate)}
                       transferFraction={t ? t.fraction : null}
                       onPhone={!!p.localFiles[c.entry.id]}
-                      onOpen={p.onOpen}
-                      onSelect={p.onSelect}
+                      onOpen={guard(p.onOpen)}
+                      onSelect={guard(p.onSelect)}
                       onBeginSelection={(id) => {
                         holdArmed.current = true;
                         p.onBeginSelection(id);

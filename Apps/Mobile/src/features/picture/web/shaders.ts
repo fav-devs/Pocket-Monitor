@@ -312,7 +312,7 @@ uniform sampler2D u_src;
 void main() { o = vec4(texture(u_src, vec2(v_uv.x, 1.0 - v_uv.y)).rgb, 1.0); }
 `;
 
-/** The monitor: display transform, LUT, mono, false colour, zebra, peaking, mirror. */
+/** The monitor, in the native order: display transform → LUT → mono → false colour → peaking → zebra. */
 export const EFFECTS_FS = /* glsl */ `#version 300 es
 precision highp float;
 precision highp sampler3D;
@@ -333,6 +333,8 @@ uniform float u_lutIntensity;
 uniform int u_mono;
 uniform int u_fcMode; // 0 off, 1 full repaint, 2 limits (composite)
 uniform float u_zebraHi;
+uniform float u_zebraHiSoft;
+uniform int u_zebraStripes;
 uniform vec3 u_zebraHiColor;
 uniform vec2 u_zebraMid; // lower, upper (lower > upper = off)
 uniform vec3 u_zebraMidColor;
@@ -362,15 +364,18 @@ void main() {
   vec3 sig = texture(u_signalTex, uv).rgb;
   vec3 c = sig;
   if (u_exposureStops != 0.0) c = encode3(linearize3(c, u_signal) * exp2(u_exposureStops), u_signal);
+  vec3 shown = c;
   if (u_display != 0) {
     vec3 lin = vec3(decodeRaw(c.r, u_display), decodeRaw(c.g, u_display), decodeRaw(c.b, u_display));
     lin = max(u_gamut * lin, 0.0);
-    c = vec3(toneCode(lin.r), toneCode(lin.g), toneCode(lin.b));
+    shown = vec3(toneCode(lin.r), toneCode(lin.g), toneCode(lin.b));
   }
   if (u_lutOn > 0.5) {
+    // The cube is fed the camera signal; intensity mixes it with the display transform.
     vec3 coord = clamp(c, 0.0, 1.0) * ((u_lutSize - 1.0) / u_lutSize) + 0.5 / u_lutSize;
-    c = mix(c, texture(u_lut, coord).rgb, u_lutIntensity);
+    shown = mix(shown, texture(u_lut, coord).rgb, u_lutIntensity);
   }
+  c = shown;
   if (u_mono == 1) c = vec3(dot(c, vec3(0.2126, 0.7152, 0.0722)));
 
   float luma = dot(sig, lumaW(u_signal));
@@ -378,12 +383,6 @@ void main() {
     vec4 fc = texture(u_fcTable, vec2((luma * 255.0 + 0.5) / 256.0, 0.5));
     c = u_fcMode == 1 ? fc.rgb : mix(c, fc.rgb, fc.a);
   }
-
-  vec2 css = gl_FragCoord.xy / u_dpr;
-  float stripe = step(mod(floor(css.x + css.y), 10.0), 4.0);
-  float hiMeasure = max(sig.r, max(sig.g, sig.b));
-  if (hiMeasure >= u_zebraHi) c = mix(c, u_zebraHiColor, 0.75 * stripe);
-  else if (u_zebraMid.x <= u_zebraMid.y && luma >= u_zebraMid.x && luma <= u_zebraMid.y) c = mix(c, u_zebraMidColor, 0.55 * stripe);
 
   if (u_peak == 1) {
     ivec2 size = textureSize(u_signalTex, 0);
@@ -401,6 +400,12 @@ void main() {
       c = mix(c, u_peakColor, stroke);
     }
   }
+  vec2 css = gl_FragCoord.xy / u_dpr;
+  float stripe = u_zebraStripes == 1 ? step(mod(floor(css.x + css.y), 10.0), 4.0) : 1.0;
+  float hiMeasure = max(sig.r, max(sig.g, sig.b));
+  float hi = u_zebraHiSoft < u_zebraHi ? smoothstep(u_zebraHiSoft, u_zebraHi, hiMeasure) : step(u_zebraHi, hiMeasure);
+  if (hi > 0.0) c = mix(c, u_zebraHiColor, 0.75 * stripe * hi);
+  else if (u_zebraMid.x <= u_zebraMid.y && luma >= u_zebraMid.x && luma <= u_zebraMid.y) c = mix(c, u_zebraMidColor, 0.55 * stripe);
   o = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 `;

@@ -9,7 +9,7 @@
  *   55 | len_lo | (ver<<2)|len_hi | crc8(bytes[0..2]) |
  *   sender | receiver | seq:u16le | flags | cmdSet | cmdId | payload | crc16:u16le
  */
-import { type ByteInput, concat, hex as hexBytes, utf8Decode, utf8Encode } from '../bytes';
+import { type ByteInput, concat, utf8Decode, utf8Encode } from '../bytes';
 
 /** The app is always the sender: id 0, type 2 -> (0<<5)|2. */
 export const SENDER_APP = 0x02;
@@ -85,8 +85,6 @@ export function shouldHoldReply(set: number, cmd: number): boolean {
   if (set === 0x53 && cmd === 0x10) return true;
   return isLiveCameraControl(set, cmd);
 }
-
-export const hex = hexBytes;
 
 /** Reflected CRC-8, init 0x77, poly 0x8C, over the 3 header bytes -> byte 3. */
 export function crc8(data: ByteInput, start = 0, end = data.length): number {

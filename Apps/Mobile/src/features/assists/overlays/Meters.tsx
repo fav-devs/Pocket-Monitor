@@ -99,7 +99,7 @@ export function EVMeter({ value, width, height }: { value: number | null; width:
   const y = value == null ? null : top + evMeterFraction(value) * span;
   return (
     <View pointerEvents="none" accessibilityLabel="EV Meter" accessibilityValue={{ text: value == null ? 'no reading' : evLabel(value) }} style={{ width, height }}>
-      <MText size={11} weight="semibold" mono align="center" style={{ textShadowColor: 'rgba(0,0,0,0.7)', textShadowRadius: 2 }}>
+      <MText size={11} weight="semibold" mono numberOfLines={1} style={{ width: 48, textShadowColor: 'rgba(0,0,0,0.7)', textShadowRadius: 2 }}>
         {value == null ? '—' : evLabel(value)}
       </MText>
       <Svg width={width} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>

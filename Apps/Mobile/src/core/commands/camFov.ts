@@ -79,6 +79,18 @@ export const CamFov = {
     return `${shown.toFixed(1)}×`;
   },
 
+  /** The remembered chip stop, kept inside what the current FORMAT allows. */
+  stopWithinCycle(stop: number, stops: number[]): number {
+    return CamFov.clamp(stop, stops.length ? stops[stops.length - 1] : 1);
+  },
+
+  /** Operator line when a new FORMAT pulls the zoom ceiling under the held factor. */
+  ceilingNote(size: string, held: number, stops: number[]): string | null {
+    const ceiling = stops[stops.length - 1];
+    if (ceiling === undefined || !(CamFov.displayTenths(held) > ceiling + 0.05)) return null;
+    return `${size} caps zoom at ${CamFov.displayLabel(ceiling)}`;
+  },
+
   nextJump(factor: number, stops: number[] = JUMPS): number {
     const s = stops.length ? stops : JUMPS;
     for (const stop of s) if (factor < stop - 0.05) return stop;
