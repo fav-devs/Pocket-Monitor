@@ -914,26 +914,11 @@ the main thread inside `with_webview`, because AppKit needs that, then moved to
 | Events `camera://state`, `camera://event`, `picture://fit`, `picture://stats`, `picture://error` | Implemented. `camera://event` carries the "no answer from the camera" notice and recording started/stopped. |
 | Not started | `control_key` and the desktop key superset, `picture_pointer`, `tracking://box` and the tracking poll, `lut_*`, `scopes_*` + `scope://samples`, `still_capture`, `moves_*`, `preset_*`, `media_*`, `player_*`, `vcam_*`, `relay_*`, BLE/Wi-Fi/station, `prefs_*`/`app_settings_*`, `diagnostics_write`, gamepad (gilrs), webcam gestures, the launch chain (LAN → station → SoftAP join), the home screen. On desktop, `startScan` returns no cameras, and the media service lists nothing. |
 
-### 5.3 Shader work `opc-render` still lacks (do not half-implement)
+### 5.3 Shader work `opc-render` lacked in phase 1
 
-`feed_state` reports these instead of faking them, and the render thread logs them once
-per change as `view: picture: not painted on the desktop yet: …`:
-
-- `lutIntensity` (≠ 1) and `lutExposureStops`: a mix and a pre-cube gain in `feed.frag`.
-- `desqueeze`: an anamorphic stretch in the blit, and the letterbox must use the desqueezed
-  aspect so `picture://fit` stays the single source.
-- `monochrome` (peaking's mono view) and `mirrorVertical`.
-- `sourceColor` (a display transform for log footage without a cube), and `signal`/`clipByte`
-  (zebra and peaking currently use the core's thresholds for the body's colour mode, as the
-  old desktop did).
-- `zebra.stripes = false`.
-- `split`/`split_vertical`: fields exist and nothing sets them.
-- `lutId` of the form `custom:<id>`: cubes the phones' document picker keeps in web storage.
-  These need `lut_load`. `look:<name>` maps to the core's built-in looks, and `file:<name>`
-  to the desktop LUT drop folder.
-- `resizeMode: 'fill'`: the native letterbox is always *fit*.
-- The false-colour name `video` is mapped to EL Zone. Confirm on hardware that the zones
-  match.
+All of it is in now; see §5.10. `feed_state` still names what it cannot honour (today only
+unknown names: a false-colour scale, a curve or a `lutId` form it does not know), logged once
+per change as `view: picture: not painted on the desktop: …`.
 
 ### 5.4 Findings while porting
 
@@ -1277,3 +1262,99 @@ on a 2.4 GHz network, the LAN search, the next launch finding it; *Return to cam
 (`findstr /i` the SSID's password); the installer over an existing `opc-monitor` install (one
 entry in Apps & features, shortcuts open the new app, the virtual camera still registered,
 settings and media cache kept), on a PC without WebView2, and the portable ZIP there.
+
+### 5.10 Phase 2: live picture, assists in the shader, scopes, LUTs, stills (§1.F, §1.N, §1.O, §1.P, D4)
+
+Compiles and the GPU paths pass on lavapipe in the container (`cargo test -p opc-render`,
+12 new pixel tests in `tests/look.rs`); nothing here has met a Windows GPU or a camera yet.
+
+**Where it lives.** `opc-render`: `color.rs` (transfer curves, D-Gamut matrices, the scene
+tone map: the mobile `transfer.ts` numbers, pinned by tests), `options.rs` (`Look`,
+`Desqueeze`, `PictureFit`), `renderer.rs`, `shaders/feed.frag`. `pm-controller`:
+`effects.rs` (the whole `PictureEffects` mapping), `scopes/tap.rs` (the scope sampler and the
+binary message), `luts.rs` (import names, the remembered pick). `pm-desktop`:
+`picture.rs` (render thread), `luts.rs`, `scopes.rs`, `stills.rs`. Web:
+`src/camera/desktop/picture.ts` (commands, the scope channel and its parser),
+`src/features/picture/desktop/{scopes,scopeBundle,DesktopScopeTraces,luts,lutFolder}.ts(x)`,
+plus three seams in `features/assists` (`ScopeTraces.web.tsx`, `FloatingPanels.tsx`, the EV
+meter in `AssistOverlays.tsx`) and the LUT picker's desktop backend in `LutPicker.tsx`.
+
+**Renderer.** `GradeOptions` is unchanged (every shell's literals still compile); the new
+contract fields ride in `Look`, a 96-byte uniform (`LookBlock`, binding 5 of the feed pass)
+written with each frame's staging, because the 32-float push block is already the 128 bytes
+every device guarantees. The default `Look` paints exactly what the shader painted before
+(pinned by a test), so `opc-monitor` and `opc-watcher` are unaffected. Order is the phones':
+input exposure (on the signal's curve) → display transform (`sourceColor`) → cube fed the
+signal, mixed over the display transform by `lutIntensity` → monochrome → false colour →
+peaking → zebra; every measurement reads the signal, never the grade.
+
+| Contract field | Now |
+| --- | --- |
+| `sourceColor` | Analytic in `feed.frag` (decode, gamut → Rec.709, `MonitorSceneToneMap` contrast 1.1). |
+| `signal` | Exposure's curve, and the colour axis every threshold is put on: the body's (colour, ISO) when the curve matches it, else the signal's colour at the core's reference EI. |
+| `clipByte` | Read, not applied: it is the web's copy of the same (colour, ISO) ceiling the core gives this axis, and the core's knows the body's ISO. |
+| `lutIntensity`, `lutExposureStops` | In `feed.frag` (±8 stops, 0…1). |
+| `lutId` | `look:` core built-in at 33³; `file:` and `custom:file:` the drop folder; `custom:<key>` a web-storage cube the web hands over with `lut_load`. Parsed on a `pm-lut` loader thread; the render thread only uploads (`set_lut_rgba`), and keeps the previous cube until the new one lands. |
+| `monochrome`, `mirrorVertical`, `zebra.stripes` | In `feed.frag`. |
+| `peaking.ratioThreshold/noiseGate` | Used as sent (as iOS does); the sense presets stay for `opc-monitor`. The web's 1.57² gate scale for display-referred feeds is not applied (iOS does not either). |
+| `desqueeze` | The blit letterboxes the desqueezed shape; `picture://fit` uses the same `fit_in`, so overlays and clicks follow. Stills are desqueezed too. |
+| `resizeMode: 'fill'` | `picture_layout {fit: 'fill'}` → `PictureFit::Cover`: the viewport overflows the hole and the scissor crops it; `picture://fit` reports the overflowing rect. |
+| `split` (desktop extra) | `'across'` (graded top half) / `'down'` (graded right half), from the LUT picker's desktop-only Full / Top half / Right half row. The other half is the raw signal, as before. |
+
+**D4 / P21 / P14.** The renderer now has three target sets: live (`present`), still (`render`,
+`render_picture`) and async (`render_async`). None rebuilds another's, so the old app's
+`feed_vcam` (1280×720 `render_picture` beside a window of any size) no longer rebuilds the
+window's targets twice per vcam frame, and `render` waits only for its own fence, never the
+device. `render_async(picture, size, grade, look)` submits on its own command buffer and fence
+and returns the *previous* frame once it has finished, never waiting (tested). Descriptor sets
+are per target set. With no chrome set (the Tauri app) the display-raster overlay upload is
+skipped (it was 3.7 MB per frame at 720p, 15 MB at 1440p, every frame), and planes are packed
+straight into the mapped staging buffer (one CPU copy instead of two).
+**TODO (`pm-desktop/src/vcam.rs`, vcam owner):** `vcam::after_present` still calls the
+synchronous `render_picture` at the surface size; switching it to
+`renderer.render_async(picture, (1280, 720), grade, Some(look))` with
+`pm_controller::effects::clean(&feed)` for Clean removes the last wait and the re-fit. The
+still targets are shared by the player's screenshot and `still_capture`, so alternating them
+with a vcam at another size rebuilds those (never the window's).
+
+**Scopes (O1–O3, P20).** `scopes_configure {plates, channel}` names the plates and a Tauri
+channel. The render thread offers each new picture to `pm-scopes` by `Arc` (no copy) only while
+a plate is on and a tick is due: 15 Hz with up to two trace plates, 10 Hz with three or more.
+The thread reads about 256 × 144 pixels of the decoded signal (pre-LUT, as the old desktop and
+the phones measure), puts each code on the core's `ScopeDisplayScale` level table for the
+signal's axis, asks the core for the lamps and the ND / EV reading, and sends one binary
+message (layout in `pm_controller::scopes::tap`): WAVE/PARADE grids **128 columns × 128 IRE
+levels** u8 per channel (only the channels asked for), HISTO 4 × 256 u16 already on the IRE
+axis, VECTOR 128² u8 log densities through the source's display transform and zoom, plus the
+lamps, ND stops, picture stops and grey IRE. 48 KiB for WAVE RGB, ~82 KiB with every plate on:
+≤ 0.85 MB/s. (§3.5 guessed 256 columns; at 256 a WAVE RGB plate alone would be 1.4 MB/s.)
+The web builds the phones' `ScopeBundle` from it (histogram blend and blur, `NDSuggestion`,
+`TrafficLightsReading`, one-tick trails) and draws WAVE, PARADE and VECTOR from the grids in
+`DesktopScopeTraces`; HISTO, LIGHTS, ND and EV use the existing plates unchanged. Scopes work
+over playback too: the player feeds the same hub. Plates and graticules stay the web's.
+Positions are not persisted (O4, as before).
+
+**LUTs (P1, P3).** `lut_list` (core built-ins, the drop folder `%LOCALAPPDATA%\OpenPocketCine\luts`
+by the core's name rules, the folder path, the remembered pick), `lut_load {name, text, id?}`
+(with `custom:<key>` registers a web-storage cube; without, imports: the core validates it and
+the file is written into the drop folder as `<name>.cube`, ` (2)` rather than overwriting),
+`lut_select {id}` (`desktop-lut-v1.txt` beside the folder), `lut_unload {id}`. The picker's
+Custom tab lists the folder's files (id `file:<name>`, no delete button: they are the
+operator's files), Import writes into the folder, and the folder path is shown. `--look` /
+`--lut` on the command line and Auto LUT on playback (P2) are the launch and player owners'.
+
+**Stills (F4, D11).** `still_capture` renders the graded frame at the (desqueezed) source
+raster on the still targets and writes `PocketMonitor-YYYYMMDD-HHMMSS.png` (UTC) into
+`Pictures\Pocket Monitor` on a blocking worker; "Wrote … to Pictures" goes out as a
+`camera://event` notice and `picture://still` carries the path. The desktop `S` key already
+calls it (`features/input/desktopKeys.ts`).
+
+**Needs Windows (and a camera).** The picture through each look against `opc-monitor` on the
+same feed (D-Log M / D-Log2 display transform, a cube at 50 %, exposure ±1, mono, vertical
+mirror, solid zebra, split); a 1.33× and 2× desqueeze with the tracking box and a click landing
+where the overlay says; `fill` at several window shapes and DPIs (negative viewport offsets on
+the driver in use); the scope plates against the old desktop's and the phones' on the same
+scene, and `link: transport: ack=` and `view: pace:` with every plate on for 10 minutes (the
+scope thread must not cost presented frames); a 65³ cube import and a cube dropped in the
+folder while running (`lut_unload` or a restart rereads it); a still written from a Start-menu
+launch; the vcam beside a non-720p window (no `slow:` lines).
