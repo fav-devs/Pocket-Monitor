@@ -12,7 +12,7 @@ import { TextField } from '@/components/text-field';
 import { fonts, radius, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import { settingsFeedback } from '../components/feedback';
 import { ActionRow, FieldRow, Group, LinkRow, SwitchRow } from '../components/ui';
-import { SettingsCopy, SettingsRowCopy } from '../copy';
+import { SettingsCopy } from '../copy';
 import { passcodeEntry, passcodeTooShortHint, useSettingsLocal, type BroadcastPriority } from '../settingsStore';
 
 const priorities: BroadcastPriority[] = ['Lowest delay', 'Balanced', 'Steadier picture'];
@@ -80,12 +80,11 @@ export function SharingSection() {
     <>
       <Group
         label="Share"
-        note={live ? SettingsCopy.shareThisFeed : 'Connect to one camera from Your cameras to share its feed with watchers.'}
+        note={live ? SettingsCopy.relayPending : SettingsCopy.shareNeedsCamera}
       >
         <SwitchRow
           icon={LiveStreaming01Icon}
           title="Share this feed"
-          subtitle={SettingsRowCopy.shareThisFeed}
           value={sharing}
           onChange={(v) => set('shareThisFeed', v)}
           disabled={!live}
@@ -93,7 +92,6 @@ export function SharingSection() {
         <ActionRow
           icon={QrCode01Icon}
           title="Join camera Wi-Fi"
-          subtitle={SettingsRowCopy.joinWifi}
           action="Show code"
           disabled={!live}
           onPress={() => setShowCode(true)}
@@ -101,7 +99,7 @@ export function SharingSection() {
         <SettingsRow
           icon={Key01Icon}
           title="Watcher passcode"
-          subtitle={entry?.tooShort ? passcodeTooShortHint : SettingsRowCopy.watcherPasscode}
+          subtitle={entry?.tooShort ? passcodeTooShortHint : undefined}
           accessory={
             <TextField
               value={draft ?? passcode}
@@ -124,11 +122,10 @@ export function SharingSection() {
         <SwitchRow
           icon={UserMultipleIcon}
           title="Control requests"
-          subtitle={SettingsRowCopy.controlRequests}
           value={controlRequests}
           onChange={(v) => set('controlRequests', v)}
         />
-        <FieldRow icon={SignalFull02Icon} title="Broadcast priority" subtitle={SettingsRowCopy.broadcastPriority} last>
+        <FieldRow icon={SignalFull02Icon} title="Broadcast priority" last>
           <ChipRow>
             {priorities.map((p) => (
               <Chip
@@ -145,11 +142,10 @@ export function SharingSection() {
           </ChipRow>
         </FieldRow>
       </Group>
-      <Group label="Watch a feed" note="Watcher relay hosting is coming in a later build. Settings here are kept for when it arrives.">
+      <Group label="Watch a feed">
         <LinkRow
           icon={ViewIcon}
           title="Join as watcher"
-          subtitle={SettingsRowCopy.joinWatcher}
           onPress={() => router.push('/watcher')}
           last
         />
@@ -159,7 +155,7 @@ export function SharingSection() {
           <CodeGlyph seed={ssid ?? 'camera'} />
           <Text style={styles.codeName}>{ssid ?? 'Camera Wi-Fi'}</Text>
           <Text style={styles.codeHelp}>{SettingsCopy.joinWifi}</Text>
-          <Text style={styles.codeNote}>Preview code. The scannable join code arrives with watcher relay hosting.</Text>
+          <Text style={styles.codeNote}>{SettingsCopy.previewCode}</Text>
         </View>
       </Sheet>
     </>

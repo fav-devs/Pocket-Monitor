@@ -148,8 +148,8 @@ export default function MediaSettingsPanel() {
   const otherBatches = [...batches.filter((b) => b.destination !== 'frameio')].reverse();
   const anyFinished = batches.some((b) => b.status !== 'running' && b.status !== 'queued');
 
-  const toggle = <K extends keyof MediaPreferences>(key: K, icon: IconSvgElement, title: string, help?: string, extra?: { disabled?: boolean; tag?: string; last?: boolean }) => (
-    <SwitchRow icon={icon} title={title} help={help} value={prefs[key] as boolean} onChange={(v) => set(key, v as MediaPreferences[K])} disabled={extra?.disabled} tag={extra?.tag} last={extra?.last} />
+  const toggle = <K extends keyof MediaPreferences>(key: K, icon: IconSvgElement, title: string, extra?: { disabled?: boolean; tag?: string; last?: boolean }) => (
+    <SwitchRow icon={icon} title={title} value={prefs[key] as boolean} onChange={(v) => set(key, v as MediaPreferences[K])} disabled={extra?.disabled} tag={extra?.tag} last={extra?.last} />
   );
   const frameioOn = prefs.frameioEnabled || demo;
 
@@ -189,23 +189,22 @@ export default function MediaSettingsPanel() {
             { value: 'longest', label: 'Longest' },
           ]}
         />
-        {toggle('groupByDay', Calendar03Icon, 'Group by day', 'Day headers when sorted by date.')}
-        {toggle('stackBursts', Layers01Icon, 'Stack bursts', 'A burst or panorama as one tile.', { last: true })}
+        {toggle('groupByDay', Calendar03Icon, 'Group by day')}
+        {toggle('stackBursts', Layers01Icon, 'Stack bursts', { last: true })}
       </SettingsGroup>
 
       <SettingsGroup label="Playback">
         {toggle('loopPlayback', RepeatIcon, 'Loop playback')}
         {toggle('mutePlayback', VolumeMute02Icon, 'Start muted')}
-        {toggle('playbackTimecode', Clock01Icon, 'Timecode clock', 'HH:MM:SS:FF instead of minutes and seconds.')}
-        {toggle('playbackAssists', ChartHistogramIcon, 'Open with assists', 'Assist overlays on when a clip opens.')}
-        {toggle('playbackAudioMeters', AudioWave01Icon, 'Audio meters', 'Levels over the picture while a clip plays.', { last: true })}
+        {toggle('playbackTimecode', Clock01Icon, 'Timecode clock')}
+        {toggle('playbackAssists', ChartHistogramIcon, 'Open with assists')}
+        {toggle('playbackAudioMeters', AudioWave01Icon, 'Audio meters', { last: true })}
       </SettingsGroup>
 
       <SettingsGroup label="Delivery">
         <ChoiceRow<MediaPreferences['postExportAction']>
           icon={Share08Icon}
           title="Default destination"
-          help="Where Share starts."
           value={prefs.postExportAction}
           onChange={(v) => set('postExportAction', v)}
           options={[
@@ -217,7 +216,7 @@ export default function MediaSettingsPanel() {
           icon={FileVideoIcon}
           title="Default format"
           tag={exporter ? undefined : NATIVE}
-          help={exporter ? undefined : 'Originals are delivered until the native exporter ships.'}
+          help={exporter ? undefined : 'Originals only for now.'}
           value={exporter ? prefs.shareFormat : 'original'}
           onChange={(v) => exporter && set('shareFormat', v)}
           disabled={!exporter}
@@ -227,7 +226,7 @@ export default function MediaSettingsPanel() {
             { value: 'hevc', label: 'HEVC' },
           ]}
         />
-        {toggle('convertLog', ColorsIcon, 'Convert log on export', 'D-Log M / D-Log / D-Log2 to the output curve.', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
+        {toggle('convertLog', ColorsIcon, 'Convert log on export', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
         <ChoiceRow<MediaPreferences['outputCurve']>
           icon={ColorsIcon}
           title="Output curve"
@@ -238,13 +237,13 @@ export default function MediaSettingsPanel() {
             { value: 'hlg', label: 'HLG' },
           ]}
         />
-        {toggle('bakeLUT', PaintBoardIcon, 'Bake LUT on export', 'Burn the monitoring LUT into delivered clips.', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
-        {toggle('includeMetadata', Tag01Icon, 'Include metadata', 'Camera, lens and timecode tags.')}
-        {toggle('keepOriginals', SmartPhone01Icon, 'Keep originals on this phone', 'Faster re-shares and offline review.')}
+        {toggle('bakeLUT', PaintBoardIcon, 'Bake LUT on export', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
+        {toggle('includeMetadata', Tag01Icon, 'Include metadata')}
+        {toggle('keepOriginals', SmartPhone01Icon, 'Keep originals on this phone')}
         <SettingsRow
           icon={SmartPhone01Icon}
           title="Originals cache"
-          subtitle={cachedIds.length ? `${cachedIds.length} on this phone · ${byteLabel(cachedBytes)}` : 'Nothing cached'}
+          subtitle={cachedIds.length ? `${cachedIds.length} · ${byteLabel(cachedBytes)}` : 'None'}
           accessory={
             <TextAction
               title="Clear"
@@ -264,15 +263,15 @@ export default function MediaSettingsPanel() {
 
       <SettingsGroup label="Delivery queue">
         {otherBatches.length === 0 ? (
-          <SettingsRow icon={CloudUploadIcon} title="No deliveries" subtitle="Nothing shared in this session." last />
+          <SettingsRow icon={CloudUploadIcon} title="No deliveries" last />
         ) : (
           otherBatches.map((b, i) => <BatchRow key={b.id} batch={b} last={i === otherBatches.length - 1} onCancel={() => cancel(b.id)} />)
         )}
       </SettingsGroup>
 
       <View style={styles.groupWithNote}>
-        <SettingsGroup label={demo ? 'Frame.io · demo camera, simulated' : 'Frame.io'}>
-          {toggle('frameioEnabled', CloudUploadIcon, 'Frame.io upload', 'Offer Frame.io as a Share destination.', { last: !frameioOn })}
+        <SettingsGroup label={demo ? 'Frame.io · demo' : 'Frame.io'}>
+          {toggle('frameioEnabled', CloudUploadIcon, 'Frame.io upload', { last: !frameioOn })}
           {frameioOn ? (
             <>
               <Block>
@@ -306,7 +305,7 @@ export default function MediaSettingsPanel() {
                   <View style={styles.status}>
                     <Icon icon={configError ? AlertCircleIcon : CheckmarkCircle02Icon} size={16} color={configError ? colors.warning : colors.success} />
                     <Text style={[styles.rowHelp, { flex: 1 }, configError ? { color: colors.warning } : null]}>
-                      {configError ?? `Redirect scheme: ${urlScheme(redirect)}. The app must register this URL scheme to finish sign-in.`}
+                      {configError ?? `Redirect scheme: ${urlScheme(redirect)}`}
                     </Text>
                   </View>
                 ) : null}
@@ -325,7 +324,6 @@ export default function MediaSettingsPanel() {
                 <SettingsRow
                   icon={UserIcon}
                   title={account.userName ? `Signed in as ${account.userName}` : 'Signed in'}
-                  subtitle={Platform.OS === 'web' ? 'Tokens stay in memory on web.' : 'Tokens are kept in the device keychain.'}
                   accessory={
                     <Pressable accessibilityRole="button" accessibilityLabel="Sign out of Frame.io" onPress={() => void account.signOut()} hitSlop={6} style={({ pressed }) => [styles.signOut, pressed && { opacity: 0.6 }]}>
                       <Icon icon={Logout01Icon} size={16} color={colors.destructive} />
@@ -339,7 +337,6 @@ export default function MediaSettingsPanel() {
                     {account.error ?? (account.status === 'not-configured' ? 'Save a Client ID and redirect URI to sign in.' : 'Not signed in.')}
                   </Text>
                   <Button title="Sign in with Adobe" disabled={account.status === 'not-configured' && !demo} onPress={() => void account.beginSignIn()} style={styles.selfStart} />
-                  <Text style={styles.rowHelp}>{Platform.OS === 'web' ? 'On web, tokens stay in memory and are gone after a reload.' : 'Tokens are kept in the device keychain, never in app settings.'}</Text>
                 </Block>
               )}
               {account.status === 'signed-in' ? (
@@ -371,25 +368,25 @@ export default function MediaSettingsPanel() {
                 </Block>
               ) : null}
               <Block title="Upload queue" action={anyFinished ? <TextAction title="Clear finished" label="Clear finished deliveries" onPress={clearFinished} /> : undefined}>
-                {frameioBatches.length === 0 ? <Text style={styles.rowHelp}>Nothing uploading. In Media, select clips, then Share → Frame.io upload.</Text> : null}
+                {frameioBatches.length === 0 ? <Text style={styles.rowHelp}>Nothing uploading.</Text> : null}
               </Block>
               {frameioBatches.map((b) => (
                 <BatchRow key={b.id} batch={b} onCancel={() => cancel(b.id)} />
               ))}
-              {toggle('frameioReupload', RefreshIcon, 'Upload again', 'Re-upload clips already sent to Frame.io.')}
+              {toggle('frameioReupload', RefreshIcon, 'Upload again')}
               <SettingsRow
                 icon={CheckmarkCircle02Icon}
                 title="Upload history"
-                subtitle={`${prefs.frameioUploaded.length} clip${prefs.frameioUploaded.length === 1 ? '' : 's'} remembered as uploaded`}
+                subtitle={`${prefs.frameioUploaded.length} clip${prefs.frameioUploaded.length === 1 ? '' : 's'}`}
                 accessory={<TextAction title="Forget" label="Forget upload history" disabled={!prefs.frameioUploaded.length} onPress={() => set('frameioUploaded', [])} />}
                 last
               />
             </>
           ) : null}
         </SettingsGroup>
-        <Text style={styles.note}>
-          Uses your own Adobe Developer Console project: add the Frame.io API, create an OAuth Native App credential (PKCE, no client secret), then paste its Client ID and full Default redirect URI. Your Frame.io account must be a V4 account on the same Adobe ID.
-        </Text>
+        {frameioOn ? (
+          <Text style={styles.note}>Needs your own Adobe OAuth Native App (PKCE) with the Frame.io API, and a V4 account.</Text>
+        ) : null}
       </View>
 
       <SettingsDestructiveButton

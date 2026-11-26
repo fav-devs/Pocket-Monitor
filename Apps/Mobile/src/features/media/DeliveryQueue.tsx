@@ -108,7 +108,6 @@ export function DeliveryQueueSheet({ visible, onClose }: { visible: boolean; onC
             <Icon icon={CloudUploadIcon} size={24} />
           </Squircle>
           <Text style={styles.emptyTitle}>Nothing queued</Text>
-          <Text style={styles.emptyMuted}>Select clips, then Share. Progress shows here.</Text>
         </View>
       ) : (
         <View style={styles.card}>
@@ -173,7 +172,6 @@ function createStyles(colors: ThemeColors) {
     flex: { flex: 1 },
     empty: { alignItems: 'center' as const, gap: spacing.sm, paddingVertical: spacing.lg },
     emptyTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.foreground, marginTop: spacing.xs },
-    emptyMuted: { fontFamily: fonts.regular, fontSize: 14, color: colors.mutedForeground, textAlign: 'center' as const },
     pillWrap: { position: 'absolute' as const, left: 16, right: 16, alignItems: 'center' as const, zIndex: 30 },
     pill: {
       width: '100%' as const,

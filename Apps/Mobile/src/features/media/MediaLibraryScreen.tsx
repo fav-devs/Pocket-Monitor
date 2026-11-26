@@ -41,14 +41,9 @@ import { BusyOverlay, ConfirmSheet, NoticeToast } from './MediaOverlays';
 import type { CameraMediaItem } from '@/camera';
 
 const copy = {
-  emptyAll: 'Record a clip, then pull to refresh.',
-  emptyFavorites: 'Star a clip to find it here.',
-  emptyVideos: 'Record a clip, then pull to refresh.',
-  emptyPhotos: 'Capture a still, then pull to refresh.',
-  filterEmpty: 'Nothing in this tab matches the filters.',
-  disconnected: 'Connect the camera to list clips on the card.',
-  selectingHint: 'Drag across clips to select more',
-  cachedOnly: 'Camera disconnected. Showing clips on this phone.',
+  emptyPull: 'Pull to refresh.',
+  selectingHint: 'Drag to select more',
+  cachedOnly: 'Offline · clips on this phone',
 };
 
 const categories: MediaCategory[] = ['all', 'video', 'photo', 'favorites'];
@@ -200,23 +195,21 @@ export default function MediaLibraryScreen() {
   const refresh = () => sourceAvailable && void lib.load(session.media, { refresh: true });
   const searching = query.trim().length > 0;
 
-  const tabMessage =
-    lib.category === 'favorites' ? copy.emptyFavorites : lib.category === 'video' ? copy.emptyVideos : lib.category === 'photo' ? copy.emptyPhotos : copy.emptyAll;
   const empty =
     lib.status === 'loading' ? (
       <EmptyState icon={Image01Icon} title="Listing clips on camera…" busy />
     ) : lib.status === 'error' ? (
       <EmptyState icon={AlertCircleIcon} title="Couldn't list clips" message={lib.error ?? undefined} action={{ title: 'Try again', onPress: refresh }} />
     ) : !sourceAvailable && !visibleItems.length && !searching ? (
-      <EmptyState icon={WifiDisconnected01Icon} title="Camera disconnected" message={copy.disconnected} />
+      <EmptyState icon={WifiDisconnected01Icon} title="Camera disconnected" />
     ) : searching && !model.entries.length ? (
-      <EmptyState icon={Search01Icon} title="No matches" message={`Nothing is called “${query.trim()}”.`} />
+      <EmptyState icon={Search01Icon} title="No matches" />
     ) : filterCount > 0 ? (
-      <EmptyState icon={FilterHorizontalIcon} title="No matching clips" message={copy.filterEmpty} action={{ title: 'Clear filters', onPress: () => lib.setFilters(emptyFilters) }} />
+      <EmptyState icon={FilterHorizontalIcon} title="No matching clips" action={{ title: 'Clear filters', onPress: () => lib.setFilters(emptyFilters) }} />
     ) : lib.category === 'favorites' ? (
-      <EmptyState icon={StarIcon} title="No favorites yet" message={tabMessage} />
+      <EmptyState icon={StarIcon} title="No favorites yet" />
     ) : (
-      <EmptyState icon={Image01Icon} title={sourceAvailable ? 'No clips yet' : 'No cached clips'} message={tabMessage} />
+      <EmptyState icon={Image01Icon} title={sourceAvailable ? 'No clips yet' : 'No cached clips'} message={sourceAvailable ? copy.emptyPull : undefined} />
     );
 
   const storage = sdPresent || totalMb > 0 ? `${storageReadout(freeMb, totalMb)} free` : session.kind === 'demo' ? 'Demo card' : null;
@@ -420,7 +413,7 @@ export default function MediaLibraryScreen() {
       <ConfirmSheet
         visible={confirmDelete !== null}
         title={confirmDelete?.length === 1 ? 'Delete 1 item from the camera?' : `Delete ${confirmDelete?.length ?? 0} items from the camera?`}
-        message="This removes the files from the camera card. Copies already on this phone stay."
+        message="Copies on this phone stay."
         onCancel={() => setConfirmDelete(null)}
         onConfirm={() => {
           const ids = confirmDelete ?? [];

@@ -20,9 +20,8 @@ import { type FrameioProject, useFrameioAccount } from './frameio';
 import { Busy, SwitchRow, Tag, TextAction } from './MediaChips';
 
 const copy = {
-  convertHelp: 'One output curve for every D-Log or D-Log2 clip. Originals stay untouched.',
   convertUnavailableHelp: 'Needs a D-Log or D-Log2 clip.',
-  exporterNotice: 'Convert log, Bake LUT and re-encoding need the native exporter. Originals are delivered unchanged.',
+  exporterNotice: 'Originals only in this build.',
 };
 const NATIVE = 'Native exporter';
 
@@ -100,13 +99,13 @@ export function DeliverySheet({
     onClose();
   };
 
-  const destinations: { id: DeliveryDestination; title: string; subtitle: string; enabled: boolean }[] = [
-    { id: 'share', title: 'Share', subtitle: deliveryPlatform.shareSubtitle, enabled: true },
-    { id: 'photos', title: deliveryPlatform.photosTitle, subtitle: deliveryPlatform.photosSubtitle, enabled: true },
+  const destinations: { id: DeliveryDestination; title: string; subtitle?: string; enabled: boolean }[] = [
+    { id: 'share', title: 'Share', enabled: true },
+    { id: 'photos', title: deliveryPlatform.photosTitle, enabled: true },
     {
       id: 'frameio',
       title: 'Frame.io upload',
-      subtitle: frameioReady ? `Upload to your Frame.io project${demo ? ' (demo)' : ''}` : 'Set up in Settings → Media → Frame.io',
+      subtitle: frameioReady ? (demo ? 'Demo' : undefined) : 'Set up in Settings → Media',
       enabled: frameioReady,
     },
   ];
@@ -171,7 +170,7 @@ export function DeliverySheet({
                   <SwitchRow
                     inset={false}
                     title="Convert log"
-                    help={anyLog ? copy.convertHelp : copy.convertUnavailableHelp}
+                    help={anyLog ? undefined : copy.convertUnavailableHelp}
                     value={options.convertLog}
                     onChange={(v) => prefs.set('convertLog', v)}
                     disabled={!exporter || !anyLog}
@@ -193,14 +192,13 @@ export function DeliverySheet({
                   <SwitchRow
                     inset={false}
                     title="Bake LUT"
-                    help="Burn the monitoring LUT into the file."
                     value={options.bakeLUT}
                     onChange={(v) => prefs.set('bakeLUT', v)}
                     disabled={!exporter}
                     tag={exporter ? undefined : NATIVE}
                   />
                   {options.bakeLUT ? (
-                    <SwitchRow inset={false} title="Bake exposure" help="Apply the LUT exposure offset too." value={options.bakeExposure} onChange={(v) => prefs.set('bakeExposure', v)} />
+                    <SwitchRow inset={false} title="Bake exposure" value={options.bakeExposure} onChange={(v) => prefs.set('bakeExposure', v)} />
                   ) : null}
                   <View style={[styles.control, styles.formatBlock]}>
                     <View style={styles.formatHead}>
@@ -222,9 +220,9 @@ export function DeliverySheet({
                   </View>
                 </>
               ) : null}
-              <SwitchRow inset={false} title="Include metadata" help="Keep camera, lens and timecode tags." value={prefs.includeMetadata} onChange={(v) => prefs.set('includeMetadata', v)} />
+              <SwitchRow inset={false} title="Include metadata" value={prefs.includeMetadata} onChange={(v) => prefs.set('includeMetadata', v)} />
               {destination === 'frameio' ? (
-                <SwitchRow inset={false} title="Upload again" help="Upload clips already sent to Frame.io." value={prefs.frameioReupload} onChange={(v) => prefs.set('frameioReupload', v)} />
+                <SwitchRow inset={false} title="Upload again" value={prefs.frameioReupload} onChange={(v) => prefs.set('frameioReupload', v)} />
               ) : null}
             </View>
           </FieldSection>
@@ -287,7 +285,7 @@ function FrameioService({ project }: { project?: FrameioProject }) {
         <Busy label="Waiting for Adobe sign-in…" />
       ) : (
         <>
-          <Text style={[styles.muted, account.error ? { color: colors.destructive } : null]}>{account.error ?? 'Sign in with the Adobe ID linked to your Frame.io V4 account.'}</Text>
+          <Text style={[styles.muted, account.error ? { color: colors.destructive } : null]}>{account.error ?? 'Use the Adobe ID of your Frame.io V4 account.'}</Text>
           <Button title="Sign in" onPress={() => void account.beginSignIn()} style={styles.signIn} />
         </>
       )}

@@ -14,7 +14,6 @@ import { Icon } from '@/components/icon';
 import { SettingsRow } from '@/components/settings-ui';
 import { useTheme } from '@/constants/theme';
 import { ActionRow, Group, LinkRow, ValueRow } from '../components/ui';
-import { SettingsCopy, SettingsRowCopy } from '../copy';
 import { clearConnectionEvents } from '../diagnostics';
 import { useShareDiagnostics } from '../useShareDiagnostics';
 
@@ -26,30 +25,27 @@ export function SupportSection({ onReport, onPrivacy }: { onReport: () => void; 
   const [cleared, setCleared] = useState(false);
   return (
     <>
-      <Group label="Help & feedback" note={diagnostics.note ?? SettingsCopy.shareDiagnostics}>
+      <Group label="Help & feedback" note={diagnostics.note}>
         <LinkRow
           icon={MessageQuestionIcon}
           title="Report a problem"
-          subtitle={SettingsRowCopy.report}
           onPress={onReport}
           testID="support.report.open"
         />
         <ActionRow
           icon={Share08Icon}
           title="Diagnostics"
-          subtitle={SettingsRowCopy.shareDiagnostics}
           action="Share"
           onPress={() => void diagnostics.share()}
           testID="support.diagnostics"
         />
-        <ValueRow icon={Bug01Icon} title="Automatic error reports" subtitle={SettingsRowCopy.automaticReports} value="Off" />
-        <LinkRow icon={Shield01Icon} title="Reporting Privacy" subtitle={SettingsRowCopy.reportingPrivacy} onPress={onPrivacy} last />
+        <ValueRow icon={Bug01Icon} title="Automatic error reports" value="Off" />
+        <LinkRow icon={Shield01Icon} title="Reporting Privacy" onPress={onPrivacy} last />
       </Group>
       <Group>
         <SettingsRow
           icon={Settings02Icon}
           title="Diagnostic options"
-          subtitle="Save or remove reports on this phone"
           onPress={() => setExpanded((e) => !e)}
           accessory={<Icon icon={expanded ? ArrowUp01Icon : ArrowDown01Icon} size={16} color={colors.mutedForeground} />}
           last={!expanded}
@@ -59,14 +55,12 @@ export function SupportSection({ onReport, onPrivacy }: { onReport: () => void; 
             <ActionRow
               icon={Download01Icon}
               title="Save diagnostic report"
-              subtitle={SettingsRowCopy.saveReport}
               action="Save"
               onPress={() => void diagnostics.share()}
             />
             <ActionRow
               icon={Delete02Icon}
               title="Delete connection events"
-              subtitle={SettingsRowCopy.deleteReports}
               action={cleared ? 'Deleted' : 'Delete'}
               destructive={!cleared}
               disabled={cleared}

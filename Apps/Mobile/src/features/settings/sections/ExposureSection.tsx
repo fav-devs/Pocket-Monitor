@@ -16,7 +16,7 @@ import { transferForColorMode } from '@/core/media/transfer';
 import { resolveLut, useAssists } from '@/state/assists';
 import { FieldRow, Group, LinkRow, Segments, SwitchRow, ValueRow } from '../components/ui';
 import { usePref } from '../components/usePref';
-import { SettingsNoteCopy, SettingsRowCopy } from '../copy';
+import { SettingsCopy } from '../copy';
 
 const evLabel = (ev: number) => (ev === 0 ? '0.0' : `${ev > 0 ? '+' : '−'}${Math.abs(ev).toFixed(1)}`);
 
@@ -37,17 +37,17 @@ export function ExposureSection() {
 
   return (
     <>
-      <Group label="EV meter" note={SettingsNoteCopy.evMeter}>
-        <SwitchRow icon={Sun03Icon} title="Enabled" subtitle={SettingsRowCopy.evMeter} value={evOn} onChange={(v) => setAssist('EV', v)} />
-        <SwitchRow icon={Timer01Icon} title="Shutter as angle" subtitle={SettingsRowCopy.shutterAngle} value={angle} onChange={setAngle} last />
+      <Group label="EV meter">
+        <SwitchRow icon={Sun03Icon} title="Enabled" value={evOn} onChange={(v) => setAssist('EV', v)} />
+        <SwitchRow icon={Timer01Icon} title="Shutter as angle" value={angle} onChange={setAngle} last />
       </Group>
-      <Group label="LUT" note={SettingsRowCopy.look}>
+      <Group label="LUT" note={SettingsCopy.look}>
         <ValueRow icon={ColorsIcon} title="Look" value={look} />
-        <LinkRow icon={PaintBoardIcon} title="Choose look" subtitle="In View Assists" onPress={() => router.push('/settings/assists')} last />
+        <LinkRow icon={PaintBoardIcon} title="Choose look" onPress={() => router.push('/settings/assists')} last />
       </Group>
       <Group
         label="Camera exposure"
-        note={live ? 'Change exposure from the capture controls in Live View.' : 'Connect a camera to read its exposure here.'}
+        note={live ? SettingsCopy.exposureInLive : undefined}
       >
         {live ? (
           <>

@@ -494,7 +494,7 @@ export default function PlaybackScreen() {
         </View>
       </Sheet>
       <Sheet visible={conformOpen && targets.length > 0} title="Conform preview" onClose={() => setConformOpen(false)} expandable={false} passthrough>
-        <Text style={styles.sheetMuted}>{`Shot at ${item.fps} fps. Play it back at:`}</Text>
+        <Text style={styles.sheetMuted}>{`Shot at ${item.fps} fps`}</Text>
         <ChipRow>
           {[null, ...targets].map((target) => (
             <Chip
@@ -513,7 +513,7 @@ export default function PlaybackScreen() {
       <ConfirmSheet
         visible={confirmDelete}
         title={burst.length > 1 ? `Delete this burst (${burst.length} photos)?` : isVideo ? 'Delete this clip?' : 'Delete this photo?'}
-        message="This removes the file from the camera card."
+        message="Removes it from the camera card."
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => void doDelete()}
       />

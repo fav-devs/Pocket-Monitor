@@ -51,4 +51,4 @@ export function passcodeEntry(text: string): { passcode: string | null; tooShort
   return { passcode: trimmed.slice(0, 12), tooShort: false };
 }
 
-export const passcodeTooShortHint = 'Use at least 4 characters, or leave it empty for an open feed.';
+export const passcodeTooShortHint = 'At least 4 characters, or empty for an open feed.';

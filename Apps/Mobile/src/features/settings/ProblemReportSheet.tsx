@@ -96,7 +96,7 @@ export function ProblemReportSheet({ visible, onClose }: { visible: boolean; onC
             accessibilityLabel="What happened?"
             style={styles.message}
           />
-          <Text style={styles.hint}>Please don’t include passwords or other sensitive information.</Text>
+          <Text style={styles.hint}>Don’t include passwords.</Text>
         </View>
         <View style={styles.field}>
           <Text style={styles.label}>Reply email (optional)</Text>
@@ -109,7 +109,6 @@ export function ProblemReportSheet({ visible, onClose }: { visible: boolean; onC
             autoCorrect={false}
             accessibilityLabel="Reply email (optional)"
           />
-          <Text style={styles.hint}>Include an address if you'd like a reply.</Text>
         </View>
         <FieldSection
           title="Include technical details"
@@ -145,7 +144,7 @@ export function ProblemReportSheet({ visible, onClose }: { visible: boolean; onC
           ) : null}
         </FieldSection>
         <Text style={styles.hint}>
-          {`This build does not upload reports. Share report opens the share sheet so you can attach it to an issue at ${appBrand.supportUrl}.`}
+          {`Nothing is uploaded. Attach the report to an issue at ${appBrand.supportUrl}.`}
         </Text>
       </View>
     </Sheet>

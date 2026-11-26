@@ -8,7 +8,7 @@ import { useSavedCameras } from '@/state/savedCameras';
 import { ConfirmSheet, type ConfirmRequest } from '../components/ConfirmSheet';
 import { ActionRow, Group, SwitchRow, ValueRow } from '../components/ui';
 import { usePref } from '../components/usePref';
-import { SettingsCopy, SettingsRowCopy } from '../copy';
+import { SettingsCopy } from '../copy';
 import { useSettingsLocal } from '../settingsStore';
 
 function formatBytes(bytes: number): string {
@@ -91,34 +91,26 @@ export function StorageSection() {
       : confirm === 'reset'
         ? { title: 'Reset operator settings?', message: SettingsCopy.resetSettings, confirmTitle: 'Reset' }
         : confirm === 'forget'
-          ? {
-              title: 'Forget all cameras?',
-              message: `This removes ${saved.length} saved ${saved.length === 1 ? 'camera' : 'cameras'} and their Wi-Fi passwords from this phone. You can pair them again later.`,
-              confirmTitle: 'Forget',
-              destructive: true,
-            }
+          ? { title: 'Forget all cameras?', message: SettingsCopy.forgetCameras(saved.length), confirmTitle: 'Forget', destructive: true }
           : null;
 
   return (
     <>
-      <Group label="Cache" note={summary?.group === 'cache' ? summary.text : SettingsCopy.cacheFullResolution}>
+      <Group label="Cache" note={summary?.group === 'cache' ? summary.text : undefined}>
         <SwitchRow
           icon={Download01Icon}
           title="Full Resolution Caching"
-          subtitle={SettingsRowCopy.cacheFullResolution}
           value={cacheOriginals}
           onChange={(v) => setLocal('cacheFullResolution', v)}
         />
         <ValueRow
           icon={Database01Icon}
           title="Local Media Cache"
-          subtitle={SettingsRowCopy.cacheScope}
           value={size === null ? (web ? 'Not on web' : '—') : formatBytes(size)}
         />
         <ActionRow
           icon={Delete02Icon}
           title="Clear Cache"
-          subtitle={SettingsRowCopy.clearCache}
           action={clearing ? 'Clearing…' : 'Clear'}
           destructive
           disabled={clearing || web || !size}
@@ -126,11 +118,10 @@ export function StorageSection() {
           last
         />
       </Group>
-      <Group label="System" note={summary?.group === 'system' ? summary.text : web ? SettingsCopy.demoMode : undefined}>
+      <Group label="System" note={summary?.group === 'system' ? summary.text : web ? SettingsCopy.webDemo : undefined}>
         <SwitchRow
           icon={TestTube01Icon}
           title="Demo camera"
-          subtitle={SettingsRowCopy.demoMode}
           value={demo || web}
           onChange={setDemo}
           disabled={web}
@@ -138,14 +129,12 @@ export function StorageSection() {
         <ActionRow
           icon={RefreshIcon}
           title="Reset operator settings"
-          subtitle={SettingsRowCopy.resetSettings}
           action="Reset"
           onPress={() => setConfirm('reset')}
         />
         <ActionRow
           icon={Delete02Icon}
           title="Forget all cameras"
-          subtitle={SettingsRowCopy.forgetCameras}
           action="Forget"
           destructive
           disabled={saved.length === 0}

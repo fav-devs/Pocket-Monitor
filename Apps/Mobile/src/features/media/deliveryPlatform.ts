@@ -24,8 +24,6 @@ export class PhotosPermissionError extends Error {
 export const deliveryPlatform = {
   /** What the "save" destination is called here. */
   photosTitle: 'Save to Photos',
-  photosSubtitle: 'Add originals to the photo library',
-  shareSubtitle: 'Convert log, Bake LUT, AirDrop, Files',
 
   /**
    * A file URI to hand to the system. A real camera always returns a downloaded file; the demo

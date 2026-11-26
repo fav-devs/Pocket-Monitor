@@ -7,7 +7,7 @@ import { SettingsDestructiveButton, SettingsGroup, SettingsRow } from '@/compone
 import { Squircle } from '@/components/squircle';
 import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { connectionPhaseLabel } from '@/features/pairing/presentation';
-import { SettingsScreenPage } from './components/ui';
+import { SettingsScreenPage, ValueText } from './components/ui';
 import { tint } from './components/feedback';
 import { appVersion } from './diagnostics';
 import { sectionInfo, settingsGroups, type SettingsSectionId } from './sections';
@@ -32,7 +32,6 @@ export default function SettingsScreen() {
     router.replace('/');
   };
   const open = (id: SettingsSectionId) => router.push(`/settings/${id}`);
-  const subtitle = (id: SettingsSectionId) => (id === 'about' ? `Version ${appVersion()}` : (sectionInfo(id)?.rail ?? ''));
 
   return (
     <SettingsScreenPage title="Settings" fallback={live ? '/live' : '/'}>
@@ -71,7 +70,7 @@ export default function SettingsScreen() {
                 <SettingsRow
                   icon={info.icon}
                   title={info.title}
-                  subtitle={subtitle(id)}
+                  accessory={id === 'about' ? <ValueText value={appVersion()} /> : undefined}
                   onPress={() => open(id)}
                   chevron
                   last={i === group.ids.length - 1}

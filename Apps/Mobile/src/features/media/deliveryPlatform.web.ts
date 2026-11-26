@@ -31,8 +31,6 @@ function triggerDownload(f: DeliverableFile) {
 
 export const deliveryPlatform = {
   photosTitle: 'Download',
-  photosSubtitle: 'Save originals with the browser',
-  shareSubtitle: 'Convert log, Bake LUT, browser download',
 
   /** The demo camera has no footage: its thumbnail stands in for the file. */
   async materialize(item: CameraMediaItem, localUri: string): Promise<string> {
