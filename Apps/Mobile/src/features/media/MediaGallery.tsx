@@ -148,15 +148,10 @@ export function MediaGallery(p: MediaGalleryProps) {
     measureOrigin();
     const { x, y } = point(e);
     gesture.current = { x0: x, y0: y, startId: hit(x, y), sweeping: false };
-    console.log('DBG down', x, y, JSON.stringify(origin.current), gesture.current.startId);
   };
   const onMove = (e: { nativeEvent: unknown }) => {
-    try { onMoveInner(e); } catch (err) { console.log('DBG err', String(err)); }
-  };
-  const onMoveInner = (e: { nativeEvent: unknown }) => {
     const g = gesture.current;
     const { x, y } = point(e);
-    console.log('DBG move', !!g, x, y, g?.sweeping, propsRef.current.selecting, holdArmed.current);
     if (!g) return;
     if (!g.sweeping) {
       if (!propsRef.current.selecting) return;
@@ -174,7 +169,6 @@ export function MediaGallery(p: MediaGalleryProps) {
       propsRef.current.onSelection([...drag.current.selected]);
     }
     const id = hit(x, y);
-    console.log('DBG hit', id);
     if (id && drag.current?.move(order.indexOf(id))) propsRef.current.onSelection([...drag.current.selected]);
   };
   const onUp = () => {

@@ -37,8 +37,12 @@ function stateLabel(p: MediaCellProps): { text: string; color: string } {
 }
 
 function Thumbnail({ uri }: { uri?: string }) {
+  // Not a touch target: on web this also stops the browser's native image drag from
+  // swallowing the drag-select sweep.
   return uri ? (
-    <Image source={{ uri }} style={{ position: 'absolute', inset: 0 }} contentFit="cover" transition={120} recyclingKey={uri} />
+    <View pointerEvents="none" style={{ position: 'absolute', inset: 0 }}>
+      <Image source={{ uri }} style={{ position: 'absolute', inset: 0 }} contentFit="cover" transition={120} recyclingKey={uri} />
+    </View>
   ) : (
     <View style={{ position: 'absolute', inset: 0, backgroundColor: colors.raised }} />
   );
