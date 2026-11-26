@@ -138,12 +138,35 @@ export interface PictureEffects {
   lutId: string | null;
   lutIntensity: number;
   falseColor: FalseColorMode | null;
-  zebra: { upper: number; lower: number | null; paint: Rgb; stripes: boolean } | null;
+  /**
+   * Zebra on the camera signal (before LUT / display transform). `upper` is the highlight
+   * threshold as an encoded code 0…1 compared against max(R,G,B) (values > 1 = highlight off).
+   * `lower` is unused by the assists feature (null). `midtone` (optional, additive) stripes
+   * encoded luma inside [lower, upper] with its own paint.
+   */
+  zebra: {
+    upper: number;
+    lower: number | null;
+    paint: Rgb;
+    stripes: boolean;
+    midtone?: { lower: number; upper: number; paint: Rgb } | null;
+  } | null;
   peaking: { color: Rgb; ratioThreshold: number; noiseGate: number } | null;
   /** Desqueeze factor (1 = off) and axis. */
   desqueeze: { factor: number; direction: 'horizontal' | 'vertical' };
   mirror: boolean;
   monochrome: boolean;
+  /**
+   * Optional (additive). The curve the camera signal is in, for false colour / zebra / the
+   * peaking gate. `sourceColor` is only the display transform; absent = same as `sourceColor`.
+   */
+  signal?: 'rec709' | 'hlg' | 'dlog-m' | 'dlog' | 'dlog2';
+  /** Optional (additive). Live clip ceiling of `signal` on the 0…255 tap axis (D-Log2 247). Default 255. */
+  clipByte?: number;
+  /** Optional (additive). Input exposure in stops of `signal`, applied before the LUT. Default 0. */
+  lutExposureStops?: number;
+  /** Optional (additive). Top-to-bottom flip (MIRROR Vertical). Default false. */
+  mirrorVertical?: boolean;
 }
 
 export const defaultPictureEffects: PictureEffects = {

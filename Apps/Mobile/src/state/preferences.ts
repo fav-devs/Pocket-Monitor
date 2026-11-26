@@ -11,6 +11,8 @@ export interface OperatorPreferences {
   recordCountdown: boolean;
   confirmStopRecording: boolean;
   recordHaptics: boolean;
+  /** Show shutter as a cinema angle (180°) instead of a speed (1/50) in video. */
+  shutterUsesAngle?: boolean;
   // Display
   keepScreenAwake: boolean;
   hideChromeWhileRecording: boolean;
@@ -35,12 +37,30 @@ export interface OperatorPreferences {
   showLinkStats: boolean;
   /** Use the demo camera instead of real hardware (always on for web). */
   demoMode: boolean;
+  // Settings → Motion Control / Input (added by settings; optional with defaults)
+  /** Joystick sensitivity 1 (slowest) … 5 (reaches full speed soonest). 4 is the captured feel. */
+  stickSensitivity?: number;
+  /** On-screen stick size. */
+  stickSize?: 'small' | 'medium' | 'large';
+  stickInvertPan?: boolean;
+  /** Ignore small movements near the centre, percent of throw. */
+  stickDeadzonePercent?: number;
+  stickResponse?: 'standard' | 'linear' | 'fine';
+  /** Which gamepad analog stick pans and tilts. */
+  gamepadStick?: 'left' | 'right';
+  /** Volume buttons start/stop recording. */
+  remoteShutter?: boolean;
+  /** Rotate the feed with the phone. */
+  autoRotateFeed?: boolean;
+  /** Camera exposure meter at the picture's left edge in DISP 1. */
+  showEvMeter?: boolean;
 }
 
 export const defaultPreferences: OperatorPreferences = {
   recordCountdown: false,
   confirmStopRecording: false,
   recordHaptics: true,
+  shutterUsesAngle: false,
   keepScreenAwake: true,
   hideChromeWhileRecording: false,
   showRecordingBorder: true,
@@ -58,6 +78,15 @@ export const defaultPreferences: OperatorPreferences = {
   tapToFocus: false,
   showLinkStats: false,
   demoMode: false,
+  stickSensitivity: 4,
+  stickSize: 'medium',
+  stickInvertPan: false,
+  stickDeadzonePercent: 8,
+  stickResponse: 'standard',
+  gamepadStick: 'left',
+  remoteShutter: false,
+  autoRotateFeed: true,
+  showEvMeter: true,
 };
 
 interface PreferencesStore extends OperatorPreferences {
