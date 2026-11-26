@@ -385,15 +385,16 @@ impl BleTransport for BtleplugTransport {
                 io::Error::new(io::ErrorKind::NotFound, "write characteristic not found")
             })?;
 
+        // Never log payload bytes: pairing frames carry the camera's Wi-Fi credentials.
+        // The DUML command set/id (bytes 9 and 10) is enough to follow the exchange.
         blog!(
             log,
-            "write_frame  len={}  hex={}",
+            "write_frame  len={}  cmd={}",
             frame.len(),
-            frame
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<Vec<_>>()
-                .join(" ")
+            match (frame.get(9), frame.get(10)) {
+                (Some(set), Some(id)) => format!("{set:02x}/{id:02x}"),
+                _ => "-".to_string(),
+            }
         );
 
         let frame = frame.to_vec();
