@@ -60,7 +60,7 @@ struct OpcVideoCubeParser {
       if first.isLetter {
         // Keywords only before the table (TITLE may hold anything; skip it).
         let parts = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" })
-        switch parts.first.map(String.init)?.uppercased() {
+        switch parts.first.map({ String($0).uppercased() }) {
         case "LUT_3D_SIZE":
           guard parts.count >= 2, let n = Int(parts[1]) else { throw OpcVideoLutError.badNumber(line: lineNumber) }
           guard (2...129).contains(n) else { throw OpcVideoLutError.badSize(n) }

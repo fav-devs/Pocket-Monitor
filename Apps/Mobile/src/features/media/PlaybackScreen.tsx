@@ -185,7 +185,7 @@ export default function PlaybackScreen() {
   const timecode = prefs.playbackTimecode;
   const positionText = timecode ? timecodeLabel(position, item.fps) : durationLabel(position);
   const durationText = timecode ? timecodeLabel(engine.duration, item.fps) : durationLabel(engine.duration);
-  const source = localUri ? 'ORIGINAL · ON PHONE' : engine.kind === 'simulated' ? 'ON CAMERA · DEMO PICTURE' : 'PREVIEW · ON CAMERA';
+  const source = localUri ? 'ORIGINAL · ON PHONE' : !isVideo ? 'ON CAMERA' : engine.kind === 'simulated' ? 'ON CAMERA · DEMO PICTURE' : 'PREVIEW · ON CAMERA';
   const aspect = item.width && item.height ? item.width / item.height : 16 / 9;
   const rect = fit(aspect, canvas.width, canvas.height);
   const sideInset = Math.max(insets.left, insets.right);
@@ -484,7 +484,7 @@ export default function PlaybackScreen() {
       {deliveryPanelOpen ? <DeliveryQueuePanel onClose={() => setDeliveryPanel(false)} /> : null}
       {confirmDelete ? (
         <ConfirmDialog
-          title={burst.length > 1 ? `Delete this burst (${burst.length} photos) from the camera?` : 'Delete this clip from the camera?'}
+          title={burst.length > 1 ? `Delete this burst (${burst.length} photos) from the camera?` : isVideo ? 'Delete this clip from the camera?' : 'Delete this photo from the camera?'}
           message="This removes the file from the camera card."
           onCancel={() => setConfirmDelete(false)}
           onConfirm={() => void doDelete()}

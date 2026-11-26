@@ -158,7 +158,7 @@ export function clipInfoRows(item: CameraMediaItem, extra: { source: string; rat
 /** `MonitorClipInfoPanel`. */
 export function ClipInfoPanel({ rows, onClose }: { rows: [string, string][]; onClose: () => void }) {
   return (
-    <View style={{ flex: 1, borderRadius: radius.lg, backgroundColor: colors.glassStrong, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
+    <View style={{ flex: 1, borderRadius: radius.lg, backgroundColor: 'rgba(26,27,28,0.96)', borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 14, paddingRight: 4, paddingTop: 4 }}>
         <View style={{ flex: 1 }}>
           <SectionHeader title="Clip info" />

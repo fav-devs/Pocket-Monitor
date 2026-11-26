@@ -280,14 +280,14 @@ export class WebPictureRenderer {
     gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
   }
 
   /** The finished readback (top-down RGBA rows), or null while the GPU is still busy. */
   pollSample(): { width: number; height: number; rgba: Uint8Array } | null {
     const gl = this.gl;
     if (!this.fence || !this.pbo) return null;
-    const status = gl.clientWaitSync(this.fence, 0, 0);
-    if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;
+    if (gl.getSyncParameter(this.fence, gl.SYNC_STATUS) !== gl.SIGNALED) return null;
     gl.deleteSync(this.fence);
     this.fence = null;
     const { w, h } = this.sample;

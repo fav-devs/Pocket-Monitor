@@ -33,7 +33,8 @@ class OpcDatalinkModule : Module(), OpcDatalinkSession.Listener {
   @JS("open")
   suspend fun openSession(sessionId: String, options: Map<String, Any?>) {
     sessions.remove(sessionId)?.let { old -> withContext(Dispatchers.IO) { old.close() } }
-    val poke = options["tcpPoke"] as? Map<*, *>
+    @Suppress("UNCHECKED_CAST")
+    val poke = options["tcpPoke"] as? Map<String, Any?>
     val session = OpcDatalinkSession(
       id = sessionId,
       host = options["host"] as? String ?: "192.168.2.1",
@@ -117,8 +118,12 @@ class OpcDatalinkModule : Module(), OpcDatalinkSession.Listener {
       is ByteArray -> value
       is List<*> -> ByteArray(value.size) { ((value[it] as? Number)?.toInt() ?: 0).toByte() }
       is Map<*, *> -> {
-        val n = value.size
-        ByteArray(n) { ((value[it.toString()] as? Number)?.toInt() ?: 0).toByte() }
+        val out = ByteArray(value.size)
+        for ((key, item) in value) {
+          val index = (key as? String)?.toIntOrNull() ?: continue
+          if (index in out.indices) out[index] = ((item as? Number)?.toInt() ?: 0).toByte()
+        }
+        out
       }
       else -> null
     }

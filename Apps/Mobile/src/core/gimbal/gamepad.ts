@@ -19,10 +19,13 @@ export type GamepadShoulder = 'left' | 'right';
 export type GamepadDpad = 'up' | 'down' | 'left' | 'right';
 export type GamepadGimbalStick = 'left' | 'right';
 
+const FACE: Record<GamepadFaceButton, GamepadOperatorAction> = { a: 'record', b: 'recenter', x: 'flip', y: 'track' };
+const DPAD: Record<GamepadDpad, GamepadOperatorAction> = { up: 'isoUp', down: 'isoDown', left: 'shutterOpen', right: 'shutterClose' };
+
 export const GamepadOperatorMap = {
-  face: (b: GamepadFaceButton): GamepadOperatorAction => ({ a: 'record', b: 'recenter', x: 'flip', y: 'track' }) as const satisfies Record<GamepadFaceButton, GamepadOperatorAction>)[b],
+  face: (b: GamepadFaceButton): GamepadOperatorAction => FACE[b],
   shoulder: (b: GamepadShoulder): GamepadOperatorAction => (b === 'left' ? 'zoomChipOut' : 'zoomChipIn'),
-  dpad: (d: GamepadDpad): GamepadOperatorAction => ({ up: 'isoUp', down: 'isoDown', left: 'shutterOpen', right: 'shutterClose' }) as const)[d],
+  dpad: (d: GamepadDpad): GamepadOperatorAction => DPAD[d],
 };
 
 export const GamepadGimbalSticks = {

@@ -195,6 +195,7 @@ class OpcVideoSession(val sessionId: String) : OpcVideoSink {
       releaseCodec()
       vps = null; sps = null; pps = null
       configuredSets = null
+      configureFailed = false
       awaitingKeyframe = true
     }
   }
@@ -212,17 +213,20 @@ class OpcVideoSession(val sessionId: String) : OpcVideoSink {
 
   private fun pump() {
     while (!closed) {
-      val au: Au
-      synchronized(pending) {
-        if (pending.isEmpty()) return
-        // Hold the AU until the codec has an input buffer, unless there is no codec yet.
-        if (codec != null && freeInputs.isEmpty()) return
-        au = pending.removeFirst()
-        if (forceKeyframeWait) {
-          forceKeyframeWait = false
-          awaitingKeyframe = true
+      val au: Au = synchronized(pending) {
+        when {
+          pending.isEmpty() -> null
+          // Hold the AU until the codec has an input buffer, unless there is no codec yet.
+          codec != null && freeInputs.isEmpty() -> null
+          else -> {
+            if (forceKeyframeWait) {
+              forceKeyframeWait = false
+              awaitingKeyframe = true
+            }
+            pending.removeFirst()
+          }
         }
-      }
+      } ?: return
       process(au)
     }
   }
@@ -244,14 +248,21 @@ class OpcVideoSession(val sessionId: String) : OpcVideoSink {
       if (OpcVideoAnnexB.isParameterSet(t, kind)) {
         val bytes = au.data.copyOfRange(nal.offset, nal.offset + nal.length)
         when {
-          kind == OpcVideoCodec.HEVC && t == 32 -> vps = bytes
-          (kind == OpcVideoCodec.HEVC && t == 33) || (kind == OpcVideoCodec.AVC && t == 7) -> {
-            sps = bytes
-            OpcVideoAnnexB.spsSize(bytes, 0, bytes.size, kind)?.let { (w, h) ->
-              if (width == 0 || height == 0) { width = w; height = h }
-            }
+          kind == OpcVideoCodec.HEVC && t == 32 -> {
+            if (vps?.contentEquals(bytes) != true) configureFailed = false
+            vps = bytes
           }
-          else -> pps = bytes
+          (kind == OpcVideoCodec.HEVC && t == 33) || (kind == OpcVideoCodec.AVC && t == 7) -> {
+            if (sps?.contentEquals(bytes) != true) {
+              configureFailed = false
+              OpcVideoAnnexB.spsSize(bytes, 0, bytes.size, kind)?.let { (w, h) -> width = w; height = h }
+            }
+            sps = bytes
+          }
+          else -> {
+            if (pps?.contentEquals(bytes) != true) configureFailed = false
+            pps = bytes
+          }
         }
         out.write(START); out.write(au.data, nal.offset, nal.length)
       } else if (OpcVideoAnnexB.isVcl(t, kind)) {

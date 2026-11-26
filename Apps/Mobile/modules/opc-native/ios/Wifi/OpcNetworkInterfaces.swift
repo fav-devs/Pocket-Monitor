@@ -18,7 +18,7 @@ enum OpcNetworkInterfaces {
     var cursor: UnsafeMutablePointer<ifaddrs>? = first
     while let ifa = cursor {
       defer { cursor = ifa.pointee.ifa_next }
-      let flags = Int32(ifa.pointee.ifa_flags)
+      let flags = Int32(truncatingIfNeeded: ifa.pointee.ifa_flags)
       guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0,
         let sa = ifa.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET)
       else { continue }

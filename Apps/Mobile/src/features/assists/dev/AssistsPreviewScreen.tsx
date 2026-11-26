@@ -64,7 +64,7 @@ export default function AssistsPreviewScreen() {
     <View style={{ flex: 1, backgroundColor: colors.canvas }}>
       <LivePicture source={{ kind: 'demo', scene }} resizeMode={fit} onPictureRect={setRect} />
       <AssistOverlays pictureRect={rect} context="live" obstacles={bar ? [bar] : []} />
-      <View pointerEvents="box-none" style={{ position: 'absolute', left: 12, bottom: 12 }} onLayout={(e) => { console.error("BAR", JSON.stringify(e.nativeEvent.layout)); setBar(e.nativeEvent.layout); }}>
+      <View pointerEvents="box-none" style={{ position: 'absolute', left: 12, bottom: 12 }} onLayout={(e) => setBar(e.nativeEvent.layout)}>
         <AssistBar orientation={portrait ? 'portrait' : 'landscape'} />
       </View>
       {params.dev !== '0' ? (
