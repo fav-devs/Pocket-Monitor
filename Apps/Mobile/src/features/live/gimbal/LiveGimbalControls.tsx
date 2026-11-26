@@ -170,7 +170,7 @@ export function GimbalLockChip({ onUnlock }: { onUnlock: () => void }) {
 
 function createStyles(colors: ThemeColors) {
   return {
-    circle: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.rail },
+    circle: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.pill },
     dim: { opacity: 0.4 },
     pressed: { opacity: 0.7 },
     stack: { gap: spacing.md },

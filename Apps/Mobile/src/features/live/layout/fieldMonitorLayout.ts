@@ -251,7 +251,10 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     const gaugeTopY = maxY(status) + 12;
     exposureGauge = rect(gaugeX, gaugeTopY, 34, clamp(assists.y - 12 - gaugeTopY, 90, 200));
     const dockWidth = Math.min(clamp(w * 0.42, 300, 400), stick.x - 12 - lead);
-    sheet = { dock: { left: lead, width: dockWidth, top: maxY(status) + 8, bottom }, topInset: 0 };
+    const dockTop = maxY(status) + 8;
+    // A tall window keeps the docked tray to about half its height; a phone gives it the column.
+    const dockBottom = Math.min(bottom, dockTop + Math.max(420, h * 0.55));
+    sheet = { dock: { left: lead, width: dockWidth, top: dockTop, bottom: dockBottom }, topInset: 0 };
   }
 
   // Gimbal cluster (CONTEXT.md): zoom stacks above the stick, trailing-aligned; the gimbal

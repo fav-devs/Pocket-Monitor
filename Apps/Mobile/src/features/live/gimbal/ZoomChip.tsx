@@ -88,7 +88,7 @@ export function ZoomChip({ size, disabled, onOpenDial }: { size: number; disable
 
 function createStyles(_colors: ThemeColors) {
   return {
-    chip: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.rail },
+    chip: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.pill },
     label: { fontFamily: fonts.bold, fontSize: 14, fontVariant: ['tabular-nums' as const] },
     dim: { opacity: 0.4 },
     pressed: { opacity: 0.7 },
