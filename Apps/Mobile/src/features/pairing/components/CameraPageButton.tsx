@@ -1,9 +1,14 @@
-import type { LucideIcon } from 'lucide-react-native';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
-import { MText, colors, withAlpha } from '@/theme';
-import { PressableScale } from '@/ui';
+import type { IconSvgElement } from '@hugeicons/react-native';
+import type { ComponentType } from 'react';
+import { Pressable, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Icon } from '@/components/icon';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 
-export const onAccentInk = '#08191F';
+/** Legacy ink for text on an accent fill; kept for callers that still import it. */
+export const onAccentInk = '#111111';
+
+/** A glyph component (older screens) or a Hugeicons icon. */
+type ButtonIcon = IconSvgElement | ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
 
 export interface CameraPageButtonProps {
   title: string;
@@ -11,7 +16,7 @@ export interface CameraPageButtonProps {
   primary?: boolean;
   destructive?: boolean;
   disabled?: boolean;
-  icon?: LucideIcon;
+  icon?: ButtonIcon;
   accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   /** Stretch to the container width. */
@@ -19,46 +24,74 @@ export interface CameraPageButtonProps {
   testID?: string;
 }
 
-/** The app's standard action button (`CameraPageButtonStyle`). Destructive uses record red. */
+/**
+ * A compact page action in the app's button style: ink when primary, a soft red well when
+ * destructive, a plain surface otherwise. Page CTAs use `Button size="lg"` instead.
+ */
 export function CameraPageButton({
   title,
   onPress,
   primary,
   destructive,
   disabled,
-  icon: Icon,
+  icon,
   accessibilityLabel,
   style,
   block,
   testID,
 }: CameraPageButtonProps) {
-  const fg = primary ? onAccentInk : destructive ? colors.recording : colors.secondary;
-  const bg = primary ? colors.accent : destructive ? withAlpha(colors.recording, 0.12) : 'rgba(255,255,255,0.06)';
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const fg = primary ? colors.inkForeground : destructive ? colors.destructive : colors.foreground;
   return (
-    <PressableScale
+    <Pressable
       testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={{ disabled: !!disabled }}
       onPress={onPress}
       disabled={disabled}
-      accessibilityLabel={accessibilityLabel ?? title}
-      style={[
-        {
-          minHeight: 44,
-          paddingHorizontal: 17,
-          borderRadius: 11,
-          backgroundColor: bg,
-          alignItems: 'center',
-          justifyContent: 'center',
-          alignSelf: block ? 'stretch' : 'auto',
-        },
+      style={({ pressed }) => [
+        styles.base,
+        primary ? styles.primary : destructive ? styles.destructive : styles.plain,
+        block && styles.block,
+        disabled && styles.disabled,
+        pressed && styles.pressed,
         style,
       ]}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-        {Icon ? <Icon size={14} color={fg} strokeWidth={2} /> : null}
-        <MText size={13} weight="semibold" color={fg} numberOfLines={1}>
+      <View style={styles.content}>
+        {icon ? <ButtonGlyph icon={icon} color={fg} /> : null}
+        <Text numberOfLines={1} style={[styles.label, { color: fg }]}>
           {title}
-        </MText>
+        </Text>
       </View>
-    </PressableScale>
+    </Pressable>
   );
+}
+
+function ButtonGlyph({ icon, color }: { icon: ButtonIcon; color: string }) {
+  if (Array.isArray(icon)) return <Icon icon={icon as IconSvgElement} size={16} color={color} strokeWidth={2} />;
+  const Glyph = icon as ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
+  return <Glyph size={15} color={color} strokeWidth={2} />;
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    base: {
+      minHeight: 44,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md - 2,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    primary: { backgroundColor: colors.ink },
+    destructive: { backgroundColor: colors.destructiveSoft },
+    plain: { backgroundColor: colors.surface },
+    block: { alignSelf: 'stretch' as const },
+    disabled: { opacity: 0.4 },
+    pressed: { opacity: 0.75 },
+    content: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm - 1 },
+    label: { fontFamily: fonts.semibold, fontSize: 14 },
+  };
 }

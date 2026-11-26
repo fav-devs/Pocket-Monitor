@@ -1,16 +1,25 @@
-import { useState } from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from 'lucide-react-native';
-import { MText, colors, radius, withAlpha } from '@/theme';
-import { PressableScale } from '@/ui';
+import { Fragment, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ArrowDown01Icon, ArrowLeft01Icon, ArrowRight01Icon, ArrowUp01Icon } from '@hugeicons/core-free-icons';
+import { Icon } from '@/components/icon';
+import { Squircle } from '@/components/squircle';
+import { fonts, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import { ASSIST_TITLES, hasConfiguration, useAssists, type AssistContext, type AssistTool } from '@/state/assists';
-import { AssistIcon } from './AssistIcon';
+import { ASSIST_CAPTIONS, AssistIcon } from './AssistIcon';
 import { AssistInspectorHost } from './AssistInspector';
 
-const CELL = 52;
-const GAP = 6;
-const PAD = 4;
-const ARROW = 27;
+const WELL = 44;
+const WELL_RADIUS = 15;
+const TOOL_WIDTH = 56;
+const ARROW = 28;
+const PAD = 6;
+
+/** The strip's sections when it is open (Settings → View Assists uses the same groups). */
+export const ASSIST_GROUPS: { title: string; tools: AssistTool[] }[] = [
+  { title: 'Picture', tools: ['LUT', 'PEAK', 'FALSE', 'ZEBRA', 'DE-SQ', 'MIRROR'] },
+  { title: 'Scopes & meters', tools: ['WAVE', 'PARADE', 'HISTO', 'VECTOR', 'LIGHTS', 'ND', 'EV', 'AUDIO'] },
+  { title: 'Framing', tools: ['GUIDES', 'GRID', 'CROSS', 'LEVEL'] },
+];
 
 export interface AssistBarProps {
   orientation: 'landscape' | 'portrait';
@@ -20,41 +29,40 @@ export interface AssistBarProps {
   locked?: boolean;
 }
 
-/** One tool cell (`MonitorAssistChip`): glyph over its chip label, accent when on. */
-export function AssistChip({ tool, on, onPress, onLongPress, size = CELL }: { tool: AssistTool; on: boolean; onPress: () => void; onLongPress?: () => void; size?: number }) {
-  const fg = on ? colors.accent : colors.muted;
+/**
+ * One tool (ai-cut's editor `Tool` over video): a 44pt squircle well, translucent white when off and white with a dark
+ * glyph when on, an 11pt caption under it and a primary dot between them while the tool is on.
+ */
+export function AssistChip({ tool, on, onPress, onLongPress }: { tool: AssistTool; on: boolean; onPress: () => void; onLongPress?: () => void; size?: number }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <PressableScale
+    <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={250}
+      accessibilityRole="button"
       accessibilityLabel={ASSIST_TITLES[tool]}
       accessibilityState={{ selected: on }}
       accessibilityHint={hasConfiguration(tool) ? 'Hold for options' : undefined}
-      style={{
-        width: size,
-        height: size,
-        borderRadius: radius.md,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 3,
-        backgroundColor: on ? withAlpha(colors.accent, 0.16) : 'transparent',
-        borderWidth: 1,
-        borderColor: on ? colors.accent : 'transparent',
-      }}
+      style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
     >
-      <AssistIcon tool={tool} size={21} color={fg} />
-      <MText size={8} weight="medium" tracking={0.9} color={fg} numberOfLines={1}>
-        {tool}
-      </MText>
-    </PressableScale>
+      <Squircle width={WELL} height={WELL} radius={WELL_RADIUS} color={on ? ON_WELL : OFF_WELL}>
+        <AssistIcon tool={tool} size={22} color={on ? ON_GLYPH : '#ffffff'} strokeWidth={on ? 2 : 1.7} />
+      </Squircle>
+      <View style={styles.caption}>
+        {on ? <View style={styles.dot} /> : null}
+        <Text numberOfLines={1} style={[styles.label, on && styles.labelOn]}>
+          {ASSIST_CAPTIONS[tool]}
+        </Text>
+      </View>
+    </Pressable>
   );
 }
 
 /**
- * View Assist palette (`MonitorAssistPalette`): collapsed shows the two most recently used tools
- * (one in portrait) beside an arrow; expanded is the whole catalog, two rows in landscape and a
- * column in portrait. Tap toggles, hold opens the tool's options.
+ * View Assist palette (`MonitorAssistPalette`) as an editor-toolbar strip over the picture. Closed it shows the two
+ * most recently used tools (one in portrait) beside an arrow; open it is every tool in its sections, a scrolling row
+ * in landscape and a column in portrait. Tap toggles, hold opens the tool's options.
  */
 export default function AssistBar({ orientation, context = 'live', locked }: AssistBarProps) {
   const [expanded, setExpanded] = useState(false);
@@ -64,6 +72,7 @@ export default function AssistBar({ orientation, context = 'live', locked }: Ass
   const moveChip = useAssists((s) => s.moveChip);
   const openInspector = useAssists((s) => s.openInspector);
   const { width: winW, height: winH } = useWindowDimensions();
+  const styles = useThemedStyles(createStyles);
   const portrait = orientation === 'portrait';
 
   const press = (t: AssistTool) => {
@@ -76,37 +85,35 @@ export default function AssistBar({ orientation, context = 'live', locked }: Ass
     openInspector(t, context);
   };
   const chip = (t: AssistTool) => <AssistChip key={t} tool={t} on={on[t]} onPress={() => press(t)} onLongPress={() => hold(t)} />;
+  const groups = ASSIST_GROUPS.map((g, i) => (
+    <Fragment key={g.title}>
+      {i > 0 ? <View style={portrait ? styles.dividerH : styles.dividerV} /> : null}
+      {g.tools.map(chip)}
+    </Fragment>
+  ));
 
-  const Arrow = portrait ? (expanded ? ChevronDown : ChevronUp) : expanded ? ChevronLeft : ChevronRight;
+  const arrowIcon = portrait ? (expanded ? ArrowDown01Icon : ArrowUp01Icon) : expanded ? ArrowLeft01Icon : ArrowRight01Icon;
   const arrow = (
-    <PressableScale
+    <Pressable
       onPress={() => setExpanded((e) => !e)}
+      accessibilityRole="button"
       accessibilityLabel={expanded ? 'Collapse view assists' : 'Show all view assists'}
-      style={portrait ? { height: 31, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' } : { width: ARROW, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' }}
+      hitSlop={portrait ? { left: 8, right: 8 } : { top: 8, bottom: 8 }}
+      style={({ pressed }) => [portrait ? styles.arrowPortrait : styles.arrowLandscape, pressed && styles.pressed]}
     >
-      <Arrow size={16} color={colors.muted} strokeWidth={2} />
-    </PressableScale>
+      <Icon icon={arrowIcon} size={18} color="#ffffff" strokeWidth={2} />
+    </Pressable>
   );
-
   const favorites = order.slice(0, portrait ? 1 : 2);
-  const columns = Math.ceil(order.length / 2);
-  const plate = {
-    backgroundColor: colors.glassStrong,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: PAD,
-  };
 
   let body;
   if (portrait) {
-    const maxH = winH * 0.62;
     body = (
-      <View style={[plate, { width: CELL + 8, alignItems: 'center' }]}>
+      <View style={[styles.plate, styles.column]}>
         {arrow}
         {expanded ? (
-          <ScrollView style={{ maxHeight: maxH - 35 }} contentContainerStyle={{ gap: GAP }} showsVerticalScrollIndicator={false}>
-            {order.map(chip)}
+          <ScrollView style={{ maxHeight: winH * 0.62 - ARROW }} contentContainerStyle={styles.columnContent} showsVerticalScrollIndicator={false}>
+            {groups}
           </ScrollView>
         ) : (
           favorites.map(chip)
@@ -114,21 +121,14 @@ export default function AssistBar({ orientation, context = 'live', locked }: Ass
       </View>
     );
   } else {
-    const maxW = winW - 160;
     body = (
-      <View style={[plate, { flexDirection: 'row', gap: GAP, alignItems: 'center' }]}>
+      <View style={[styles.plate, styles.row]}>
         {expanded ? (
-          <ScrollView horizontal style={{ maxWidth: Math.max(CELL, maxW - ARROW) }} showsHorizontalScrollIndicator={false}>
-            <View style={{ gap: GAP }}>
-              {[0, 1].map((row) => (
-                <View key={row} style={{ flexDirection: 'row', gap: GAP }}>
-                  {order.slice(row * columns, (row + 1) * columns).map(chip)}
-                </View>
-              ))}
-            </View>
+          <ScrollView horizontal style={{ maxWidth: Math.max(TOOL_WIDTH, winW - 160 - ARROW) }} contentContainerStyle={styles.rowContent} showsHorizontalScrollIndicator={false}>
+            {groups}
           </ScrollView>
         ) : (
-          <View style={{ gap: GAP }}>{favorites.map(chip)}</View>
+          <View style={styles.rowContent}>{favorites.map(chip)}</View>
         )}
         {arrow}
       </View>
@@ -140,4 +140,30 @@ export default function AssistBar({ orientation, context = 'live', locked }: Ass
       <AssistInspectorHost />
     </View>
   );
+}
+
+const OFF_WELL = 'rgba(255,255,255,0.18)';
+const ON_WELL = '#ffffff';
+const ON_GLYPH = '#111111';
+const shadow = { textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 };
+
+// On-video chrome: always dark, whatever the system theme.
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+  plate: { backgroundColor: 'rgba(0,0,0,0.32)', borderRadius: 22, borderCurve: 'continuous', padding: PAD },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  rowContent: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  column: { alignItems: 'center', width: TOOL_WIDTH + PAD * 2 },
+  columnContent: { alignItems: 'center', gap: 10, paddingBottom: 2 },
+  tool: { alignItems: 'center', gap: 6, width: TOOL_WIDTH, paddingTop: 2 },
+  caption: { alignItems: 'center' },
+  dot: { position: 'absolute', top: -5, width: 4, height: 4, borderRadius: 2, backgroundColor: colors.primary },
+  label: { fontFamily: fonts.medium, fontSize: 11, lineHeight: 13, textAlign: 'center', color: 'rgba(255,255,255,0.78)', ...shadow },
+  labelOn: { color: '#ffffff' },
+  pressed: { opacity: 0.65 },
+  arrowLandscape: { width: ARROW, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  arrowPortrait: { height: ARROW, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  dividerV: { width: 1, height: 36, marginHorizontal: 8, backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'center', marginBottom: 18 },
+  dividerH: { height: 1, width: 36, backgroundColor: 'rgba(255,255,255,0.18)' },
+  });
 }

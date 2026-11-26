@@ -1,12 +1,13 @@
+import { Activity01Icon, Camera01Icon, Link04Icon, SignalFull02Icon, Video01Icon, Wifi01Icon } from '@hugeicons/core-free-icons';
 import { useCamera } from '@/camera';
 import { modelDisplayName } from '@/camera/defaults';
 import { connectionPhaseLabel, linkHealthScore, pathLabel } from '@/features/pairing/presentation';
 import { useSavedCameras } from '@/state/savedCameras';
-import { CardColumns, FullWidth } from '../components/CardColumns';
+import { SettingsRow } from '@/components/settings-ui';
 import { LinkHealthScale } from '../components/LinkHealthScale';
-import { SettingsCard, SettingsRow, SwitchRow, ValueRow, ValueText } from '../components/SettingsControls';
+import { Group, SwitchRow, ValueRow } from '../components/ui';
 import { usePref } from '../components/usePref';
-import { SettingsCopy } from '../copy';
+import { SettingsCopy, SettingsRowCopy } from '../copy';
 
 function transportLabel(transport: string, live: boolean): string {
   if (!live) return 'Not connected';
@@ -27,7 +28,7 @@ function transportLabel(transport: string, live: boolean): string {
 }
 
 /** Link: health, connection facts, saved camera network paths (`MonitorConnectionSettings`). */
-export function ConnectionSection({ width }: { width: number }) {
+export function ConnectionSection() {
   const connection = useCamera((s) => s.connection);
   const identity = useCamera((s) => s.identity);
   const saved = useSavedCameras((s) => s.cameras);
@@ -37,44 +38,55 @@ export function ConnectionSection({ width }: { width: number }) {
   const caption =
     score === null
       ? 'No camera connected'
-      : `${connection.videoFps} fps · ${(connection.videoKbps / 1000).toFixed(1)} Mbit/s · ${Math.round(connection.lastFrameAgeMs)} ms frame age · score ${score}`;
+      : `${connection.videoFps} fps · ${(connection.videoKbps / 1000).toFixed(1)} Mbit/s · ${Math.round(connection.lastFrameAgeMs)} ms frame age`;
+  const ssid = identity?.ssid && live ? identity.ssid : null;
+  const stream = live && connection.streamWidth
+    ? `${connection.streamWidth}×${connection.streamHeight} ${connection.streamCodec?.toUpperCase() ?? ''}`.trim()
+    : null;
 
   return (
-    <CardColumns width={width}>
-      <FullWidth key="health">
+    <>
+      <Group label="Link health" note={SettingsCopy.linkHealthHelp}>
         <LinkHealthScale caption={caption} score={score} />
-      </FullWidth>
-      <SettingsCard key="connection" title="Connection">
-        <ValueRow divider={false} title="Current Transport" help={SettingsCopy.currentTransport} value={transportLabel(connection.transport, live)} />
-        <ValueRow title="Phase" help={SettingsCopy.phaseHelp} value={connectionPhaseLabel(connection.phase)} />
-        {identity?.ssid && live ? <ValueRow title="Camera Wi-Fi" help={SettingsCopy.networkHelp} value={identity.ssid} /> : null}
-        {live && connection.streamWidth ? (
-          <ValueRow
-            title="Live stream"
-            value={`${connection.streamWidth}×${connection.streamHeight} ${connection.streamCodec?.toUpperCase() ?? ''}`.trim()}
-          />
-        ) : null}
-        {live ? <ValueRow title="Signal" value={`${connection.signalBars} of 4`} /> : null}
-      </SettingsCard>
-      <SettingsCard key="saved" title="Your cameras">
+      </Group>
+      <Group label="Connection" note={SettingsCopy.currentTransport}>
+        <ValueRow icon={Link04Icon} title="Transport" value={transportLabel(connection.transport, live)} />
+        <ValueRow
+          icon={Activity01Icon}
+          title="Phase"
+          subtitle={SettingsCopy.phaseHelp}
+          value={connectionPhaseLabel(connection.phase)}
+          last={!live}
+        />
+        {ssid ? <ValueRow icon={Wifi01Icon} title="Camera Wi-Fi" subtitle={SettingsCopy.networkHelp} value={ssid} /> : null}
+        {stream ? <ValueRow icon={Video01Icon} title="Live stream" value={stream} /> : null}
+        {live ? <ValueRow icon={SignalFull02Icon} title="Signal" value={`${connection.signalBars} of 4`} last /> : null}
+      </Group>
+      <Group label="Your cameras" note={SettingsRowCopy.savedHelp}>
         {saved.length === 0 ? (
-          <ValueRow divider={false} title="Saved" help={SettingsCopy.savedHelp} value="None" />
+          <ValueRow icon={Camera01Icon} title="Saved" value="None" last />
         ) : (
           saved.map((camera, i) => (
             <SettingsRow
               key={camera.id}
-              divider={i > 0}
+              icon={Camera01Icon}
               title={camera.name}
-              help={`${modelDisplayName(camera.model)} · ${pathLabel(camera.path)}. ${SettingsCopy.savedHelp}`}
-            >
-              <ValueText value={pathLabel(camera.path)} />
-            </SettingsRow>
+              subtitle={`${modelDisplayName(camera.model)} · ${pathLabel(camera.path)}`}
+              last={i === saved.length - 1}
+            />
           ))
         )}
-      </SettingsCard>
-      <SettingsCard key="diagnostics" title="Live readouts">
-        <SwitchRow divider={false} title="Link stats" help={SettingsCopy.linkStats} value={linkStats} onChange={setLinkStats} />
-      </SettingsCard>
-    </CardColumns>
+      </Group>
+      <Group label="Live readouts">
+        <SwitchRow
+          icon={Activity01Icon}
+          title="Link stats"
+          subtitle={SettingsRowCopy.linkStats}
+          value={linkStats}
+          onChange={setLinkStats}
+          last
+        />
+      </Group>
+    </>
   );
 }

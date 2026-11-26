@@ -119,7 +119,7 @@ export const setupOrder: SetupKind[] = ['softap', 'station', 'hotspot'];
 
 export const SetupChooserText = {
   title: 'How should this camera connect?',
-  footer: 'Camera Wi-Fi stays available. Switch setups from the camera’s chips at any time.',
+  footer: 'Camera Wi-Fi stays available. Switch setups from the camera’s options on Cameras at any time.',
 } as const;
 
 export const NetworkSetupCopy = {

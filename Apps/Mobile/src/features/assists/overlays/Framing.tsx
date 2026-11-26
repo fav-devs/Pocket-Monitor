@@ -1,4 +1,4 @@
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import Svg, { Defs, Line, Mask, Rect, Text as SvgText } from 'react-native-svg';
 import {
   CROSSHAIR,
@@ -14,7 +14,7 @@ import {
   type GuideSafeAreas,
   type Rect as R,
 } from '@/core/media';
-import { MText, colors, withAlpha } from '@/theme';
+import { fonts } from '@/constants/theme';
 import { LevelBubble } from './Meters';
 
 /** Composition grid (`MonitorFeedGrid`). Coordinates are the overlay's own. */
@@ -27,6 +27,9 @@ export function GridOverlay({ feed, size, thirds, phi, diagonal }: { feed: R; si
     </Svg>
   );
 }
+
+/** Frame lines: white, stronger than the 35% grid so the frame reads first. */
+const GUIDE_LINE = 'rgba(255,255,255,0.7)';
 
 /** Aspect frame lines, optional mask outside them, action / title safe (`MonitorAspectGuideFrames`). */
 export function GuidesOverlay({ feed, size, selected, mask, safe }: { feed: R; size: { width: number; height: number }; selected: GuideAspect[]; mask: boolean; safe: GuideSafeAreas }) {
@@ -55,22 +58,20 @@ export function GuidesOverlay({ feed, size, selected, mask, safe }: { feed: R; s
           frames.map((f) => {
             const r = safeRect(f.rect, a.percent);
             return (
-              <Rect key={`${a.percent}${f.aspect}`} x={r.x} y={r.y} width={r.width} height={r.height} fill="none" stroke={withAlpha(colors.accent, a.opacity)} strokeWidth={1} strokeDasharray={a.dash} />
+              <Rect key={`${a.percent}${f.aspect}`} x={r.x} y={r.y} width={r.width} height={r.height} fill="none" stroke={`rgba(255,255,255,${a.opacity * 0.75})`} strokeWidth={1} strokeDasharray={a.dash} />
             );
           }),
         )}
         {frames.map((f) => (
-          <Rect key={f.aspect} x={f.rect.x + 0.5} y={f.rect.y + 0.5} width={f.rect.width - 1} height={f.rect.height - 1} fill="none" stroke={withAlpha(colors.accent, 0.85)} strokeWidth={1} />
+          <Rect key={f.aspect} x={f.rect.x + 0.5} y={f.rect.y + 0.5} width={f.rect.width - 1} height={f.rect.height - 1} fill="none" stroke={GUIDE_LINE} strokeWidth={1} />
         ))}
       </Svg>
       {frames.map((f) => (
         <View
           key={f.aspect}
-          style={{ position: 'absolute', left: f.rect.x + 8, top: f.rect.y + 5, backgroundColor: 'rgba(0,0,0,0.42)', borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 }}
+          style={{ position: 'absolute', left: f.rect.x + 8, top: f.rect.y + 6, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}
         >
-          <MText size={10} weight="bold" tracking={1.2} color={colors.accent}>
-            {f.aspect}
-          </MText>
+          <Text style={{ fontFamily: fonts.semibold, fontSize: 11, color: '#ffffff' }}>{f.aspect}</Text>
         </View>
       ))}
     </View>
@@ -90,7 +91,7 @@ export function CrosshairOverlay({ feed }: { feed: R }) {
   );
 }
 
-const GOOD = 'rgb(46,199,107)';
+const GOOD = '#22c55e';
 
 function Gauge({ rect, axis, value }: { rect: R; axis: 'horizontal' | 'vertical'; value: number | null }) {
   const vertical = axis === 'vertical';
@@ -131,7 +132,7 @@ function Gauge({ rect, axis, value }: { rect: R; axis: 'horizontal' | 'vertical'
               return <Line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} stroke={tint} strokeWidth={2} strokeLinecap="round" />;
             })()
           : null}
-        <SvgText x={rect.width / 2} y={10} fill={tint} fontSize={10} fontWeight="600" textAnchor="middle">
+        <SvgText x={rect.width / 2} y={10} fill={tint} fontSize={10} fontFamily={fonts.semibold} textAnchor="middle">
           {levelLabel(value)}
         </SvgText>
       </Svg>
@@ -158,9 +159,7 @@ export function LevelOverlay({ feed, roll, pitch, portrait }: { feed: R; roll: n
       <Gauge rect={frames.roll} axis="horizontal" value={roll} />
       {roll == null ? (
         <View pointerEvents="none" style={{ position: 'absolute', left: frames.roll.x, width: frames.roll.width, top: frames.roll.y + frames.roll.height + 1, alignItems: 'center' }}>
-          <MText size={8} weight="medium" color={colors.muted}>
-            No level data
-          </MText>
+          <Text style={{ fontFamily: fonts.medium, fontSize: 11, color: 'rgba(255,255,255,0.8)', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 }}>No level data</Text>
         </View>
       ) : null}
       {frames.tilt.height > 0 ? <Gauge rect={frames.tilt} axis="vertical" value={pitch} /> : null}

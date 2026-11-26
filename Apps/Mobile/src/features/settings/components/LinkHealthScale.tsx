@@ -1,76 +1,65 @@
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { linkBandForScore } from '@/features/pairing/presentation';
-import { MText, colors, linkHealthColor, withAlpha } from '@/theme';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { tint } from './feedback';
+
+type Band = 'poor' | 'watch' | 'stable';
+
+const bandTitle: Record<Band, string> = { poor: 'Poor', watch: 'Watch', stable: 'Stable' };
 
 /**
- * The host-resolved link score as a 12-dash scale with a band marker (`MonitorLinkHealthScale`).
- * A null score draws the empty scale for "no camera connected".
+ * The host-resolved link score as a 12-dash scale with the band named (`MonitorLinkHealthScale`). A null score draws
+ * the empty scale for "no camera connected". Sits inside a settings group card.
  */
-export function LinkHealthScale({ title = 'Link Health', caption, score }: { title?: string; caption: string; score: number | null }) {
+export function LinkHealthScale({ caption, score }: { caption: string; score: number | null }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const band = score === null ? null : linkBandForScore(score);
+  const bandColor = (b: Band) => (b === 'poor' ? colors.destructive : b === 'watch' ? colors.warning : colors.success);
   const lit = band === 'poor' ? 4 : band === 'watch' ? 8 : band === 'stable' ? 12 : 0;
-  const slot = band === 'poor' ? 0 : band === 'watch' ? 1 : band === 'stable' ? 2 : -1;
-  const bandColor = band ? linkHealthColor(band) : colors.faint;
   const dash = (i: number) => {
-    if (i >= lit) return withAlpha(colors.faint, 0.5);
-    if (i < 4) return withAlpha(colors.linkPoor, 0.8);
-    if (i < 8) return withAlpha(colors.linkWatch, 0.85);
-    return withAlpha(colors.linkStable, 0.9);
+    if (i >= lit) return colors.surfaceStrong;
+    return bandColor(i < 4 ? 'poor' : i < 8 ? 'watch' : 'stable');
   };
-  const legend = (name: string, sub: string, align: 'flex-start' | 'center' | 'flex-end') => (
-    <View style={{ flex: 1, flexDirection: 'row', gap: 4, justifyContent: align }}>
-      <MText size={10} weight="semibold" color={colors.muted}>
-        {name}
-      </MText>
-      <MText size={9} mono color={colors.faint}>
-        {sub}
-      </MText>
-    </View>
-  );
   return (
-    <View
-      accessible
-      accessibilityLabel={`${title}: ${band ? band : 'no link'}. ${caption}`}
-      style={{ padding: 13, gap: 9, borderRadius: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }}
-    >
-      <MText size={13} weight="semibold">
-        {title}
-      </MText>
-      <MText size={11.5} weight="medium" mono color={colors.muted}>
-        {caption}
-      </MText>
-      <View style={{ flexDirection: 'row', height: 19 }}>
-        {[0, 1, 2].map((s) => (
-          <View key={s} style={{ flex: 1, alignItems: 'center' }}>
-            {s === slot && band ? (
-              <View
-                style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 2,
-                  borderRadius: 999,
-                  backgroundColor: withAlpha(bandColor, 0.12),
-                  borderWidth: 1,
-                  borderColor: bandColor,
-                }}
-              >
-                <MText size={9.5} weight="bold" tracking={0.5} color={bandColor}>
-                  {band.toUpperCase()}
-                </MText>
-              </View>
-            ) : null}
+    <View accessible accessibilityLabel={`Link health: ${band ? bandTitle[band] : 'no link'}. ${caption}`} style={styles.card}>
+      <View style={styles.head}>
+        <Text style={styles.state}>{band ? bandTitle[band] : 'No link'}</Text>
+        {band && score !== null ? (
+          <View style={[styles.pill, { backgroundColor: tint(bandColor(band), 0.14) }]}>
+            <Text style={[styles.pillText, { color: bandColor(band) }]}>{score}</Text>
           </View>
-        ))}
+        ) : null}
       </View>
-      <View style={{ flexDirection: 'row', gap: 3 }}>
+      <Text style={styles.caption}>{caption}</Text>
+      <View style={styles.dashes}>
         {Array.from({ length: 12 }, (_, i) => (
-          <View key={i} style={{ flex: 1, height: 6, borderRadius: 2, backgroundColor: dash(i) }} />
+          <View key={i} style={[styles.dash, { backgroundColor: dash(i) }]} />
         ))}
       </View>
-      <View style={{ flexDirection: 'row' }}>
-        {legend('Poor', '<50', 'flex-start')}
-        {legend('Watch', '50-79', 'center')}
-        {legend('Stable', '80+', 'flex-end')}
+      <View style={styles.legend}>
+        <Text style={[styles.legendText, band === 'poor' && styles.legendOn]}>Poor &lt;50</Text>
+        <Text style={[styles.legendText, styles.centre, band === 'watch' && styles.legendOn]}>Watch 50–79</Text>
+        <Text style={[styles.legendText, styles.end, band === 'stable' && styles.legendOn]}>Stable 80+</Text>
       </View>
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    card: { padding: spacing.md, gap: 10 },
+    head: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm },
+    state: { flex: 1, fontFamily: fonts.semibold, fontSize: 20, letterSpacing: -0.4, color: colors.foreground },
+    pill: { borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 3 },
+    pillText: { fontFamily: fonts.semibold, fontSize: 12, fontVariant: ['tabular-nums' as const] },
+    caption: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, fontVariant: ['tabular-nums' as const] },
+    dashes: { flexDirection: 'row' as const, gap: 4, marginTop: 2 },
+    dash: { flex: 1, height: 6, borderRadius: 3 },
+    legend: { flexDirection: 'row' as const },
+    legendText: { flex: 1, fontFamily: fonts.medium, fontSize: 11, color: colors.mutedForeground },
+    legendOn: { color: colors.foreground, fontFamily: fonts.semibold },
+    centre: { textAlign: 'center' as const },
+    end: { textAlign: 'right' as const },
+  };
 }

@@ -1,139 +1,108 @@
-import { Camera, Gauge, Signal, Smartphone, Zap } from 'lucide-react-native';
-import { useState, type ReactNode } from 'react';
-import { Pressable, View } from 'react-native';
-import { useCamera } from '@/camera';
-import { MText, colors, linkHealthColor, withAlpha } from '@/theme';
+import {
+  BatteryCharging01Icon,
+  BatteryEmptyIcon,
+  BatteryFullIcon,
+  BatteryLowIcon,
+  BatteryMedium01Icon,
+  DashboardSpeed01Icon,
+  SmartPhone01Icon,
+} from '@hugeicons/core-free-icons';
+import { useState } from 'react';
+import { View } from 'react-native';
+import { useCamera, type LinkHealthBand } from '@/camera';
+import { Icon } from '@/components/icon';
+import { type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { DASH } from '../format';
+import { PillText, VideoPill, onVideo } from '../chrome/primitives';
 
-const PILL_W = 40;
-const PILL_H = 18;
+export function linkTint(colors: ThemeColors, band: LinkHealthBand) {
+  return band === 'poor' ? colors.destructive : band === 'watch' ? colors.warning : colors.success;
+}
 
-function GaugeBars({ filled, count = 4, tint }: { filled: number; count?: number; tint: string }) {
+/** Battery text colour: white normally, amber at 20 %, red at 5 %. */
+export function batteryTint(colors: ThemeColors, percent: number | null): string {
+  if (percent == null) return onVideo.ink;
+  if (percent <= 5) return colors.destructive;
+  if (percent <= 20) return colors.warning;
+  return onVideo.ink;
+}
+
+function GaugeBars({ filled, tint }: { filled: number; tint: string }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <View style={{ flexDirection: 'row', gap: 2, alignItems: 'center' }}>
-      {Array.from({ length: count }, (_, i) => (
-        <View
-          key={i}
-          style={{ width: 4, height: 9, borderRadius: 1, backgroundColor: i < filled ? tint : withAlpha('#FFFFFF', 0.18) }}
-        />
+    <View style={styles.bars}>
+      {[0, 1, 2, 3].map((i) => (
+        <View key={i} style={[styles.bar, { height: 4 + i * 2.5, backgroundColor: i < filled ? tint : onVideo.inkFaint }]} />
       ))}
     </View>
   );
 }
 
-/** `MonitorTelemetryPill`: icon, then an outlined capsule with bars or a value. */
-function TelemetryGauge({
-  icon,
-  tint,
-  children,
-  label,
-  onPress,
-}: {
-  icon: ReactNode;
-  tint: string;
-  children: ReactNode;
-  label: string;
-  onPress?: () => void;
-}) {
-  const body = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 20 }}>
-      <View style={{ width: 12, alignItems: 'center' }}>{icon}</View>
-      <View
-        style={{
-          width: PILL_W,
-          height: PILL_H,
-          borderRadius: 5,
-          borderWidth: 1.2,
-          borderColor: withAlpha(tint.startsWith('#') ? tint : '#FFFFFF', 0.9),
-          backgroundColor: 'rgba(0,0,0,0.35)',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {children}
-      </View>
-    </View>
-  );
-  if (!onPress) {
-    return (
-      <View accessibilityLabel={label} accessible>
-        {body}
-      </View>
-    );
-  }
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} hitSlop={12}>
-      {body}
-    </Pressable>
-  );
-}
-
-export function batteryTint(percent: number | null): string {
-  if (percent == null) return colors.text;
-  if (percent <= 5) return colors.recording;
-  if (percent <= 20) return colors.linkWatch;
-  return colors.linkStable;
-}
-
-/** Signal bars tapping to the measured feed frame rate. Colour follows the link band. */
+/** Signal bars; tap shows the measured feed frame rate. Colour follows the link band. */
 export function LinkGauge() {
+  const { colors } = useTheme();
   const conn = useCamera((s) => s.connection);
   const [showsFps, setShowsFps] = useState(false);
-  const tint = linkHealthColor(conn.linkBand);
+  const tint = linkTint(colors, conn.linkBand);
   return (
-    <TelemetryGauge
+    <VideoPill
       label={showsFps ? `Feed ${conn.videoFps} frames per second` : `Signal ${conn.signalBars} of 4 bars`}
       onPress={() => setShowsFps((v) => !v)}
-      tint={tint}
-      icon={showsFps ? <Gauge size={11} color={colors.secondary} /> : <Signal size={11} color={colors.secondary} />}
     >
       {showsFps ? (
-        <MText size={10} weight="semibold" mono color={tint}>
-          {conn.videoFps > 0 ? `${conn.videoFps}fps` : DASH}
-        </MText>
+        <>
+          <Icon icon={DashboardSpeed01Icon} size={14} color={onVideo.ink} />
+          <PillText mono color={tint}>
+            {conn.videoFps > 0 ? `${conn.videoFps} fps` : DASH}
+          </PillText>
+        </>
       ) : (
         <GaugeBars filled={conn.signalBars} tint={tint} />
       )}
-    </TelemetryGauge>
+    </VideoPill>
   );
 }
 
 /** Phone battery. No battery API is wired yet, so the reading stays unknown, never 0 %. */
 export function PhoneBatteryGauge() {
   return (
-    <TelemetryGauge label="Phone battery unavailable" tint={colors.linkStable} icon={<Smartphone size={11} color={colors.secondary} />}>
-      <MText size={10} weight="semibold" color={colors.linkStable}>
-        {DASH}
-      </MText>
-    </TelemetryGauge>
+    <VideoPill label="Phone battery unavailable">
+      <Icon icon={SmartPhone01Icon} size={14} color={onVideo.ink} />
+      <PillText>{DASH}</PillText>
+    </VideoPill>
   );
 }
 
 export function CameraBatteryGauge() {
+  const { colors } = useTheme();
   const power = useCamera((s) => s.power);
   const known = power.batteryPercent >= 0 && power.batteryPercent <= 100;
   const pct = known ? power.batteryPercent : null;
-  const tint = batteryTint(pct);
+  const tint = batteryTint(colors, pct);
+  const icon = power.charging
+    ? BatteryCharging01Icon
+    : pct == null
+      ? BatteryEmptyIcon
+      : pct > 60
+        ? BatteryFullIcon
+        : pct > 20
+          ? BatteryMedium01Icon
+          : pct > 5
+            ? BatteryLowIcon
+            : BatteryEmptyIcon;
   return (
-    <TelemetryGauge
-      label={known ? `Camera battery ${pct} percent${power.charging ? ', charging' : ''}` : 'Camera battery unavailable'}
-      tint={tint}
-      icon={power.charging ? <Zap size={11} color={tint} /> : <Camera size={11} color={colors.secondary} />}
-    >
-      <MText size={10} weight="semibold" mono color={tint}>
+    <VideoPill label={known ? `Camera battery ${pct} percent${power.charging ? ', charging' : ''}` : 'Camera battery unavailable'}>
+      <Icon icon={icon} size={16} color={power.charging ? colors.success : tint} />
+      <PillText mono color={tint}>
         {known ? `${pct}%` : DASH}
-      </MText>
-    </TelemetryGauge>
+      </PillText>
+    </VideoPill>
   );
 }
 
-/** Landscape: link, phone and camera stacked in the leading rail. */
-export function LiveTelemetryStack() {
-  return (
-    <View style={{ gap: 4 }}>
-      <LinkGauge />
-      <PhoneBatteryGauge />
-      <CameraBatteryGauge />
-    </View>
-  );
+function createStyles(_colors: ThemeColors) {
+  return {
+    bars: { flexDirection: 'row' as const, alignItems: 'flex-end' as const, gap: 2, height: 12, paddingHorizontal: 1 },
+    bar: { width: 3, borderRadius: 1 },
+  };
 }

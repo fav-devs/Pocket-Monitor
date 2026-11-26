@@ -1,19 +1,24 @@
 import { useRef } from 'react';
-import { Pressable } from 'react-native';
+import { Pressable, Text } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
-import { MText, colors } from '@/theme';
+import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { isDigitalZoom, zoomLabel } from '../format';
 import { haptics } from '../haptics';
-import { readoutShadow } from '../chrome/primitives';
+import { onVideo } from '../chrome/primitives';
+import { useLiveUi } from '../liveUiStore';
 import { cancelZoomRamp, nextStop, zoomTapStops } from './zoom';
 
 const DOUBLE_TAP_MS = 260;
 
 /**
  * `ZoomChip`: tap cycles the camera's zoom stops; a double tap cycles the extended (long)
- * stops where the body has them; hold opens the continuous zoom dial. Amber past optical.
+ * stops where the body has them; hold opens the continuous zoom dial. A translucent circle
+ * like the rail's; accent while the dial is open, amber text past optical.
  */
 export function ZoomChip({ size, disabled, onOpenDial }: { size: number; disabled?: boolean; onOpenDial: () => void }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const dialOpen = useLiveUi((s) => s.zoomDialOpen);
   const session = useCameraSession();
   const zoom = useCamera((s) => s.zoom);
   const available = useCamera((s) => s.capabilities.zoom);
@@ -66,17 +71,26 @@ export function ZoomChip({ size, disabled, onOpenDial }: { size: number; disable
         onOpenDial();
       }}
       delayLongPress={380}
-      style={({ pressed }) => ({
-        width: size,
-        height: size,
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: disabled ? 0.4 : pressed ? 0.72 : 1,
-      })}
+      style={({ pressed }) => [
+        styles.chip,
+        { width: size, height: size, borderRadius: size / 2 },
+        dialOpen && { backgroundColor: colors.accent },
+        disabled && styles.dim,
+        pressed && styles.pressed,
+      ]}
     >
-      <MText size={18} weight="bold" mono color={digital ? colors.digitalCrop : colors.text} style={readoutShadow} numberOfLines={1}>
+      <Text numberOfLines={1} style={[styles.label, { color: dialOpen ? onVideo.dark : digital ? colors.warning : onVideo.ink }]}>
         {zoomLabel(zoom.factor)}
-      </MText>
+      </Text>
     </Pressable>
   );
+}
+
+function createStyles(_colors: ThemeColors) {
+  return {
+    chip: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.rail },
+    label: { fontFamily: fonts.bold, fontSize: 14, fontVariant: ['tabular-nums' as const] },
+    dim: { opacity: 0.4 },
+    pressed: { opacity: 0.7 },
+  };
 }

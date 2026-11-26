@@ -1,66 +1,50 @@
-import { Crosshair, FlipHorizontal2, Lock, Minus, Move3d, Plus, RotateCcw, Ruler, X } from 'lucide-react-native';
-import { Pressable, ScrollView, View } from 'react-native';
+import {
+  FlipHorizontalIcon,
+  LockIcon,
+  Refresh01Icon,
+  Route01Icon,
+  RulerIcon,
+  Target02Icon,
+} from '@hugeicons/core-free-icons';
+import { Pressable, Text, View } from 'react-native';
 import { useCamera, useCameraSession, type GimbalSpeed } from '@/camera';
-import { MText, colors, radius, withAlpha } from '@/theme';
+import { ChipRow } from '@/components/field-section';
+import { Chip } from '@/components/chip';
+import { Icon } from '@/components/icon';
+import { SettingsRow } from '@/components/settings-ui';
+import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { usePreferences } from '@/state/preferences';
-import { FieldLabel, ModeBar, ToggleRow } from '../capture/controls';
+import { FieldLabel, ModeBar, StepperRow, ToggleRow, ToolWell } from '../capture/controls';
 import { GIMBAL_MODE_LABEL, GIMBAL_SPEED_LABEL, angleLabel } from '../format';
 import { haptics } from '../haptics';
 import { ZOOM_RAMP_CHOICES, rampLabel, useLiveUi, useZoomPresets } from '../liveUiStore';
-import { PanelSurface, readoutShadow } from '../chrome/primitives';
+import { onVideo } from '../chrome/primitives';
 
-/** `LiveGimbalButton`: zoom-sized crosshair leading of the zoom chip; toggles the sheet. */
+/** `LiveGimbalButton`: a zoom-sized translucent circle leading of the zoom chip; toggles the sheet. */
 export function LiveGimbalButton({ size, disabled }: { size: number; disabled?: boolean }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const panel = useLiveUi((s) => s.gimbalPanel);
   const set = useLiveUi((s) => s.set);
   const running = useCamera((s) => s.gimbal.program.status === 'running' || s.gimbal.program.status === 'preparing');
+  const active = panel === 'sheet' || panel === 'editor' || running;
   return (
     <Pressable
       testID="monitor.gimbal.controls"
       accessibilityRole="button"
       accessibilityLabel="Gimbal controls"
+      accessibilityState={{ expanded: panel === 'sheet' || panel === 'editor', disabled }}
       disabled={disabled}
-      onPress={() => set({ gimbalPanel: panel === 'sheet' ? 'none' : 'sheet', captureSheet: null, zoomDialOpen: false })}
-      style={({ pressed }) => ({
-        width: size,
-        height: size,
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: disabled ? 0.4 : pressed ? 0.72 : 1,
-      })}
+      onPress={() => set({ gimbalPanel: panel === 'sheet' || panel === 'editor' ? 'none' : 'sheet', captureSheet: null, zoomDialOpen: false })}
+      style={({ pressed }) => [
+        styles.circle,
+        { width: size, height: size, borderRadius: size / 2 },
+        active && { backgroundColor: colors.accent },
+        disabled && styles.dim,
+        pressed && styles.pressed,
+      ]}
     >
-      <Crosshair size={20} color={panel !== 'none' || running ? colors.accent : colors.text} strokeWidth={1.8} style={readoutShadow} />
-    </Pressable>
-  );
-}
-
-function ActionTile({ icon: Icon, title, onPress, active }: { icon: typeof Crosshair; title: string; onPress: () => void; active?: boolean }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={title}
-      accessibilityState={{ selected: active }}
-      onPress={() => {
-        haptics.light();
-        onPress();
-      }}
-      style={({ pressed }) => ({
-        flex: 1,
-        minHeight: 56,
-        borderRadius: radius.md,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        backgroundColor: active ? withAlpha(colors.accent, 0.16) : withAlpha('#FFFFFF', 0.06),
-        borderWidth: 1,
-        borderColor: active ? withAlpha(colors.accent, 0.5) : colors.border,
-        opacity: pressed ? 0.72 : 1,
-      })}
-    >
-      <Icon size={18} color={active ? colors.accent : colors.secondary} />
-      <MText size={10} weight="semibold" color={active ? colors.accent : colors.secondary} numberOfLines={1}>
-        {title}
-      </MText>
+      <Icon icon={Target02Icon} size={20} color={active ? onVideo.dark : onVideo.ink} strokeWidth={1.8} />
     </Pressable>
   );
 }
@@ -68,19 +52,12 @@ function ActionTile({ icon: Icon, title, onPress, active }: { icon: typeof Cross
 const SPEEDS: GimbalSpeed[] = ['slow', 'normal', 'fast'];
 
 /**
- * `LiveGimbalControls` sheet: mode, speed, recenter/level/flip, all-axes lock, Direction Lock,
+ * `LiveGimbalControls` body: mode, speed, recenter/level/flip, all-axes lock, Direction Lock,
  * zoom preset ramp, and the Motion Control entry. Follow / speed / ramp / A·B·C live here, not
  * leading of the stick (CONTEXT.md Gimbal cluster).
  */
-export function LiveGimbalSheet({
-  width,
-  maxHeight,
-  notice,
-}: {
-  width: number;
-  maxHeight: number;
-  notice: (m: string, tone?: 'info' | 'warning' | 'error' | 'success') => void;
-}) {
+export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' | 'warning' | 'error' | 'success') => void }) {
+  const styles = useThemedStyles(createStyles);
   const { gimbal } = useCameraSession();
   const g = useCamera((s) => s.gimbal);
   const selfieFlip = useCamera((s) => s.capabilities.selfieFlip);
@@ -93,160 +70,124 @@ export function LiveGimbalSheet({
   const setCount = [program.a, program.b, program.c].filter(Boolean).length;
 
   return (
-    <PanelSurface radius={radius.lg} style={{ width, maxHeight }}>
-      <ScrollView bounces={false} contentContainerStyle={{ padding: 14, gap: 10 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ flex: 1 }}>
-            <MText size={13} weight="semibold" tracking={0.6} uppercase accessibilityRole="header">
-              Gimbal
-            </MText>
-            <MText size={11} mono color={colors.muted}>
-              Pan {angleLabel(g.yaw)} · Tilt {angleLabel(g.pitch)}
-            </MText>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-            onPress={() => set({ gimbalPanel: 'none' })}
-            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}
-          >
-            <X size={18} color={colors.secondary} />
-          </Pressable>
-        </View>
-
-        <FieldLabel>Mode</FieldLabel>
-        <ModeBar
-          tabs={g.modeOptions.map((m) => GIMBAL_MODE_LABEL[m])}
-          uppercase={false}
-          selected={Math.max(0, g.modeOptions.indexOf(g.mode))}
-          onSelect={(i) => gimbal.setMode(g.modeOptions[i]).catch(() => notice('Gimbal mode not changed', 'error'))}
+    <View style={styles.stack}>
+      <Text style={styles.pose}>
+        Pan {angleLabel(g.yaw)} · Tilt {angleLabel(g.pitch)}
+      </Text>
+      <View style={styles.tools}>
+        <ToolWell icon={Refresh01Icon} label={g.recentering ? 'Centring…' : 'Recenter'} onPress={() => gimbal.recenter().catch(() => {})} />
+        <ToolWell icon={RulerIcon} label="Level" onPress={() => gimbal.level().catch(() => {})} />
+        {selfieFlip ? (
+          <ToolWell
+            icon={FlipHorizontalIcon}
+            label={g.face === 'selfie' ? 'Selfie' : 'Flip'}
+            selected={g.face === 'selfie'}
+            onPress={() => gimbal.flip().catch(() => {})}
+          />
+        ) : null}
+        <ToolWell
+          icon={LockIcon}
+          label="Lock axes"
+          selected={g.lockedAllAxes}
+          onPress={() => {
+            const next = !g.lockedAllAxes;
+            gimbal.setLockedAllAxes(next);
+            notice(next ? 'Gimbal locked on all axes' : 'Gimbal unlocked');
+          }}
         />
+      </View>
+
+      <View style={styles.group}>
+        <FieldLabel>Mode</FieldLabel>
+        <ChipRow>
+          {g.modeOptions.map((m) => (
+            <Chip
+              key={m}
+              label={GIMBAL_MODE_LABEL[m]}
+              selected={m === g.mode}
+              onPress={() => {
+                haptics.selection();
+                gimbal.setMode(m).catch(() => notice('Gimbal mode not changed', 'error'));
+              }}
+            />
+          ))}
+        </ChipRow>
+      </View>
+      <View style={styles.group}>
         <FieldLabel>Speed</FieldLabel>
         <ModeBar
+          accessibilityLabel="Gimbal speed"
           tabs={SPEEDS.map((s) => GIMBAL_SPEED_LABEL[s])}
-          uppercase={false}
           selected={SPEEDS.indexOf(g.speed)}
           onSelect={(i) => gimbal.setSpeed(SPEEDS[i]).catch(() => {})}
         />
+      </View>
 
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <ActionTile icon={RotateCcw} title={g.recentering ? 'Centring…' : 'Recenter'} onPress={() => gimbal.recenter().catch(() => {})} />
-          <ActionTile icon={Ruler} title="Level" onPress={() => gimbal.level().catch(() => {})} />
-          {selfieFlip ? (
-            <ActionTile
-              icon={FlipHorizontal2}
-              title={g.face === 'selfie' ? 'Selfie' : 'Flip'}
-              active={g.face === 'selfie'}
-              onPress={() => gimbal.flip().catch(() => {})}
-            />
-          ) : null}
-          <ActionTile
-            icon={Lock}
-            title="Lock axes"
-            active={g.lockedAllAxes}
-            onPress={() => {
-              const next = !g.lockedAllAxes;
-              gimbal.setLockedAllAxes(next);
-              notice(next ? 'Gimbal locked on all axes' : 'Gimbal unlocked');
-            }}
-          />
-        </View>
-
-        <ToggleRow
-          title="Direction Lock"
-          detail="The stick moves one axis at a time"
-          value={directionLock}
-          onChange={(v) => setPref('directionLock', v)}
+      <View>
+        <ToggleRow title="Direction Lock" detail="The stick moves one axis at a time" value={directionLock} onChange={(v) => setPref('directionLock', v)} />
+        <StepperRow
+          title="Ramp"
+          detail="Zoom preset travel time"
+          value={rampLabel(rampSeconds)}
+          minusLabel="Shorter ramp"
+          plusLabel="Longer ramp"
+          minusDisabled={rampIndex <= 0}
+          plusDisabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
+          onMinus={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
+          onPlus={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
         />
+      </View>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 44 }}>
-          <View style={{ flex: 1 }}>
-            <MText size={13} weight="medium">
-              Ramp
-            </MText>
-            <MText size={11} color={colors.muted}>
-              Zoom preset travel time
-            </MText>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Shorter ramp"
-            disabled={rampIndex <= 0}
-            onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
-            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: rampIndex <= 0 ? 0.35 : 1 }}
-          >
-            <Minus size={16} color={colors.secondary} />
-          </Pressable>
-          <MText size={13} weight="semibold" mono style={{ minWidth: 44, textAlign: 'center' }}>
-            {rampLabel(rampSeconds)}
-          </MText>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Longer ramp"
-            disabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
-            onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
-            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Plus size={16} color={colors.secondary} />
-          </Pressable>
-        </View>
-
-        <Pressable
-          testID="monitor.gimbal.motion"
-          accessibilityRole="button"
-          accessibilityLabel="Motion Control"
+      <View testID="monitor.gimbal.motion" style={styles.motionRow}>
+        <SettingsRow
+          icon={Route01Icon}
+          title="Motion Control"
+          subtitle={setCount === 0 ? 'Repeatable A → B → C pan and tilt' : `${setCount} point${setCount === 1 ? '' : 's'} set`}
+          chevron
+          last
           onPress={() => set({ gimbalPanel: 'editor' })}
-          style={({ pressed }) => ({
-            minHeight: 48,
-            borderRadius: radius.md,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            paddingHorizontal: 12,
-            backgroundColor: withAlpha(colors.accent, 0.14),
-            borderWidth: 1,
-            borderColor: withAlpha(colors.accent, 0.4),
-            opacity: pressed ? 0.72 : 1,
-          })}
-        >
-          <Move3d size={18} color={colors.accent} />
-          <View style={{ flex: 1 }}>
-            <MText size={13} weight="semibold" color={colors.accent}>
-              Motion Control
-            </MText>
-            <MText size={11} color={colors.muted}>
-              {setCount === 0 ? 'Repeatable A → B → C pan and tilt' : `${setCount} point${setCount === 1 ? '' : 's'} set`}
-            </MText>
-          </View>
-        </Pressable>
-      </ScrollView>
-    </PanelSurface>
+        />
+      </View>
+    </View>
   );
 }
 
 /** All-axes lock chip beside the stick: latched hold, toasts, never a camera SET. */
 export function GimbalLockChip({ onUnlock }: { onUnlock: () => void }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Gimbal locked. Tap to unlock."
       onPress={onUnlock}
-      hitSlop={8}
-      style={({ pressed }) => ({
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: 9,
-        height: 28,
-        borderRadius: 14,
-        backgroundColor: withAlpha(colors.accent, 0.85),
-        opacity: pressed ? 0.72 : 1,
-      })}
+      hitSlop={10}
+      style={({ pressed }) => [styles.lockChip, pressed && styles.pressed]}
     >
-      <Lock size={12} color="#FFFFFF" />
-      <MText size={11} weight="semibold">
-        Locked
-      </MText>
+      <Icon icon={LockIcon} size={13} color={onVideo.dark} strokeWidth={2} />
+      <Text style={styles.lockChipText}>Locked</Text>
     </Pressable>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    circle: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.rail },
+    dim: { opacity: 0.4 },
+    pressed: { opacity: 0.7 },
+    stack: { gap: spacing.md },
+    group: { gap: spacing.sm },
+    pose: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground, fontVariant: ['tabular-nums' as const] },
+    tools: { flexDirection: 'row' as const, gap: spacing.xs },
+    motionRow: { borderRadius: 16, backgroundColor: colors.surface, paddingHorizontal: spacing.sm + 4, overflow: 'hidden' as const },
+    lockChip: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 5,
+      height: 28,
+      paddingHorizontal: 10,
+      borderRadius: 14,
+      backgroundColor: colors.accent,
+    },
+    lockChipText: { fontFamily: fonts.semibold, fontSize: 12, color: onVideo.dark },
+  };
 }

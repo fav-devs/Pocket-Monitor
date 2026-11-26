@@ -1,20 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Platform, View } from 'react-native';
+import { Animated, Platform, Text, View } from 'react-native';
 import type { CameraNotice } from '@/camera';
-import { MText, colors, radius } from '@/theme';
-
-const TONE: Record<CameraNotice['tone'], string> = {
-  info: colors.text,
-  success: colors.linkStable,
-  warning: colors.linkWatch,
-  error: colors.recording,
-};
+import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { onVideo } from './primitives';
 
 /**
- * `MonitorTransientNotice`: one glass capsule; a new notice replaces the visible one and
- * fades after 2.5 s. Never takes touches.
+ * `MonitorTransientNotice`: one ai-cut toast (`rgba(0,0,0,0.65)`, radius 12, 14 medium,
+ * centred); a coloured dot marks success / warning / error. A new notice replaces the visible
+ * one and fades after 2.5 s. Never takes touches.
  */
 export function MonitorTransientNotice({ notices, onExpire, top }: { notices: CameraNotice[]; onExpire: (id: string) => void; top: number }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const latest = notices[notices.length - 1];
   const [shown, setShown] = useState<CameraNotice | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
@@ -35,26 +32,33 @@ export function MonitorTransientNotice({ notices, onExpire, top }: { notices: Ca
   }, [latest, opacity]);
 
   if (!shown) return null;
+  const dot = shown.tone === 'success' ? colors.success : shown.tone === 'warning' ? colors.warning : shown.tone === 'error' ? colors.destructive : null;
   return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top, alignItems: 'center' }}>
-      <Animated.View
-        accessibilityLiveRegion="polite"
-        accessibilityRole="alert"
-        style={{
-          opacity,
-          paddingHorizontal: 14,
-          paddingVertical: 8,
-          borderRadius: radius.pill,
-          backgroundColor: colors.glassStrong,
-          borderWidth: 1,
-          borderColor: colors.border,
-          maxWidth: 420,
-        }}
-      >
-        <MText size={13} weight="medium" color={TONE[shown.tone]} numberOfLines={2} align="center">
+    <View pointerEvents="none" style={[styles.host, { top }]}>
+      <Animated.View accessibilityLiveRegion="polite" accessibilityRole="alert" style={[styles.toast, { opacity }]}>
+        {dot ? <View style={[styles.dot, { backgroundColor: dot }]} /> : null}
+        <Text numberOfLines={2} style={styles.text}>
           {shown.message}
-        </MText>
+        </Text>
       </Animated.View>
     </View>
   );
+}
+
+function createStyles(_colors: ThemeColors) {
+  return {
+    host: { position: 'absolute' as const, left: 32, right: 32, alignItems: 'center' as const },
+    toast: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 8,
+      maxWidth: 420,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 12,
+      backgroundColor: onVideo.notice,
+    },
+    dot: { width: 7, height: 7, borderRadius: 3.5 },
+    text: { flexShrink: 1, fontFamily: fonts.medium, fontSize: 14, color: onVideo.ink, textAlign: 'center' as const },
+  };
 }

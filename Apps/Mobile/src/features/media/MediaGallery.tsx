@@ -1,18 +1,17 @@
 import { useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
-import { Platform, RefreshControl, ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, RefreshControl, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { MediaLayout, MediaThumbnailSize } from '@/state/media';
-import { MText, colors } from '@/theme';
+import { fonts, radius, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { DragSelection } from './dragSelection';
 import type { GalleryEntry, GallerySection } from './gallery';
 import { layoutMasonry, uprightAspect } from './masonry';
-import { gridCaptionHeight, MediaCell } from './MediaCell';
+import { gridCaptionHeight, listRowHeight, MediaCell } from './MediaCell';
 import type { MediaTransfer } from './libraryStore';
 import { transferReadout } from './libraryStore';
 
-const gridSpacing = 10;
-const sectionHeaderHeight = 30;
-const sectionGap = 14;
-const listRowHeight = 59;
+const gridSpacing = 8;
+const sectionHeaderHeight = 36;
+const sectionGap = 12;
 
 export function columnsFor(size: MediaThumbnailSize, tablet: boolean, wide: boolean): number {
   const base = size === 'small' ? (tablet ? 5 : 3) : size === 'medium' ? (tablet ? 4 : 2) : tablet ? 2 : 1;
@@ -63,6 +62,8 @@ export interface MediaGalleryProps {
  * hold a card, then drag; or, while selecting, drag sideways across cards.
  */
 export function MediaGallery(p: MediaGalleryProps) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [width, setWidth] = useState(0);
   const [viewport, setViewport] = useState(600);
   const [windowTop, setWindowTop] = useState(0);
@@ -74,7 +75,7 @@ export function MediaGallery(p: MediaGalleryProps) {
   const drag = useRef<DragSelection | null>(null);
 
   const columns = columnsFor(p.thumbnailSize, p.tablet, p.wide);
-  const { placed, headers, height, order } = useMemo(() => {
+  const { placed, headers, height, order, firsts, lasts } = useMemo(() => {
     const placed: Placed[] = [];
     const headers: PlacedHeader[] = [];
     let y = 0;
@@ -99,13 +100,15 @@ export function MediaGallery(p: MediaGalleryProps) {
         y += m.height + sectionGap;
       } else {
         section.entries.forEach((entry, i) => {
-          placed.push({ entry, x: 0, y: y + i * (listRowHeight + 1), width, height: listRowHeight, aspect: 16 / 9 });
+          placed.push({ entry, x: 0, y: y + i * listRowHeight, width, height: listRowHeight, aspect: 16 / 9 });
         });
-        y += section.entries.length * (listRowHeight + 1) + sectionGap;
+        y += section.entries.length * listRowHeight + sectionGap;
       }
     }
     const order = p.sections.flatMap((s) => s.entries.map((e) => e.id));
-    return { placed, headers, height: Math.max(0, y - sectionGap), order };
+    const firsts = new Set(p.sections.map((s) => s.entries[0]?.id));
+    const lasts = new Set(p.sections.map((s) => s.entries[s.entries.length - 1]?.id));
+    return { placed, headers, height: Math.max(0, y - sectionGap), order, firsts, lasts };
   }, [p.sections, p.layout, columns, width]);
 
   // Only realize cards near the viewport (large cards hold thousands of clips).
@@ -208,7 +211,7 @@ export function MediaGallery(p: MediaGalleryProps) {
           if (bucket !== windowTop) setWindowTop(bucket);
         }}
         onScrollBeginDrag={measureOrigin}
-        refreshControl={p.onRefresh ? <RefreshControl refreshing={p.refreshing} onRefresh={p.onRefresh} tintColor={colors.accent} /> : undefined}
+        refreshControl={p.onRefresh ? <RefreshControl refreshing={p.refreshing} onRefresh={p.onRefresh} tintColor={colors.mutedForeground} colors={[colors.primary]} /> : undefined}
         contentContainerStyle={{ paddingBottom: p.bottomInset ?? 12, flexGrow: 1 }}
       >
         {empty ? (
@@ -223,13 +226,9 @@ export function MediaGallery(p: MediaGalleryProps) {
             style={{ height, width: '100%' }}
           >
             {headers.map((h) => (
-              <View key={h.key} style={{ position: 'absolute', left: 2, right: 0, top: h.y, height: sectionHeaderHeight, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <MText size={10} weight="bold" tracking={1.5} color={colors.secondary} uppercase>
-                  {h.title}
-                </MText>
-                <MText size={9.5} color={colors.faint} mono>
-                  {h.count}
-                </MText>
+              <View key={h.key} style={[styles.header, { top: h.y }]}>
+                <Text style={styles.headerTitle}>{h.title}</Text>
+                <Text style={styles.headerCount}>{h.count}</Text>
               </View>
             ))}
             {p.layout === 'list'
@@ -239,7 +238,7 @@ export function MediaGallery(p: MediaGalleryProps) {
                   return (
                     <View
                       key={`bg-${s.key}`}
-                      style={{ position: 'absolute', left: 0, right: 0, top: first.y, height: s.entries.length * (listRowHeight + 1) - 1, borderRadius: 12, backgroundColor: colors.surface }}
+                      style={[styles.listCard, { top: first.y, height: s.entries.length * listRowHeight }]}
                     />
                   );
                 })
@@ -261,6 +260,8 @@ export function MediaGallery(p: MediaGalleryProps) {
                       transferCaption={transferReadout(t, showRate)}
                       transferFraction={t ? t.fraction : null}
                       onPhone={!!p.localFiles[c.entry.id]}
+                      first={firsts.has(c.entry.id)}
+                      last={lasts.has(c.entry.id)}
                       onOpen={guard(p.onOpen)}
                       onSelect={guard(p.onSelect)}
                       onBeginSelection={(id) => {
@@ -277,4 +278,21 @@ export function MediaGallery(p: MediaGalleryProps) {
       </ScrollView>
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    header: {
+      position: 'absolute' as const,
+      left: 2,
+      right: 0,
+      height: sectionHeaderHeight,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 8,
+    },
+    headerTitle: { fontFamily: fonts.semibold, fontSize: 15, color: colors.foreground },
+    headerCount: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground },
+    listCard: { position: 'absolute' as const, left: 0, right: 0, borderRadius: radius.lg, backgroundColor: colors.surface, overflow: 'hidden' as const },
+  };
 }

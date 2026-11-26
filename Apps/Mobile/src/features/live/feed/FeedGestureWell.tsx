@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { View } from 'react-native';
 import { GestureDetector, PointerType, usePanGesture } from 'react-native-gesture-handler';
 import type { PicturePoint, PictureRect } from '@/camera';
-import { colors } from '@/theme';
+import { onVideo } from '../chrome/primitives';
 import type { Rect } from '../layout/fieldMonitorLayout';
 
 /** `LiveFeedFocusGesture` constants. */
@@ -113,7 +113,8 @@ export function FeedGestureWell({ picture, enabled, handlers }: { picture: Rect;
               height: Math.abs(draft.y1 - draft.y0),
               borderWidth: 1.5,
               borderStyle: 'dashed',
-              borderColor: colors.text,
+              borderColor: onVideo.ink,
+              borderRadius: 4,
               backgroundColor: 'rgba(255,255,255,0.06)',
             }}
           />

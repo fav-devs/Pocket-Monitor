@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import Svg, { Circle, Defs, Line, LinearGradient, Rect, Stop, Text as SvgText } from 'react-native-svg';
-import { Sun } from 'lucide-react-native';
+import { Sun03Icon } from '@hugeicons/core-free-icons';
+import { Icon } from '@/components/icon';
+import { fonts, useTheme } from '@/constants/theme';
 import {
   AUDIO_GUIDE_MARKS,
   AUDIO_RED_FROM_DB,
@@ -25,10 +27,13 @@ import {
   type TrafficLightsReading,
 } from '@/core/media';
 import type { AudioState } from '@/camera/types';
-import { MText, colors } from '@/theme';
-import { SCOPE_PANEL_FILL } from '../scopes/ScopePlate';
+import { SCOPE_PANEL_FILL, plateStyles } from '../scopes/ScopePlate';
 
-const plate = { backgroundColor: SCOPE_PANEL_FILL, borderRadius: 10, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' as const };
+const plate = plateStyles.plate;
+/** On-video text: white with the camera screen's soft shadow. */
+const videoText = { textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 } as const;
+const GOOD = '#22c55e';
+const WARM = '#fedb2e';
 const METER_RGB = { red: 'rgb(255,92,82)', green: 'rgb(86,235,132)', blue: 'rgb(96,158,255)' };
 
 // ───────────────────────────── Traffic lights (goal posts) ─────────────────────────────
@@ -42,9 +47,7 @@ export function TrafficLightsMeter({ reading, width, height }: { reading: Traffi
   const channels = (['red', 'green', 'blue'] as const).map((k) => ({ k, ch: reading?.[k] ?? { clip: false, crush: false, level: 0.5 } }));
   return (
     <View pointerEvents="none" style={[plate, { width, height, alignItems: 'center', paddingTop: 8 * ui }]}>
-      <MText size={8.5 * ui} weight="bold" color="rgba(255,255,255,0.58)">
-        TL
-      </MText>
+      <Text style={{ fontFamily: fonts.semibold, fontSize: 10 * ui, color: 'rgba(255,255,255,0.88)' }}>Lights</Text>
       <View style={{ flexDirection: 'row', gap: 6 * ui, marginTop: 6 * ui }}>
         {channels.map(({ k, ch }) => {
           const shown = trafficChannelDisplay(ch.level);
@@ -80,11 +83,11 @@ export function NDChip({ reading, notation, width, height }: { reading: NDSugges
       pointerEvents="none"
       accessibilityLabel="ND Suggestion"
       accessibilityValue={{ text: reading ? `${ndChipLabel(reading, notation)}${reading.needsGlass ? '' : ', no ND'}` : 'waiting for picture' }}
-      style={{ width, height, borderRadius: height / 2, backgroundColor: SCOPE_PANEL_FILL, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 }}
+      style={{ width, height, borderRadius: height / 2, backgroundColor: SCOPE_PANEL_FILL, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 }}
     >
-      <MText size={Math.min(15, height * 0.5)} weight="bold" color={reading?.needsGlass ? colors.accent : colors.text} numberOfLines={1}>
+      <Text numberOfLines={1} style={{ fontFamily: fonts.semibold, fontSize: Math.min(13, height * 0.46), color: reading?.needsGlass ? WARM : '#ffffff' }}>
         {ndChipLabel(reading, notation)}
-      </MText>
+      </Text>
     </View>
   );
 }
@@ -99,22 +102,23 @@ export function EVMeter({ value, width, height }: { value: number | null; width:
   const y = value == null ? null : top + evMeterFraction(value) * span;
   return (
     <View pointerEvents="none" accessibilityLabel="EV Meter" accessibilityValue={{ text: value == null ? 'no reading' : evLabel(value) }} style={{ width, height }}>
-      <MText size={11} weight="semibold" mono numberOfLines={1} style={{ width: 48, textShadowColor: 'rgba(0,0,0,0.7)', textShadowRadius: 2 }}>
+      <Text numberOfLines={1} style={{ width: Math.max(width, 52), fontFamily: fonts.semibold, fontSize: 13, color: '#ffffff', ...videoText }}>
         {value == null ? '—' : evLabel(value)}
-      </MText>
+      </Text>
       <Svg width={width} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>
-        <SvgText x={width / 2} y={top - 3} fill="rgba(255,255,255,0.8)" fontSize={8} textAnchor="middle">
+        <SvgText x={width / 2} y={top - 4} fill="rgba(255,255,255,0.85)" fontSize={9} fontFamily={fonts.medium} textAnchor="middle">
           +{EV_METER_SPAN}
         </SvgText>
-        <SvgText x={width / 2} y={bottom + 10} fill="rgba(255,255,255,0.8)" fontSize={8} textAnchor="middle">
+        <SvgText x={width / 2} y={bottom + 11} fill="rgba(255,255,255,0.85)" fontSize={9} fontFamily={fonts.medium} textAnchor="middle">
           {`−${EV_METER_SPAN}`}
         </SvgText>
-        <Line x1={width / 2} x2={width / 2} y1={top} y2={bottom} stroke="rgba(255,255,255,0.55)" strokeWidth={1} />
-        <Line x1={width / 2 - 5} x2={width / 2 + 5} y1={top + span / 2} y2={top + span / 2} stroke="rgba(255,255,255,0.8)" strokeWidth={1} />
+        <Line x1={width / 2} x2={width / 2} y1={top} y2={bottom} stroke="rgba(0,0,0,0.35)" strokeWidth={3} strokeLinecap="round" />
+        <Line x1={width / 2} x2={width / 2} y1={top} y2={bottom} stroke="rgba(255,255,255,0.6)" strokeWidth={1} />
+        <Line x1={width / 2 - 6} x2={width / 2 + 6} y1={top + span / 2} y2={top + span / 2} stroke="rgba(255,255,255,0.9)" strokeWidth={1.5} strokeLinecap="round" />
       </Svg>
       {y != null ? (
-        <View style={{ position: 'absolute', left: width / 2 - 8, top: y - 8 }}>
-          <Sun size={16} color={Math.abs(value!) < 0.34 ? colors.linkStable : colors.text} strokeWidth={2} />
+        <View style={{ position: 'absolute', left: width / 2 - 9, top: y - 9, width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon icon={Sun03Icon} size={14} color={Math.abs(value!) < 0.34 ? GOOD : '#ffffff'} strokeWidth={2} />
         </View>
       ) : null}
     </View>
@@ -201,9 +205,9 @@ export function AudioMeter({ left, right, orientation, showDB, width, height }: 
               key={`${name}l`}
               x={vertical ? track.x + bar / 2 : 5}
               y={vertical ? height - 2 : track.y + bar / 2 + 3}
-              fill="rgba(255,255,255,0.58)"
-              fontSize={7.5}
-              fontWeight="bold"
+              fill="rgba(255,255,255,0.75)"
+              fontSize={8}
+              fontFamily={fonts.semibold}
               textAnchor="middle"
             >
               {name}
@@ -213,8 +217,9 @@ export function AudioMeter({ left, right, orientation, showDB, width, height }: 
                 key={`${name}d`}
                 x={vertical ? track.x + bar / 2 : width - 11}
                 y={vertical ? track.y + 9 : track.y + bar / 2 + 2.5}
-                fill="rgba(255,255,255,0.72)"
-                fontSize={6}
+                fill="rgba(255,255,255,0.8)"
+                fontSize={6.5}
+                fontFamily={fonts.medium}
                 textAnchor="middle"
               >
                 {audioLabel(level)}
@@ -231,31 +236,34 @@ export function AudioMeter({ left, right, orientation, showDB, width, height }: 
 
 export const FALSE_COLOR_LEGEND_SIZE = { width: 264, height: 52 };
 
-/** `MonitorFalseColorReference`: compact colour key over the live picture. */
+/** `MonitorFalseColorReference`: compact colour key over the live picture (dark plate), or themed in a sheet. */
 export function FalseColorLegend({ reference, inspector }: { reference: FalseColorReference; inspector?: boolean }) {
-  const w = inspector ? undefined : FALSE_COLOR_LEGEND_SIZE.width - 14;
+  const { colors } = useTheme();
+  const w = inspector ? undefined : FALSE_COLOR_LEGEND_SIZE.width - 18;
   const barH = inspector ? 14 : 8;
+  const labelStyle = inspector
+    ? { fontFamily: fonts.medium, fontSize: 10, color: colors.mutedForeground }
+    : { fontFamily: fonts.medium, fontSize: 8, color: 'rgba(255,255,255,0.75)' };
+  const labelH = inspector ? 13 : 10;
   return (
     <View
       pointerEvents="none"
       accessibilityLabel="False color reference key"
       style={
         inspector
-          ? { gap: 3 }
-          : [plate, { width: FALSE_COLOR_LEGEND_SIZE.width, height: FALSE_COLOR_LEGEND_SIZE.height, padding: 7, gap: 3, backgroundColor: 'rgba(17,18,19,0.78)', borderRadius: 12 }]
+          ? { gap: 5 }
+          : [plate, { width: FALSE_COLOR_LEGEND_SIZE.width, height: FALSE_COLOR_LEGEND_SIZE.height, paddingHorizontal: 9, paddingTop: 6, gap: 4, backgroundColor: 'rgba(0,0,0,0.6)' }]
       }
     >
       {!inspector ? (
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <MText size={8.5} weight="bold">
-            False Color
-          </MText>
-          <MText size={7.5} color={colors.secondary}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 14 }}>
+          <Text style={{ fontFamily: fonts.semibold, fontSize: 11, color: '#ffffff' }}>False color</Text>
+          <Text numberOfLines={1} style={{ fontFamily: fonts.medium, fontSize: 9.5, color: 'rgba(255,255,255,0.7)', flexShrink: 1, marginLeft: 8 }}>
             {reference.subtitle}
-          </MText>
+          </Text>
         </View>
       ) : null}
-      <View style={{ height: barH, width: w, borderRadius: 2, overflow: 'hidden' }}>
+      <View style={{ height: barH, width: w, borderRadius: inspector ? 5 : 3, overflow: 'hidden' }}>
         <Svg width="100%" height={barH}>
           <Defs>
             <LinearGradient id="fcNeutral" x1="0" y1="0" x2="1" y2="0">
@@ -277,19 +285,23 @@ export function FalseColorLegend({ reference, inspector }: { reference: FalseCol
         </Svg>
       </View>
       {reference.markers.length ? (
-        <View style={{ height: 9, width: w }}>
+        <View style={{ height: labelH, width: w }}>
           {reference.markers.map((m, i) => (
-            <MText key={i} size={inspector ? 7 : 6} color={colors.secondary} style={{ position: 'absolute', left: `${m.fraction * 100}%`, transform: [{ translateX: -8 }] }}>
+            <Text
+              key={i}
+              numberOfLines={1}
+              style={[labelStyle, { position: 'absolute', width: 32, textAlign: 'center', left: `${m.fraction * 100}%`, transform: [{ translateX: -16 }] }]}
+            >
               {m.label}
-            </MText>
+            </Text>
           ))}
         </View>
       ) : (
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: w }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: w, height: labelH }}>
           {reference.axisLabels.map((l) => (
-            <MText key={l} size={inspector ? 7 : 6} color={colors.secondary}>
+            <Text key={l} style={labelStyle}>
               {l}
-            </MText>
+            </Text>
           ))}
         </View>
       )}
@@ -304,7 +316,7 @@ export function LevelBubble({ x, y }: { x: number; y: number }) {
   const d = Math.hypot(x, y);
   const level = d < 0.6;
   const k = d > span ? span / d : 1;
-  const tint = level ? 'rgb(46,199,107)' : 'rgb(233,172,53)';
+  const tint = level ? GOOD : WARM;
   return (
     <Svg width={2 * r + 4} height={2 * r + 4}>
       <Circle cx={r + 2} cy={r + 2} r={r} stroke="rgba(255,255,255,0.22)" strokeWidth={2} fill="none" />

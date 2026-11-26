@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { DemoCameraSession } from './demo/DemoCameraSession';
-import type { CameraNotice } from './types';
+import type { CameraModelId, CameraNotice } from './types';
 import type { CameraSession, SessionEvent } from './session';
 import type { CameraState } from './types';
 
@@ -12,18 +12,92 @@ interface CameraContextValue {
 
 const CameraContext = createContext<CameraContextValue | null>(null);
 
+/** A fresh simulated camera (web preview, demo mode, "Try the demo camera"). */
+export function createDemoSession(model?: CameraModelId): CameraSession {
+  return new DemoCameraSession(model);
+}
+
 /**
- * Picks the initial session. The native session is registered by `src/camera/native` once it
- * exists; until then (and always on web) the app runs the demo camera.
+ * Picks the initial session. `src/camera/bootstrap.ts` registers the native factory on phone
+ * builds with the camera radios linked (and demo mode off); web and builds without the native
+ * module keep the demo camera.
  */
-let sessionFactory: () => CameraSession = () => new DemoCameraSession();
+let sessionFactory: () => CameraSession = () => createDemoSession();
 
 export function registerSessionFactory(factory: () => CameraSession) {
   sessionFactory = factory;
 }
 
+/** A session from the registered factory (what the app would start with now). */
+export function createDefaultSession(): CameraSession {
+  return sessionFactory();
+}
+
+// Out-of-tree switching (bootstrap follows the demo-mode preference; settings can too).
+type SwitchListener = (next: CameraSession) => void;
+const switchListeners = new Set<SwitchListener>();
+let pendingSession: CameraSession | null = null;
+let activeSession: CameraSession | null = null;
+
+/** The session the provider currently runs, or null before it mounts. */
+export function currentCameraSession(): CameraSession | null {
+  return activeSession ?? pendingSession;
+}
+
+/**
+ * Replace the running session from outside React (e.g. `replaceCameraSession(createNativeSession())`).
+ * The previous session is disconnected if it was connected. Before the provider mounts, the
+ * replacement becomes its initial session.
+ */
+export function replaceCameraSession(next: CameraSession): void {
+  if (switchListeners.size === 0) {
+    pendingSession = next;
+    return;
+  }
+  switchListeners.forEach((l) => l(next));
+}
+
+const IDLE_PHASES = new Set(['idle', 'disconnected', 'failed']);
+
+/** Stop a session that is being replaced so its radios, timers and native session close. */
+function retire(session: CameraSession) {
+  if (IDLE_PHASES.has(session.getState().connection.phase)) return;
+  session.disconnect().catch(() => {
+    // Retiring is best effort; the replacement does not depend on it.
+  });
+}
+
 export function CameraProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<CameraSession>(() => sessionFactory());
+  const [session, setSessionState] = useState<CameraSession>(() => {
+    const initial = pendingSession ?? sessionFactory();
+    pendingSession = null;
+    return initial;
+  });
+  const current = useRef(session);
+  current.current = session;
+  activeSession = session;
+
+  const setSession = useCallback((next: CameraSession) => {
+    const previous = current.current;
+    if (next === previous) return;
+    retire(previous);
+    current.current = next;
+    activeSession = next;
+    setSessionState(next);
+  }, []);
+
+  useEffect(() => {
+    switchListeners.add(setSession);
+    if (pendingSession) {
+      const next = pendingSession;
+      pendingSession = null;
+      setSession(next);
+    }
+    return () => {
+      switchListeners.delete(setSession);
+    };
+  }, [setSession]);
+
   return <CameraContext.Provider value={{ session, setSession }}>{children}</CameraContext.Provider>;
 }
 

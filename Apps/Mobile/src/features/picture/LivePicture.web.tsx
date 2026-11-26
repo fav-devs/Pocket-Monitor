@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
+import { Text, View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
 import { useCamera } from '@/camera';
-import { MText, colors } from '@/theme';
+import { fonts } from '@/constants/theme';
 import { usePictureEffects } from '@/state/assists';
 import { SAMPLE_INTERVAL_MS, clearFrameSample, hasSampleDemand, publishFrameSample, useLatest } from './frameSample';
 import { getLut, useEnsureLut, useLutVersion } from './lutLibrary';
@@ -108,9 +108,7 @@ export default function LivePicture({ source, resizeMode = 'fit', onPictureRect,
       />
       {failure ? (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 12, alignItems: 'center' }}>
-          <MText size={11} color={colors.muted}>
-            {failure}
-          </MText>
+          <Text style={{ fontFamily: fonts.medium, fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>{failure}</Text>
         </View>
       ) : null}
     </View>

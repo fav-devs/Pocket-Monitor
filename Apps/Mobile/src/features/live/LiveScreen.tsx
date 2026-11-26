@@ -28,15 +28,14 @@ import {
 import LivePicture from '@/features/picture/LivePicture';
 import { useAssists } from '@/state/assists';
 import { usePreferences } from '@/state/preferences';
-import { colors } from '@/theme';
+import { useTheme } from '@/constants/theme';
 import { CaptureControlBar, captureTileCount } from './capture/CaptureControlBar';
-import { CaptureSheetHost } from './capture/CaptureSheetHost';
 import { MonitorExposureGauge } from './capture/MonitorExposureGauge';
+import { LiveSheetHost } from './chrome/LiveSheetHost';
 import { MonitorTransientNotice } from './chrome/MonitorTransientNotice';
-import { Slot, rectStyle } from './chrome/primitives';
+import { Slot, onVideo, rectStyle } from './chrome/primitives';
 import { SessionRecoveryOverlay } from './chrome/SessionRecoveryOverlay';
 import {
-  LiveBackButton,
   LiveDispToggle,
   LiveLockButton,
   LiveMediaButton,
@@ -45,20 +44,18 @@ import {
 } from './chrome/SystemButtons';
 import { FeedGestureWell } from './feed/FeedGestureWell';
 import { MonitorTrackingOverlay } from './feed/MonitorTrackingOverlay';
-import { GimbalLockChip, LiveGimbalButton, LiveGimbalSheet } from './gimbal/LiveGimbalControls';
+import { GimbalLockChip, LiveGimbalButton } from './gimbal/LiveGimbalControls';
 import { LiveGimbalStick } from './gimbal/LiveGimbalStick';
-import { MonitorZoomDial } from './gimbal/MonitorZoomDial';
-import { MotionControlEditor, MotionPathOverlay, MotionRunPill } from './gimbal/MotionControl';
+import { MotionPathOverlay, MotionRunPill } from './gimbal/MotionControl';
 import { ZoomChip } from './gimbal/ZoomChip';
 import { cancelZoomRamp, stepStop } from './gimbal/zoom';
-import { computeFieldMonitorLayout, maxX, maxY } from './layout/fieldMonitorLayout';
+import { computeFieldMonitorLayout, maxY } from './layout/fieldMonitorLayout';
 import { useLiveUi } from './liveUiStore';
 import { LiveRecordButton, RecordCountdownOverlay } from './record/LiveRecordButton';
 import { MonitorRecordingBorder } from './record/MonitorRecordingBorder';
 import { StopConfirmSheet } from './record/StopConfirmSheet';
 import { useRecordControl } from './record/useRecordControl';
 import { LiveStatusChrome } from './status/LiveStatusChrome';
-import { LiveTelemetryStack } from './status/LiveTelemetry';
 
 const ASPECT: Record<string, number> = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:3': 4 / 3, '3:2': 3 / 2 };
 
@@ -81,14 +78,17 @@ function ShutterFlash({ trigger }: { trigger: number }) {
     opacity.setValue(0.7);
     Animated.timing(opacity, { toValue: 0, duration: 260, useNativeDriver: Platform.OS !== 'web' }).start();
   }, [trigger, opacity]);
-  return <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: '#FFFFFF', opacity }} />;
+  return <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: onVideo.ink, opacity }} />;
 }
 
 /**
- * The live field monitor (`MonitorOperatorLiveScreen`): full-bleed picture, assists, and the
- * operator chrome placed by `FieldMonitorLayout` in landscape and portrait.
+ * The live field monitor (`MonitorOperatorLiveScreen`) in the Sondr camera style: a black root
+ * with the picture in charge, status pills on top, a rail of circle buttons around the record
+ * ring, the capture readout strip and the gimbal cluster floating over it. Panels open in the
+ * shared preview Sheet so the picture stays visible.
  */
 export default function LiveScreen() {
+  const { colors } = useTheme();
   const session = useCameraSession();
   const router = useRouter();
   const params = useLocalSearchParams<{ demo?: string }>();
@@ -346,25 +346,21 @@ export default function LiveScreen() {
   const chromeShown = ui.disp === 'live' && !(prefs.hideChromeWhileRecording && recording);
   const locked = ui.locked;
   const chromeOpacity = Math.min(1, Math.max(0.3, prefs.chromeOpacity ?? 1));
-  const sysSize = layout.settings.width;
   const portrait = layout.portrait;
   const w = layout.viewport.width;
   const h = layout.viewport.height;
-  const panelWidth = Math.min(340, w - 28);
-  const topMargin = Math.max(8, insets.top + 8);
-  // Cluster panels: portrait stacks them above the zoom row; landscape parks them leading of
-  // the cluster, bottom-aligned with the stick, so they get the full height.
-  const panelRight = portrait ? Math.max(14, w - maxX(layout.stick)) : w - layout.stick.x + 8;
-  const panelBottomY = portrait ? layout.zoom.y - 8 : maxY(layout.stick);
+  const fill = { position: 'absolute' as const, left: 0, top: 0, right: 0, bottom: 0 };
+  const lockable = { ...fill, opacity: locked ? 0.4 : 1 };
+  const belowStatus = maxY(layout.status) + (portrait ? 12 : 8);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.canvas }}>
+    <View style={{ flex: 1, backgroundColor: colors.preview }}>
       <StatusBar hidden={Platform.OS !== 'web'} style="light" />
       {/* Picture */}
-      <View pointerEvents="none" style={[rectStyle(layout.picture), { backgroundColor: '#000', overflow: 'hidden' }]}>
+      <View pointerEvents="none" style={[rectStyle(layout.picture), { backgroundColor: colors.preview, overflow: 'hidden' }]}>
         <LivePicture source={session.video} resizeMode={prefs.pictureFit} onPictureRect={setDrawn} />
       </View>
-      <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
+      <View pointerEvents="box-none" style={fill}>
         <AssistOverlays pictureRect={pictureRect} context="live" />
       </View>
 
@@ -377,19 +373,11 @@ export default function LiveScreen() {
 
       {/* Operator chrome */}
       {chromeShown ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, opacity: chromeOpacity }}>
-          <View pointerEvents={locked ? 'none' : 'box-none'} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, opacity: locked ? 0.4 : 1 }}>
-            <LiveStatusChrome layout={layout} />
-            {!portrait ? (
-              <Slot rect={layout.gauges}>
-                <LiveTelemetryStack />
-              </Slot>
-            ) : null}
+        <View pointerEvents="box-none" style={[fill, { opacity: chromeOpacity }]}>
+          <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
+            <LiveStatusChrome layout={layout} onBack={exit} />
             <Slot rect={layout.exposureGauge} pointerEvents="none">
               <MonitorExposureGauge width={layout.exposureGauge.width} height={layout.exposureGauge.height} />
-            </Slot>
-            <Slot rect={layout.back}>
-              <LiveBackButton onPress={exit} />
             </Slot>
             <CaptureControlBar layout={layout} />
             <View pointerEvents="box-none" style={{ position: 'absolute', left: layout.assists.x, bottom: h - maxY(layout.assists) }}>
@@ -404,7 +392,7 @@ export default function LiveScreen() {
               </Slot>
             ) : null}
 
-            {/* Gimbal cluster: stick trailing-bottom, zoom above, controls button leading of zoom… */}
+            {/* Gimbal cluster: stick trailing-bottom, zoom above it, the controls button leading of zoom. */}
             <Slot rect={layout.zoom}>
               <ZoomChip size={layout.zoom.width} disabled={!live} onOpenDial={() => ui.set({ zoomDialOpen: true, captureSheet: null, gimbalPanel: 'none' })} />
             </Slot>
@@ -423,7 +411,7 @@ export default function LiveScreen() {
                   />
                 </Slot>
                 {lockedAllAxes ? (
-                  <View pointerEvents="box-none" style={{ position: 'absolute', right: w - layout.stick.x + 8, top: maxY(layout.stick) - 30 }}>
+                  <View pointerEvents="box-none" style={{ position: 'absolute', right: w - layout.stick.x + 8, top: maxY(layout.stick) - 28 }}>
                     <GimbalLockChip
                       onUnlock={() => {
                         session.gimbal.setLockedAllAxes(false);
@@ -436,69 +424,42 @@ export default function LiveScreen() {
             ) : null}
 
             <Slot rect={layout.settings}>
-              <LiveSettingsButton size={sysSize} onPress={() => router.push('/settings')} />
+              <LiveSettingsButton onPress={() => router.push('/settings')} />
             </Slot>
             <Slot rect={layout.media}>
-              <LiveMediaButton size={sysSize} onPress={() => router.push('/media')} />
+              <LiveMediaButton onPress={() => router.push('/media')} />
             </Slot>
           </View>
 
           {/* Lock stays reachable while locked. */}
           <Slot rect={layout.lock}>
-            <LiveLockButton size={sysSize} />
+            <LiveLockButton />
           </Slot>
         </View>
       ) : null}
 
       {/* DISP and record survive DISP 2. */}
-      <View pointerEvents={locked ? 'none' : 'box-none'} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, opacity: locked ? 0.4 : 1 }}>
+      <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
         <Slot rect={layout.display}>
-          <LiveDispToggle width={layout.display.width} height={layout.display.height} />
+          <LiveDispToggle />
         </Slot>
-        <Slot rect={layout.record}>
+        <Slot rect={layout.record} style={{ alignItems: 'center', justifyContent: 'center' }}>
           <LiveRecordButton
-            diameter={layout.record.width}
             onPress={() => record.toggle()}
             onHold={() => ui.set({ captureSheet: 'mode', gimbalPanel: 'none', zoomDialOpen: false })}
           />
         </Slot>
       </View>
 
-      {/* Floating panels */}
-      {chromeShown && ui.zoomDialOpen ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', right: panelRight, bottom: h - panelBottomY }}>
-          <MonitorZoomDial width={Math.min(300, w - 28)} onClose={() => ui.set({ zoomDialOpen: false })} />
-        </View>
-      ) : null}
-      {chromeShown && ui.gimbalPanel === 'sheet' ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', right: panelRight, bottom: h - panelBottomY }}>
-          <LiveGimbalSheet width={panelWidth} maxHeight={panelBottomY - topMargin} notice={stableNotice} />
-        </View>
-      ) : null}
-      {ui.gimbalPanel === 'editor' ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: 'absolute',
-            left: (w - panelWidth) / 2,
-            top: portrait ? maxY(layout.status) + 8 : topMargin,
-          }}
-        >
-          <MotionControlEditor
-            width={panelWidth}
-            maxHeight={(portrait ? panelBottomY : h - 8) - (portrait ? maxY(layout.status) + 8 : topMargin)}
-          />
-        </View>
-      ) : null}
       {ui.gimbalPanel === 'runPill' ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: portrait ? maxY(layout.status) + 8 : maxY(layout.status) + 4, alignItems: 'center' }}>
+        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: belowStatus, alignItems: 'center' }}>
           <MotionRunPill />
         </View>
       ) : null}
-      {chromeShown ? <CaptureSheetHost layout={layout} /> : null}
+      <LiveSheetHost layout={layout} chromeShown={chromeShown} notice={stableNotice} />
 
       {prefs.showRecordingBorder && recording ? <MonitorRecordingBorder /> : null}
-      <MonitorTransientNotice notices={notices} onExpire={dismissNotice} top={portrait ? maxY(layout.status) + 24 : maxY(layout.status) + 6} />
+      <MonitorTransientNotice notices={notices} onExpire={dismissNotice} top={ui.gimbalPanel === 'runPill' ? belowStatus + 52 : belowStatus} />
       <StopConfirmSheet onStop={record.commitStop} />
       {!live ? (
         <SessionRecoveryOverlay

@@ -1,15 +1,14 @@
+import { Database01Icon, Delete02Icon, Download01Icon, RefreshIcon, TestTube01Icon } from '@hugeicons/core-free-icons';
 import { Directory, Paths } from 'expo-file-system';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform } from 'react-native';
-import { useSavedCameras } from '@/state/savedCameras';
-import { usePreferences } from '@/state/preferences';
-import { colors } from '@/theme';
 import { deleteWifiPassword } from '@/features/pairing/credentials';
-import { ConfirmDialog } from '@/features/pairing/components/Dialogs';
-import { CardColumns } from '../components/CardColumns';
-import { ActionRow, CardCaption, SettingsCard, SettingsRow, SwitchRow, ValueRow, ActionPill } from '../components/SettingsControls';
+import { usePreferences } from '@/state/preferences';
+import { useSavedCameras } from '@/state/savedCameras';
+import { ConfirmSheet, type ConfirmRequest } from '../components/ConfirmSheet';
+import { ActionRow, Group, SwitchRow, ValueRow } from '../components/ui';
 import { usePref } from '../components/usePref';
-import { SettingsCopy } from '../copy';
+import { SettingsCopy, SettingsRowCopy } from '../copy';
 import { useSettingsLocal } from '../settingsStore';
 
 function formatBytes(bytes: number): string {
@@ -46,7 +45,7 @@ function clearCacheContents() {
 type Confirm = 'reset' | 'forget' | 'clear' | null;
 
 /** Storage & System: local cache, demo mode and resets (`MonitorCacheSettings`, System tab). */
-export function StorageSection({ width }: { width: number }) {
+export function StorageSection() {
   const cacheOriginals = useSettingsLocal((s) => s.cacheFullResolution);
   const setLocal = useSettingsLocal((s) => s.set);
   const resetLocal = useSettingsLocal((s) => s.reset);
@@ -55,8 +54,9 @@ export function StorageSection({ width }: { width: number }) {
   const [demo, setDemo] = usePref('demoMode');
   const [size, setSize] = useState<number | null>(null);
   const [clearing, setClearing] = useState(false);
-  const [summary, setSummary] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{ group: 'cache' | 'system'; text: string } | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
+  const web = Platform.OS === 'web';
 
   const refresh = useCallback(() => setSize(cacheSize()), []);
   useEffect(refresh, [refresh]);
@@ -71,71 +71,89 @@ export function StorageSection({ width }: { width: number }) {
       const after = cacheSize() ?? 0;
       setClearing(false);
       setSize(after);
-      setSummary(`Cleared ${formatBytes(Math.max(0, before - after))}.`);
+      setSummary({ group: 'cache', text: `Cleared ${formatBytes(Math.max(0, before - after))}.` });
     } else if (which === 'reset') {
       usePreferences.getState().reset();
       resetLocal();
-      setSummary('Operator settings reset to defaults.');
+      setSummary({ group: 'system', text: 'Operator settings reset to defaults.' });
     } else if (which === 'forget') {
       saved.forEach((c) => {
         removeCamera(c.id);
         if (c.path.ssid) deleteWifiPassword(c.id, c.path.ssid);
       });
-      setSummary('Saved cameras removed from this phone.');
+      setSummary({ group: 'system', text: 'Saved cameras removed from this phone.' });
     }
   };
 
+  const request: ConfirmRequest | null =
+    confirm === 'clear'
+      ? { title: 'Clear cache?', message: SettingsCopy.clearCache, confirmTitle: 'Clear', destructive: true }
+      : confirm === 'reset'
+        ? { title: 'Reset operator settings?', message: SettingsCopy.resetSettings, confirmTitle: 'Reset' }
+        : confirm === 'forget'
+          ? {
+              title: 'Forget all cameras?',
+              message: `This removes ${saved.length} saved ${saved.length === 1 ? 'camera' : 'cameras'} and their Wi-Fi passwords from this phone. You can pair them again later.`,
+              confirmTitle: 'Forget',
+              destructive: true,
+            }
+          : null;
+
   return (
     <>
-      <CardColumns width={width}>
-        <SettingsCard key="cache" title="Cache">
-          <SwitchRow
-            divider={false}
-            title="Full Resolution Caching"
-            help={SettingsCopy.cacheFullResolution}
-            value={cacheOriginals}
-            onChange={(v) => setLocal('cacheFullResolution', v)}
-          />
-          <ValueRow title="Local Media Cache" help={SettingsCopy.cacheScope} value={size === null ? (Platform.OS === 'web' ? 'Not on web' : '—') : formatBytes(size)} />
-          <SettingsRow title="Clear Cache" help={SettingsCopy.clearCache}>
-            <ActionPill
-              title={clearing ? 'Clearing…' : 'Clear'}
-              tint={colors.recording}
-              disabled={clearing || Platform.OS === 'web' || !size}
-              onPress={() => setConfirm('clear')}
-              accessibilityLabel="Clear cache"
-            />
-          </SettingsRow>
-          {summary ? <CardCaption>{summary}</CardCaption> : null}
-        </SettingsCard>
-        <SettingsCard key="system" title="System">
-          <SwitchRow divider={false} title="Demo camera" help={SettingsCopy.demoMode} value={demo || Platform.OS === 'web'} onChange={setDemo} disabled={Platform.OS === 'web'} />
-          <ActionRow title="Reset operator settings" help={SettingsCopy.resetSettings} action="Reset" onPress={() => setConfirm('reset')} />
-          <ActionRow
-            title="Forget all cameras"
-            help={SettingsCopy.forgetCameras}
-            action="Forget"
-            tint={colors.recording}
-            disabled={saved.length === 0}
-            onPress={() => setConfirm('forget')}
-          />
-        </SettingsCard>
-      </CardColumns>
-      <ConfirmDialog
-        visible={confirm !== null}
-        title={confirm === 'clear' ? 'Clear cache?' : confirm === 'reset' ? 'Reset operator settings?' : 'Forget all cameras?'}
-        message={
-          confirm === 'clear'
-            ? SettingsCopy.clearCache
-            : confirm === 'reset'
-              ? SettingsCopy.resetSettings
-              : `This removes ${saved.length} saved ${saved.length === 1 ? 'camera' : 'cameras'} and their Wi-Fi passwords from this phone. You can pair them again later.`
-        }
-        confirmTitle={confirm === 'clear' ? 'Clear' : confirm === 'reset' ? 'Reset' : 'Forget'}
-        destructive={confirm !== 'reset'}
-        onCancel={() => setConfirm(null)}
-        onConfirm={run}
-      />
+      <Group label="Cache" note={summary?.group === 'cache' ? summary.text : SettingsCopy.cacheFullResolution}>
+        <SwitchRow
+          icon={Download01Icon}
+          title="Full Resolution Caching"
+          subtitle={SettingsRowCopy.cacheFullResolution}
+          value={cacheOriginals}
+          onChange={(v) => setLocal('cacheFullResolution', v)}
+        />
+        <ValueRow
+          icon={Database01Icon}
+          title="Local Media Cache"
+          subtitle={SettingsRowCopy.cacheScope}
+          value={size === null ? (web ? 'Not on web' : '—') : formatBytes(size)}
+        />
+        <ActionRow
+          icon={Delete02Icon}
+          title="Clear Cache"
+          subtitle={SettingsRowCopy.clearCache}
+          action={clearing ? 'Clearing…' : 'Clear'}
+          destructive
+          disabled={clearing || web || !size}
+          onPress={() => setConfirm('clear')}
+          last
+        />
+      </Group>
+      <Group label="System" note={summary?.group === 'system' ? summary.text : web ? SettingsCopy.demoMode : undefined}>
+        <SwitchRow
+          icon={TestTube01Icon}
+          title="Demo camera"
+          subtitle={SettingsRowCopy.demoMode}
+          value={demo || web}
+          onChange={setDemo}
+          disabled={web}
+        />
+        <ActionRow
+          icon={RefreshIcon}
+          title="Reset operator settings"
+          subtitle={SettingsRowCopy.resetSettings}
+          action="Reset"
+          onPress={() => setConfirm('reset')}
+        />
+        <ActionRow
+          icon={Delete02Icon}
+          title="Forget all cameras"
+          subtitle={SettingsRowCopy.forgetCameras}
+          action="Forget"
+          destructive
+          disabled={saved.length === 0}
+          onPress={() => setConfirm('forget')}
+          last
+        />
+      </Group>
+      <ConfirmSheet request={request} onCancel={() => setConfirm(null)} onConfirm={run} />
     </>
   );
 }

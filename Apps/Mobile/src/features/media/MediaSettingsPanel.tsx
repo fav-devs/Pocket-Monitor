@@ -1,10 +1,41 @@
-import { CircleAlert, CircleCheck, Folder, LogOut } from 'lucide-react-native';
+import {
+  AlertCircleIcon,
+  ArrowUpDownIcon,
+  AudioWave01Icon,
+  Calendar03Icon,
+  ChartHistogramIcon,
+  CheckmarkCircle02Icon,
+  Clock01Icon,
+  CloudUploadIcon,
+  ColorsIcon,
+  FileVideoIcon,
+  Folder01Icon,
+  GridViewIcon,
+  Image01Icon,
+  Layers01Icon,
+  Logout01Icon,
+  PaintBoardIcon,
+  RefreshIcon,
+  RepeatIcon,
+  Share08Icon,
+  SmartPhone01Icon,
+  Tag01Icon,
+  Tick02Icon,
+  UserIcon,
+  VolumeMute02Icon,
+} from '@hugeicons/core-free-icons';
+import type { IconSvgElement } from '@hugeicons/react-native';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Platform, TextInput, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { useCameraSession } from '@/camera';
+import { Button } from '@/components/button';
+import { Icon } from '@/components/icon';
+import { SegmentedControl } from '@/components/segmented-control';
+import { SettingsDestructiveButton, SettingsGroup, SettingsRow } from '@/components/settings-ui';
+import { Squircle } from '@/components/squircle';
+import { TextField } from '@/components/text-field';
+import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { defaultMediaPreferences, useMediaPreferences, type MediaPreferences } from '@/state/media';
-import { MText, colors, minTouch, radius } from '@/theme';
-import { PressableScale, SectionHeader } from '@/ui';
 import { BatchRow } from './DeliveryQueue';
 import { deliveryPlatform } from './deliveryPlatform';
 import { useDelivery } from './deliveryStore';
@@ -12,73 +43,69 @@ import { mediaExporter } from './export';
 import { byteLabel } from './format';
 import { urlScheme, useFrameioAccount, validateFrameioConfig } from './frameio';
 import { useMediaLibrary } from './libraryStore';
-import { Badge, Busy, Segmented, ToggleRow } from './MediaChips';
-import { ActionButton } from './MediaOverlays';
+import { Busy, SwitchRow, Tag, TextAction } from './MediaChips';
 
-function Section({ title, detail, children }: { title: string; detail?: string; children: ReactNode }) {
+const NATIVE = 'Native exporter';
+
+/** A card row with an icon well, a title and a segmented choice under it. */
+function ChoiceRow<T extends string>({
+  icon,
+  title,
+  help,
+  tag,
+  value,
+  options,
+  onChange,
+  disabled,
+  last,
+}: {
+  icon: IconSvgElement;
+  title: string;
+  help?: string;
+  tag?: string;
+  value: T;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (v: T) => void;
+  disabled?: boolean;
+  last?: boolean;
+}) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
-    <View style={{ gap: 6 }}>
-      <SectionHeader title={title} detail={detail} />
-      <View style={{ borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14, paddingVertical: 8, gap: 4 }}>
-        {children}
+    <View style={[styles.block, !last && styles.rowBorder]}>
+      <View style={styles.blockHead}>
+        <Squircle width={36} height={36} radius={12} color={colors.surfaceStrong}>
+          <Icon icon={icon} size={18} color={colors.foreground} />
+        </Squircle>
+        <View style={styles.blockText}>
+          <View style={styles.titleLine}>
+            <Text style={styles.rowTitle}>{title}</Text>
+            {tag ? <Tag text={tag} /> : null}
+          </View>
+          {help ? <Text style={styles.rowHelp}>{help}</Text> : null}
+        </View>
+      </View>
+      <View style={disabled && styles.dim} pointerEvents={disabled ? 'none' : 'auto'}>
+        <SegmentedControl<T> accessibilityLabel={title} value={value} onChange={onChange} options={options} />
       </View>
     </View>
   );
 }
 
-function Row({ title, help, children, badge }: { title: string; help?: string; children: ReactNode; badge?: string }) {
+/** A padded block inside a card (queue lists, fields, account). */
+function Block({ children, last, title, action }: { children: ReactNode; last?: boolean; title?: string; action?: ReactNode }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <View style={{ gap: 6, paddingVertical: 8 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <MText size={12.5} weight="semibold">
-          {title}
-        </MText>
-        {badge ? <Badge text={badge} /> : null}
-      </View>
-      {help ? (
-        <MText size={10.5} color={colors.muted}>
-          {help}
-        </MText>
+    <View style={[styles.block, !last && styles.rowBorder]}>
+      {title ? (
+        <View style={styles.blockTitleRow}>
+          <Text style={[styles.rowTitle, { flex: 1 }]}>{title}</Text>
+          {action}
+        </View>
       ) : null}
       {children}
     </View>
   );
-}
-
-function Field({ label, value, onChange, placeholder, secure }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; secure?: boolean }) {
-  return (
-    <View style={{ gap: 5, paddingVertical: 6 }}>
-      <MText size={11} weight="semibold" color={colors.muted}>
-        {label}
-      </MText>
-      <TextInput
-        accessibilityLabel={label}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={colors.faint}
-        autoCapitalize="none"
-        autoCorrect={false}
-        secureTextEntry={secure}
-        spellCheck={false}
-        style={{
-          minHeight: minTouch,
-          borderRadius: radius.md,
-          paddingHorizontal: 12,
-          backgroundColor: colors.raised,
-          borderWidth: 1,
-          borderColor: colors.border,
-          color: colors.text,
-          fontFamily: 'Sora-Regular',
-          fontSize: 13,
-        }}
-      />
-    </View>
-  );
-}
-
-function Divider() {
-  return <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 2 }} />;
 }
 
 /**
@@ -86,6 +113,8 @@ function Divider() {
  * original cache, and Frame.io upload setup. Rendered by the settings feature (no props).
  */
 export default function MediaSettingsPanel() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const prefs = useMediaPreferences();
   const set = prefs.set;
   const session = useCameraSession();
@@ -115,115 +144,111 @@ export default function MediaSettingsPanel() {
 
   const cachedIds = Object.keys(localFiles);
   const cachedBytes = items.filter((i) => localFiles[i.id]).reduce((n, i) => n + i.sizeBytes, 0);
-  const frameioBatches = batches.filter((b) => b.destination === 'frameio');
-  const otherBatches = batches.filter((b) => b.destination !== 'frameio');
+  const frameioBatches = [...batches.filter((b) => b.destination === 'frameio')].reverse();
+  const otherBatches = [...batches.filter((b) => b.destination !== 'frameio')].reverse();
+  const anyFinished = batches.some((b) => b.status !== 'running' && b.status !== 'queued');
 
-  const toggle = <K extends keyof MediaPreferences>(key: K, title: string, help?: string, extra?: { disabled?: boolean; badge?: string }) => (
-    <ToggleRow title={title} help={help} value={prefs[key] as boolean} onChange={(v) => set(key, v as MediaPreferences[K])} disabled={extra?.disabled} badge={extra?.badge} />
+  const toggle = <K extends keyof MediaPreferences>(key: K, icon: IconSvgElement, title: string, help?: string, extra?: { disabled?: boolean; tag?: string; last?: boolean }) => (
+    <SwitchRow icon={icon} title={title} help={help} value={prefs[key] as boolean} onChange={(v) => set(key, v as MediaPreferences[K])} disabled={extra?.disabled} tag={extra?.tag} last={extra?.last} />
   );
+  const frameioOn = prefs.frameioEnabled || demo;
 
   return (
-    <View style={{ gap: 22, paddingVertical: 8 }}>
-      <Section title="Gallery">
-        <Row title="Layout">
-          <Segmented label="Layout" value={prefs.layout} onChange={(v) => set('layout', v)} options={[{ value: 'grid', label: 'Grid' }, { value: 'list', label: 'List' }]} />
-        </Row>
-        <Row title="Thumbnails">
-          <Segmented
-            label="Thumbnail size"
-            value={prefs.thumbnailSize}
-            onChange={(v) => set('thumbnailSize', v)}
-            options={[
-              { value: 'small', label: 'Small' },
-              { value: 'medium', label: 'Medium' },
-              { value: 'large', label: 'Large' },
-            ]}
-          />
-        </Row>
-        <Row title="Sort">
-          <Segmented
-            label="Sort"
-            value={prefs.sort}
-            onChange={(v) => set('sort', v)}
-            options={[
-              { value: 'newest', label: 'Newest' },
-              { value: 'oldest', label: 'Oldest' },
-              { value: 'largest', label: 'Largest' },
-              { value: 'longest', label: 'Longest' },
-            ]}
-          />
-        </Row>
-        <Divider />
-        {toggle('groupByDay', 'Group by day', 'Day headers when sorted by date.')}
-        {toggle('stackBursts', 'Stack bursts', 'Show a burst or panorama as one card with its frame count.')}
-      </Section>
+    <View style={styles.panel}>
+      <SettingsGroup label="Gallery">
+        <ChoiceRow<MediaPreferences['layout']>
+          icon={GridViewIcon}
+          title="Layout"
+          value={prefs.layout}
+          onChange={(v) => set('layout', v)}
+          options={[
+            { value: 'grid', label: 'Grid' },
+            { value: 'list', label: 'List' },
+          ]}
+        />
+        <ChoiceRow<MediaPreferences['thumbnailSize']>
+          icon={Image01Icon}
+          title="Thumbnails"
+          value={prefs.thumbnailSize}
+          onChange={(v) => set('thumbnailSize', v)}
+          options={[
+            { value: 'small', label: 'Small' },
+            { value: 'medium', label: 'Medium' },
+            { value: 'large', label: 'Large' },
+          ]}
+        />
+        <ChoiceRow<MediaPreferences['sort']>
+          icon={ArrowUpDownIcon}
+          title="Sort"
+          value={prefs.sort}
+          onChange={(v) => set('sort', v)}
+          options={[
+            { value: 'newest', label: 'Newest' },
+            { value: 'oldest', label: 'Oldest' },
+            { value: 'largest', label: 'Largest' },
+            { value: 'longest', label: 'Longest' },
+          ]}
+        />
+        {toggle('groupByDay', Calendar03Icon, 'Group by day', 'Day headers when sorted by date.')}
+        {toggle('stackBursts', Layers01Icon, 'Stack bursts', 'A burst or panorama as one tile.', { last: true })}
+      </SettingsGroup>
 
-      <Section title="Playback">
-        {toggle('loopPlayback', 'Loop playback')}
-        {toggle('mutePlayback', 'Start muted')}
-        {toggle('playbackTimecode', 'Timecode clock', 'Show HH:MM:SS:FF instead of minutes and seconds.')}
-        {toggle('playbackAssists', 'Open with assists', 'Show the assist overlays when a clip opens.')}
-        {toggle('playbackAudioMeters', 'Audio meters', 'Level meters over the picture while a clip plays.')}
-      </Section>
+      <SettingsGroup label="Playback">
+        {toggle('loopPlayback', RepeatIcon, 'Loop playback')}
+        {toggle('mutePlayback', VolumeMute02Icon, 'Start muted')}
+        {toggle('playbackTimecode', Clock01Icon, 'Timecode clock', 'HH:MM:SS:FF instead of minutes and seconds.')}
+        {toggle('playbackAssists', ChartHistogramIcon, 'Open with assists', 'Assist overlays on when a clip opens.')}
+        {toggle('playbackAudioMeters', AudioWave01Icon, 'Audio meters', 'Levels over the picture while a clip plays.', { last: true })}
+      </SettingsGroup>
 
-      <Section title="Delivery">
-        <Row title="Default destination" help="Where Share starts. You can still pick another.">
-          <Segmented
-            label="Default destination"
-            value={prefs.postExportAction}
-            onChange={(v) => set('postExportAction', v)}
-            options={[
-              { value: 'system-share', label: 'Share sheet' },
-              { value: 'save-to-photos', label: deliveryPlatform.photosTitle },
-            ]}
-          />
-        </Row>
-        <Row title="Default format" badge={exporter ? undefined : 'Native exporter'} help={exporter ? undefined : 'Re-encoding needs the native exporter. Originals are delivered until it ships.'}>
-          <Segmented
-            label="Default format"
-            value={exporter ? prefs.shareFormat : 'original'}
-            onChange={(v) => exporter && set('shareFormat', v)}
-            options={[
-              { value: 'original', label: 'Original' },
-              { value: 'h264', label: 'H.264' },
-              { value: 'hevc', label: 'HEVC' },
-            ]}
-          />
-        </Row>
-        <Divider />
-        {toggle('convertLog', 'Convert log on export', 'D-Log M / D-Log / D-Log2 clips to the output curve below.', { disabled: !exporter, badge: exporter ? undefined : 'Native exporter' })}
-        <Row title="Output curve">
-          <Segmented label="Output curve" value={prefs.outputCurve} onChange={(v) => set('outputCurve', v)} options={[{ value: 'rec709', label: 'Rec.709' }, { value: 'hlg', label: 'HLG' }]} />
-        </Row>
-        {toggle('bakeLUT', 'Bake LUT on export', 'Burn the monitoring LUT into delivered clips.', { disabled: !exporter, badge: exporter ? undefined : 'Native exporter' })}
-        {toggle('includeMetadata', 'Include metadata', 'Keep camera, lens and timecode tags in delivered files.')}
-        {toggle('keepOriginals', 'Keep originals on this phone', 'Leave downloaded originals in the cache after a delivery for faster re-shares and offline review.')}
-        <Divider />
-        <View style={{ paddingVertical: 8, gap: 8 }}>
-          <MText size={12.5} weight="semibold">
-            Queue
-          </MText>
-          {otherBatches.length === 0 ? (
-            <MText size={10.5} color={colors.muted}>
-              No deliveries in this session.
-            </MText>
-          ) : (
-            [...otherBatches].reverse().map((b) => <BatchRow key={b.id} batch={b} onCancel={() => cancel(b.id)} />)
-          )}
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
-          <View style={{ flex: 1, gap: 2 }}>
-            <MText size={12.5} weight="semibold">
-              Originals cache
-            </MText>
-            <MText size={10.5} color={colors.muted}>
-              {cachedIds.length ? `${cachedIds.length} on this phone · ${byteLabel(cachedBytes)}` : 'Nothing cached'}
-            </MText>
-          </View>
-          <View style={{ width: 120, flexDirection: 'row' }}>
-            <ActionButton
+      <SettingsGroup label="Delivery">
+        <ChoiceRow<MediaPreferences['postExportAction']>
+          icon={Share08Icon}
+          title="Default destination"
+          help="Where Share starts."
+          value={prefs.postExportAction}
+          onChange={(v) => set('postExportAction', v)}
+          options={[
+            { value: 'system-share', label: 'Share sheet' },
+            { value: 'save-to-photos', label: deliveryPlatform.photosTitle },
+          ]}
+        />
+        <ChoiceRow<MediaPreferences['shareFormat']>
+          icon={FileVideoIcon}
+          title="Default format"
+          tag={exporter ? undefined : NATIVE}
+          help={exporter ? undefined : 'Originals are delivered until the native exporter ships.'}
+          value={exporter ? prefs.shareFormat : 'original'}
+          onChange={(v) => exporter && set('shareFormat', v)}
+          disabled={!exporter}
+          options={[
+            { value: 'original', label: 'Original' },
+            { value: 'h264', label: 'H.264' },
+            { value: 'hevc', label: 'HEVC' },
+          ]}
+        />
+        {toggle('convertLog', ColorsIcon, 'Convert log on export', 'D-Log M / D-Log / D-Log2 to the output curve.', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
+        <ChoiceRow<MediaPreferences['outputCurve']>
+          icon={ColorsIcon}
+          title="Output curve"
+          value={prefs.outputCurve}
+          onChange={(v) => set('outputCurve', v)}
+          options={[
+            { value: 'rec709', label: 'Rec.709' },
+            { value: 'hlg', label: 'HLG' },
+          ]}
+        />
+        {toggle('bakeLUT', PaintBoardIcon, 'Bake LUT on export', 'Burn the monitoring LUT into delivered clips.', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
+        {toggle('includeMetadata', Tag01Icon, 'Include metadata', 'Camera, lens and timecode tags.')}
+        {toggle('keepOriginals', SmartPhone01Icon, 'Keep originals on this phone', 'Faster re-shares and offline review.')}
+        <SettingsRow
+          icon={SmartPhone01Icon}
+          title="Originals cache"
+          subtitle={cachedIds.length ? `${cachedIds.length} on this phone · ${byteLabel(cachedBytes)}` : 'Nothing cached'}
+          accessory={
+            <TextAction
               title="Clear"
-              tone="plain"
+              label="Clear originals cache"
               disabled={!cachedIds.length}
               onPress={() => {
                 cachedIds.forEach((id) => {
@@ -232,162 +257,181 @@ export default function MediaSettingsPanel() {
                 });
               }}
             />
-          </View>
-        </View>
-      </Section>
-
-      <Section title="Frame.io" detail={demo ? 'demo camera: simulated' : undefined}>
-        <MText size={10.5} color={colors.muted} style={{ paddingTop: 6 }}>
-          Frame.io upload uses your own Adobe Developer Console project: add the Frame.io API, create an OAuth Native App credential (PKCE, no client secret), then paste its Client ID and the full Default redirect URI here. Your Frame.io account must be a V4 account linked to the same Adobe ID.
-        </MText>
-        {toggle('frameioEnabled', 'Frame.io upload', 'Offer Frame.io as a Share destination.')}
-        {prefs.frameioEnabled || demo ? (
-          <>
-            <Field label="Client ID" value={clientId} onChange={setClientId} placeholder="Adobe OAuth Native App client id" />
-            <Field label="Default redirect URI" value={redirect} onChange={setRedirect} placeholder="adobe+yourid://adobeid/your_client_id" />
-            {clientId || redirect ? (
-              <View style={{ flexDirection: 'row', gap: 6, alignItems: 'flex-start', paddingVertical: 4 }}>
-                {configError ? <CircleAlert size={13} color={colors.linkWatch} /> : <CircleCheck size={13} color={colors.linkStable} />}
-                <MText size={10.5} color={configError ? colors.linkWatch : colors.muted} style={{ flex: 1 }}>
-                  {configError ?? `Redirect scheme: ${urlScheme(redirect)}. The app must register this URL scheme to finish sign-in (native build setting).`}
-                </MText>
-              </View>
-            ) : null}
-            {dirty ? (
-              <View style={{ flexDirection: 'row', gap: 8, paddingVertical: 6 }}>
-                <ActionButton title="Revert" tone="plain" onPress={() => (setClientId(prefs.frameioClientId), setRedirect(prefs.frameioRedirectUri))} />
-                <ActionButton title="Save" disabled={!!configError} onPress={saveConfig} />
-              </View>
-            ) : null}
-            <Divider />
-            <View style={{ paddingVertical: 8, gap: 8 }}>
-              <MText size={12.5} weight="semibold">
-                Account
-              </MText>
-              {account.status === 'signing-in' ? (
-                <Busy label="Waiting for Adobe sign-in…" />
-              ) : account.status === 'signed-in' ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <MText size={12} color={colors.secondary} style={{ flex: 1 }}>
-                    {account.userName ? `Signed in as ${account.userName}` : 'Signed in'}
-                  </MText>
-                  <PressableScale accessibilityLabel="Sign out of Frame.io" onPress={() => void account.signOut()} style={{ minHeight: minTouch, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <LogOut size={13} color={colors.muted} />
-                    <MText size={12} weight="semibold" color={colors.muted}>
-                      Sign out
-                    </MText>
-                  </PressableScale>
-                </View>
-              ) : (
-                <>
-                  <MText size={10.5} color={account.error ? colors.linkWatch : colors.muted}>
-                    {account.error ??
-                      (account.status === 'not-configured' ? 'Save a Client ID and redirect URI to sign in.' : 'Not signed in.')}
-                  </MText>
-                  <View style={{ flexDirection: 'row' }}>
-                    <ActionButton title="Sign in with Adobe" disabled={account.status === 'not-configured' && !demo} onPress={() => void account.beginSignIn()} />
-                  </View>
-                </>
-              )}
-              <MText size={9.5} color={colors.faint}>
-                {Platform.OS === 'web' ? 'On web, tokens stay in memory and are gone after a reload.' : 'Tokens are kept in the device keychain, never in app settings.'}
-              </MText>
-            </View>
-            {account.status === 'signed-in' ? (
-              <View style={{ paddingVertical: 8, gap: 8 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <MText size={12.5} weight="semibold" style={{ flex: 1 }}>
-                    Project
-                  </MText>
-                  <PressableScale accessibilityLabel="Reload projects" onPress={() => void account.loadProjects()} style={{ minHeight: minTouch, paddingHorizontal: 8, justifyContent: 'center' }}>
-                    <MText size={11.5} weight="semibold" color={colors.accent}>
-                      {account.projects ? 'Reload' : 'Load projects'}
-                    </MText>
-                  </PressableScale>
-                </View>
-                {account.loadingProjects ? <Busy label="Loading projects…" /> : null}
-                {(account.projects ?? []).map((p) => {
-                  const on = p.id === prefs.frameioProjectId;
-                  return (
-                    <PressableScale
-                      key={p.id}
-                      accessibilityLabel={`Upload into ${p.name}`}
-                      accessibilityState={{ selected: on }}
-                      onPress={() => {
-                        set('frameioProjectId', p.id);
-                        set('frameioProjectName', p.name);
-                        set('frameioRootFolderId', p.rootFolderId);
-                        set('frameioAccountId', p.accountId);
-                      }}
-                      style={{ minHeight: minTouch, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, borderRadius: radius.md, backgroundColor: on ? colors.raised : 'transparent' }}
-                    >
-                      <Folder size={14} color={on ? colors.accent : colors.muted} />
-                      <MText size={12.5} weight={on ? 'semibold' : 'regular'} style={{ flex: 1 }}>
-                        {p.name}
-                      </MText>
-                      {on ? <CircleCheck size={14} color={colors.accent} /> : null}
-                    </PressableScale>
-                  );
-                })}
-                {!account.projects && prefs.frameioProjectName ? (
-                  <MText size={11} color={colors.muted}>
-                    Uploading into {prefs.frameioProjectName}
-                  </MText>
-                ) : null}
-              </View>
-            ) : null}
-            <Divider />
-            <View style={{ paddingVertical: 8, gap: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <MText size={12.5} weight="semibold" style={{ flex: 1 }}>
-                  Upload queue
-                </MText>
-                {batches.some((b) => b.status !== 'running' && b.status !== 'queued') ? (
-                  <PressableScale accessibilityLabel="Clear finished deliveries" onPress={clearFinished} style={{ minHeight: minTouch, paddingHorizontal: 8, justifyContent: 'center' }}>
-                    <MText size={11.5} weight="semibold" color={colors.accent}>
-                      Clear finished
-                    </MText>
-                  </PressableScale>
-                ) : null}
-              </View>
-              {frameioBatches.length === 0 ? (
-                <MText size={10.5} color={colors.muted}>
-                  Nothing uploading. In Media, select clips, then Share → Frame.io upload.
-                </MText>
-              ) : (
-                [...frameioBatches].reverse().map((b) => <BatchRow key={b.id} batch={b} onCancel={() => cancel(b.id)} />)
-              )}
-              {toggle('frameioReupload', 'Upload again', 'Re-upload clips already sent to Frame.io.')}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <MText size={10.5} color={colors.muted} style={{ flex: 1 }}>
-                  {prefs.frameioUploaded.length} clip{prefs.frameioUploaded.length === 1 ? '' : 's'} remembered as uploaded
-                </MText>
-                <PressableScale accessibilityLabel="Forget upload history" disabled={!prefs.frameioUploaded.length} onPress={() => set('frameioUploaded', [])} style={{ minHeight: minTouch, paddingHorizontal: 8, justifyContent: 'center' }}>
-                  <MText size={11.5} weight="semibold" color={colors.accent}>
-                    Forget
-                  </MText>
-                </PressableScale>
-              </View>
-            </View>
-          </>
-        ) : null}
-      </Section>
-
-      <View style={{ flexDirection: 'row' }}>
-        <ActionButton
-          title="Reset media settings"
-          tone="plain"
-          onPress={() => {
-            const { frameioClientId, frameioRedirectUri, frameioUploaded, ratings } = useMediaPreferences.getState();
-            prefs.reset();
-            // Keep the operator's own identifiers, upload history and ratings.
-            set('frameioClientId', frameioClientId || defaultMediaPreferences.frameioClientId);
-            set('frameioRedirectUri', frameioRedirectUri);
-            set('frameioUploaded', frameioUploaded);
-            set('ratings', ratings);
-          }}
+          }
+          last
         />
+      </SettingsGroup>
+
+      <SettingsGroup label="Delivery queue">
+        {otherBatches.length === 0 ? (
+          <SettingsRow icon={CloudUploadIcon} title="No deliveries" subtitle="Nothing shared in this session." last />
+        ) : (
+          otherBatches.map((b, i) => <BatchRow key={b.id} batch={b} last={i === otherBatches.length - 1} onCancel={() => cancel(b.id)} />)
+        )}
+      </SettingsGroup>
+
+      <View style={styles.groupWithNote}>
+        <SettingsGroup label={demo ? 'Frame.io · demo camera, simulated' : 'Frame.io'}>
+          {toggle('frameioEnabled', CloudUploadIcon, 'Frame.io upload', 'Offer Frame.io as a Share destination.', { last: !frameioOn })}
+          {frameioOn ? (
+            <>
+              <Block>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Client ID</Text>
+                  <TextField
+                    accessibilityLabel="Client ID"
+                    value={clientId}
+                    onChangeText={setClientId}
+                    placeholder="Adobe OAuth Native App client id"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    style={styles.input}
+                  />
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Default redirect URI</Text>
+                  <TextField
+                    accessibilityLabel="Default redirect URI"
+                    value={redirect}
+                    onChangeText={setRedirect}
+                    placeholder="adobe+yourid://adobeid/your_client_id"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    style={styles.input}
+                  />
+                </View>
+                {clientId || redirect ? (
+                  <View style={styles.status}>
+                    <Icon icon={configError ? AlertCircleIcon : CheckmarkCircle02Icon} size={16} color={configError ? colors.warning : colors.success} />
+                    <Text style={[styles.rowHelp, { flex: 1 }, configError ? { color: colors.warning } : null]}>
+                      {configError ?? `Redirect scheme: ${urlScheme(redirect)}. The app must register this URL scheme to finish sign-in.`}
+                    </Text>
+                  </View>
+                ) : null}
+                {dirty ? (
+                  <View style={styles.buttons}>
+                    <Button title="Revert" variant="secondary" onPress={() => (setClientId(prefs.frameioClientId), setRedirect(prefs.frameioRedirectUri))} style={styles.flex} />
+                    <Button title="Save" disabled={!!configError} onPress={saveConfig} style={styles.flex} />
+                  </View>
+                ) : null}
+              </Block>
+              {account.status === 'signing-in' ? (
+                <Block title="Account">
+                  <Busy label="Waiting for Adobe sign-in…" />
+                </Block>
+              ) : account.status === 'signed-in' ? (
+                <SettingsRow
+                  icon={UserIcon}
+                  title={account.userName ? `Signed in as ${account.userName}` : 'Signed in'}
+                  subtitle={Platform.OS === 'web' ? 'Tokens stay in memory on web.' : 'Tokens are kept in the device keychain.'}
+                  accessory={
+                    <Pressable accessibilityRole="button" accessibilityLabel="Sign out of Frame.io" onPress={() => void account.signOut()} hitSlop={6} style={({ pressed }) => [styles.signOut, pressed && { opacity: 0.6 }]}>
+                      <Icon icon={Logout01Icon} size={16} color={colors.destructive} />
+                      <Text style={styles.signOutLabel}>Sign out</Text>
+                    </Pressable>
+                  }
+                />
+              ) : (
+                <Block title="Account">
+                  <Text style={[styles.rowHelp, account.error ? { color: colors.warning } : null]}>
+                    {account.error ?? (account.status === 'not-configured' ? 'Save a Client ID and redirect URI to sign in.' : 'Not signed in.')}
+                  </Text>
+                  <Button title="Sign in with Adobe" disabled={account.status === 'not-configured' && !demo} onPress={() => void account.beginSignIn()} style={styles.selfStart} />
+                  <Text style={styles.rowHelp}>{Platform.OS === 'web' ? 'On web, tokens stay in memory and are gone after a reload.' : 'Tokens are kept in the device keychain, never in app settings.'}</Text>
+                </Block>
+              )}
+              {account.status === 'signed-in' ? (
+                <Block title="Project" action={<TextAction title={account.projects ? 'Reload' : 'Load projects'} label="Reload projects" onPress={() => void account.loadProjects()} />}>
+                  {account.loadingProjects ? <Busy label="Loading projects…" /> : null}
+                  {(account.projects ?? []).map((p) => {
+                    const on = p.id === prefs.frameioProjectId;
+                    return (
+                      <Pressable
+                        key={p.id}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`Upload into ${p.name}`}
+                        accessibilityState={{ checked: on }}
+                        onPress={() => {
+                          set('frameioProjectId', p.id);
+                          set('frameioProjectName', p.name);
+                          set('frameioRootFolderId', p.rootFolderId);
+                          set('frameioAccountId', p.accountId);
+                        }}
+                        style={({ pressed }) => [styles.project, pressed && { opacity: 0.7 }]}
+                      >
+                        <Icon icon={Folder01Icon} size={18} color={on ? colors.primary : colors.mutedForeground} />
+                        <Text style={[styles.rowTitle, { flex: 1 }]}>{p.name}</Text>
+                        {on ? <Icon icon={Tick02Icon} size={20} color={colors.primary} /> : null}
+                      </Pressable>
+                    );
+                  })}
+                  {!account.projects && prefs.frameioProjectName ? <Text style={styles.rowHelp}>Uploading into {prefs.frameioProjectName}</Text> : null}
+                </Block>
+              ) : null}
+              <Block title="Upload queue" action={anyFinished ? <TextAction title="Clear finished" label="Clear finished deliveries" onPress={clearFinished} /> : undefined}>
+                {frameioBatches.length === 0 ? <Text style={styles.rowHelp}>Nothing uploading. In Media, select clips, then Share → Frame.io upload.</Text> : null}
+              </Block>
+              {frameioBatches.map((b) => (
+                <BatchRow key={b.id} batch={b} onCancel={() => cancel(b.id)} />
+              ))}
+              {toggle('frameioReupload', RefreshIcon, 'Upload again', 'Re-upload clips already sent to Frame.io.')}
+              <SettingsRow
+                icon={CheckmarkCircle02Icon}
+                title="Upload history"
+                subtitle={`${prefs.frameioUploaded.length} clip${prefs.frameioUploaded.length === 1 ? '' : 's'} remembered as uploaded`}
+                accessory={<TextAction title="Forget" label="Forget upload history" disabled={!prefs.frameioUploaded.length} onPress={() => set('frameioUploaded', [])} />}
+                last
+              />
+            </>
+          ) : null}
+        </SettingsGroup>
+        <Text style={styles.note}>
+          Uses your own Adobe Developer Console project: add the Frame.io API, create an OAuth Native App credential (PKCE, no client secret), then paste its Client ID and full Default redirect URI. Your Frame.io account must be a V4 account on the same Adobe ID.
+        </Text>
       </View>
+
+      <SettingsDestructiveButton
+        title="Reset media settings"
+        icon={RefreshIcon}
+        onPress={() => {
+          const { frameioClientId, frameioRedirectUri, frameioUploaded, ratings } = useMediaPreferences.getState();
+          prefs.reset();
+          // Keep the operator's own identifiers, upload history and ratings.
+          set('frameioClientId', frameioClientId || defaultMediaPreferences.frameioClientId);
+          set('frameioRedirectUri', frameioRedirectUri);
+          set('frameioUploaded', frameioUploaded);
+          set('ratings', ratings);
+        }}
+      />
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    panel: { gap: spacing.lg },
+    groupWithNote: { gap: spacing.sm },
+    note: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, color: colors.mutedForeground, paddingHorizontal: 4 },
+    block: { paddingHorizontal: spacing.md, paddingVertical: 12, gap: 10 },
+    blockHead: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12 },
+    blockText: { flex: 1, minWidth: 0, gap: 2 },
+    blockTitleRow: { flexDirection: 'row' as const, alignItems: 'center' as const, minHeight: 28 },
+    rowBorder: { borderBottomWidth: 0.5, borderBottomColor: colors.border },
+    titleLine: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, flexWrap: 'wrap' as const },
+    rowTitle: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    rowHelp: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: colors.mutedForeground },
+    dim: { opacity: 0.45 },
+    field: { gap: 6 },
+    fieldLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground },
+    input: { minHeight: 44, fontSize: 15, backgroundColor: colors.background },
+    status: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: 8 },
+    buttons: { flexDirection: 'row' as const, gap: spacing.sm },
+    flex: { flex: 1 },
+    selfStart: { alignSelf: 'flex-start' as const },
+    signOut: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, minHeight: 44 },
+    signOutLabel: { fontFamily: fonts.semibold, fontSize: 14, color: colors.destructive },
+    project: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12, minHeight: 44 },
+  };
 }

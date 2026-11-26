@@ -1,16 +1,20 @@
-import { Minus, Plus, X } from 'lucide-react-native';
 import { useMemo, useRef, useState } from 'react';
-import { PanResponder, Pressable, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useCamera, useCameraSession } from '@/camera';
-import { MText, colors, radius, withAlpha } from '@/theme';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { FieldLabel, StepperRow } from '../capture/controls';
 import { isDigitalZoom, zoomCaption, zoomLabel } from '../format';
 import { haptics } from '../haptics';
 import { ZOOM_RAMP_CHOICES, rampLabel, useZoomPresets } from '../liveUiStore';
 import { cancelZoomRamp, rampZoom, unitToZoom, zoomToUnit } from './zoom';
-import { PanelSurface } from '../chrome/primitives';
+
+const THUMB = 22;
 
 /** `MonitorZoomRulerChrome`: drag along the log-scale ruler for continuous zoom. */
 function ZoomRuler() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const session = useCameraSession();
   const zoom = useCamera((s) => s.zoom);
   const [width, setWidth] = useState(240);
@@ -20,84 +24,60 @@ function ZoomRuler() {
   const opticalU = zoomToUnit(zoom, Math.min(zoom.max, Math.max(zoom.min, zoom.opticalMax)));
   const u = zoomToUnit(zoom, zoom.factor);
 
-  const send = (x: number, force = false) => {
-    const now = Date.now();
-    if (!force && now - lastSend.current < 50) return;
-    lastSend.current = now;
-    const z = session.getState().zoom;
-    cancelZoomRamp();
-    session.control.setZoom(Math.round(unitToZoom(z, x / Math.max(1, widthRef.current)) * 10) / 10).catch(() => {});
-  };
-
-  const responder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderGrant: (e) => send(e.nativeEvent.locationX, true),
-        onPanResponderMove: (e) => send(e.nativeEvent.locationX),
-        onPanResponderRelease: (e) => send(e.nativeEvent.locationX, true),
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+  const pan = useMemo(() => {
+    const send = (x: number, force = false) => {
+      const now = Date.now();
+      if (!force && now - lastSend.current < 50) return;
+      lastSend.current = now;
+      const z = session.getState().zoom;
+      cancelZoomRamp();
+      const unit = Math.min(1, Math.max(0, x / Math.max(1, widthRef.current)));
+      session.control.setZoom(Math.round(unitToZoom(z, unit) * 10) / 10).catch(() => {});
+    };
+    return Gesture.Pan()
+      .runOnJS(true)
+      .minDistance(0)
+      .onBegin((e) => send(e.x, true))
+      .onUpdate((e) => send(e.x))
+      .onEnd((e) => send(e.x, true));
+  }, [session]);
 
   return (
-    <View
-      {...responder.panHandlers}
-      accessibilityRole="adjustable"
-      accessibilityLabel="Continuous zoom"
-      accessibilityValue={{ text: zoomLabel(zoom.factor) }}
-      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
-      style={{ height: 44, justifyContent: 'center' }}
-    >
-      <View style={{ height: 4, borderRadius: 2, backgroundColor: withAlpha('#FFFFFF', 0.16), overflow: 'hidden' }}>
-        <View
-          style={{
-            position: 'absolute',
-            left: opticalU * width,
-            right: 0,
-            top: 0,
-            bottom: 0,
-            backgroundColor: withAlpha(colors.digitalCrop, 0.35),
-          }}
-        />
-        <View style={{ width: u * width, height: 4, backgroundColor: colors.accent }} />
-      </View>
-      {zoom.stops.map((s) => {
-        const x = zoomToUnit(zoom, s) * width;
-        return (
-          <View key={s} pointerEvents="none" style={{ position: 'absolute', left: x - 12, width: 24, top: 0, alignItems: 'center' }}>
-            <View style={{ width: 1.5, height: 10, backgroundColor: colors.secondary }} />
-            <MText size={9} mono color={colors.muted} style={{ marginTop: 18 }}>
-              {s}
-            </MText>
-          </View>
-        );
-      })}
+    <GestureDetector gesture={pan}>
       <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          left: u * width - 9,
-          width: 18,
-          height: 18,
-          borderRadius: 9,
-          backgroundColor: '#FFFFFF',
-          borderWidth: 2,
-          borderColor: colors.accent,
-        }}
-      />
-    </View>
+        collapsable={false}
+        accessibilityRole="adjustable"
+        accessibilityLabel="Continuous zoom"
+        accessibilityValue={{ text: zoomLabel(zoom.factor) }}
+        onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+        style={styles.ruler}
+      >
+        <View style={styles.track}>
+          <View style={[styles.digital, { left: opticalU * width, backgroundColor: colors.warning }]} />
+          <View style={[styles.fill, { width: u * width }]} />
+        </View>
+        {zoom.stops.map((s) => {
+          const x = zoomToUnit(zoom, s) * width;
+          return (
+            <View key={s} pointerEvents="none" style={[styles.stop, { left: x - 14 }]}>
+              <View style={styles.stopTick} />
+              <Text style={styles.stopLabel}>{s}×</Text>
+            </View>
+          );
+        })}
+        <View pointerEvents="none" style={[styles.thumb, { left: u * width - THUMB / 2 }]} />
+      </View>
+    </GestureDetector>
   );
 }
 
 /**
- * Continuous zoom dial with the preset strip (`MonitorZoomDial`, `MonitorZoomPresetStrip`):
- * tap a preset to go (over the ramp time), hold to save the current zoom there.
+ * Continuous zoom with the preset strip (`MonitorZoomDial`, `MonitorZoomPresetStrip`): tap a
+ * preset to go (over the ramp time), hold to save the current zoom there. Shown in a Sheet.
  */
-export function MonitorZoomDial({ width, onClose }: { width: number; onClose: () => void }) {
+export function MonitorZoomDial() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const session = useCameraSession();
   const zoom = useCamera((s) => s.zoom);
   const { slots, rampSeconds, save, setRamp } = useZoomPresets();
@@ -106,85 +86,98 @@ export function MonitorZoomDial({ width, onClose }: { width: number; onClose: ()
   const rampIndex = ZOOM_RAMP_CHOICES.indexOf(rampSeconds);
 
   return (
-    <PanelSurface radius={radius.lg} style={{ width, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 12, gap: 6 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <View style={{ flex: 1 }}>
-          <MText size={10} weight="bold" tracking={1.4} color={digital ? colors.digitalCrop : colors.faint}>
-            {caption}
-          </MText>
-          <MText size={22} weight="semibold" mono color={digital ? colors.digitalCrop : colors.text}>
-            {zoomLabel(zoom.factor)}
-          </MText>
-        </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close zoom" onPress={onClose} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
-          <X size={18} color={colors.secondary} />
-        </Pressable>
+    <View style={styles.stack}>
+      <View style={styles.readout}>
+        <Text style={[styles.value, digital && { color: colors.warning }]}>{zoomLabel(zoom.factor)}</Text>
+        <Text style={[styles.caption, digital && { color: colors.warning }]}>{caption}</Text>
       </View>
       <ZoomRuler />
-      <View style={{ height: 14 }} />
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        {slots.map((slot, i) => {
-          const usable = slot != null && slot <= zoom.max + 0.05;
-          return (
-            <Pressable
-              key={i}
-              accessibilityRole="button"
-              accessibilityLabel={slot != null ? `Zoom preset ${i + 1}, ${zoomLabel(slot)}` : `Empty zoom preset ${i + 1}`}
-              accessibilityHint="Hold to save the current zoom here"
-              onPress={() => {
-                if (!usable || slot == null) return;
-                haptics.selection();
-                rampZoom(session, Math.min(slot, zoom.max), rampSeconds);
-              }}
-              onLongPress={() => {
-                haptics.medium();
-                save(i, session.getState().zoom.factor);
-              }}
-              delayLongPress={450}
-              style={({ pressed }) => ({
-                flex: 1,
-                minHeight: 44,
-                borderRadius: radius.md,
-                borderWidth: 1,
-                borderStyle: slot == null ? 'dashed' : 'solid',
-                borderColor: slot == null ? colors.borderStrong : colors.border,
-                backgroundColor: slot != null ? withAlpha('#FFFFFF', 0.07) : 'transparent',
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: pressed ? 0.72 : slot != null && !usable ? 0.4 : 1,
-              })}
-            >
-              <MText size={13} weight="semibold" mono color={slot != null ? colors.text : colors.faint}>
-                {slot != null ? zoomLabel(slot) : `P${i + 1}`}
-              </MText>
-            </Pressable>
-          );
-        })}
+      <View style={styles.group}>
+        <FieldLabel>Presets · hold to save</FieldLabel>
+        <View style={styles.presets}>
+          {slots.map((slot, i) => {
+            const usable = slot != null && slot <= zoom.max + 0.05;
+            return (
+              <Pressable
+                key={i}
+                accessibilityRole="button"
+                accessibilityLabel={slot != null ? `Zoom preset ${i + 1}, ${zoomLabel(slot)}` : `Empty zoom preset ${i + 1}`}
+                accessibilityHint="Hold to save the current zoom here"
+                onPress={() => {
+                  if (!usable || slot == null) return;
+                  haptics.selection();
+                  rampZoom(session, Math.min(slot, zoom.max), rampSeconds);
+                }}
+                onLongPress={() => {
+                  haptics.medium();
+                  save(i, session.getState().zoom.factor);
+                }}
+                delayLongPress={450}
+                style={({ pressed }) => [
+                  styles.preset,
+                  slot == null && styles.presetEmpty,
+                  slot != null && !usable && styles.faint,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.presetLabel, slot == null && styles.presetLabelEmpty]}>{slot != null ? zoomLabel(slot) : `P${i + 1}`}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-        <MText size={10} weight="bold" tracking={1.4} color={colors.faint} style={{ flex: 1 }}>
-          PRESET RAMP
-        </MText>
-        <Pressable
-          accessibilityLabel="Shorter ramp"
-          disabled={rampIndex <= 0}
-          onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
-          style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: rampIndex <= 0 ? 0.35 : 1 }}
-        >
-          <Minus size={16} color={colors.secondary} />
-        </Pressable>
-        <MText size={13} weight="semibold" mono style={{ minWidth: 44, textAlign: 'center' }}>
-          {rampLabel(rampSeconds)}
-        </MText>
-        <Pressable
-          accessibilityLabel="Longer ramp"
-          disabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
-          onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
-          style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Plus size={16} color={colors.secondary} />
-        </Pressable>
-      </View>
-    </PanelSurface>
+      <StepperRow
+        title="Preset ramp"
+        detail="Travel time to a preset"
+        value={rampLabel(rampSeconds)}
+        minusLabel="Shorter ramp"
+        plusLabel="Longer ramp"
+        minusDisabled={rampIndex <= 0}
+        plusDisabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
+        onMinus={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
+        onPlus={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
+      />
+    </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    stack: { gap: spacing.md },
+    group: { gap: spacing.sm },
+    readout: { flexDirection: 'row' as const, alignItems: 'baseline' as const, gap: spacing.sm },
+    value: { fontFamily: fonts.bold, fontSize: 28, color: colors.foreground, fontVariant: ['tabular-nums' as const] },
+    caption: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.2, color: colors.mutedForeground },
+    ruler: { height: 52, justifyContent: 'flex-start' as const, paddingTop: 14, marginHorizontal: THUMB / 2 },
+    track: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceStrong, overflow: 'hidden' as const },
+    digital: { position: 'absolute' as const, right: 0, top: 0, bottom: 0, opacity: 0.35 },
+    fill: { height: 6, borderRadius: 3, backgroundColor: colors.ink },
+    stop: { position: 'absolute' as const, top: 24, width: 28, alignItems: 'center' as const },
+    stopTick: { width: 1.5, height: 6, borderRadius: 1, backgroundColor: colors.borderStrong },
+    stopLabel: { marginTop: 3, fontFamily: fonts.medium, fontSize: 11, color: colors.mutedForeground },
+    thumb: {
+      position: 'absolute' as const,
+      top: 6,
+      width: THUMB,
+      height: THUMB,
+      borderRadius: THUMB / 2,
+      backgroundColor: colors.background,
+      borderWidth: 2,
+      borderColor: colors.ink,
+    },
+    presets: { flexDirection: 'row' as const, gap: spacing.sm },
+    preset: {
+      flex: 1,
+      minHeight: 44,
+      borderRadius: radius.md - 2,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      backgroundColor: colors.surface,
+    },
+    presetEmpty: { backgroundColor: 'transparent', borderWidth: 1, borderStyle: 'dashed' as const, borderColor: colors.borderStrong },
+    presetLabel: { fontFamily: fonts.semibold, fontSize: 14, color: colors.foreground, fontVariant: ['tabular-nums' as const] },
+    presetLabelEmpty: { color: colors.mutedForeground },
+    faint: { opacity: 0.4 },
+    pressed: { opacity: 0.7 },
+  };
 }

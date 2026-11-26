@@ -1,46 +1,31 @@
-import { ChevronLeft, MonitorPlay, RefreshCw, Unplug } from 'lucide-react-native';
+import type { IconSvgElement } from '@hugeicons/react-native';
+import { ArrowLeft01Icon, Refresh01Icon, Unlink04Icon, Video01Icon } from '@hugeicons/core-free-icons';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useCamera } from '@/camera';
-import { MText, colors, radius } from '@/theme';
-import { PanelSurface } from './primitives';
+import { Icon } from '@/components/icon';
+import { Spinner } from '@/components/spinner';
+import { Squircle } from '@/components/squircle';
+import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
+import { onVideo } from './primitives';
 
 /** The first retry stays quiet this long so a quick reconnect never flashes the card. */
 const GRACE_MS = 1200;
 
-function Action({
-  title,
-  icon: Icon,
-  accent,
-  onPress,
-}: {
-  title: string;
-  icon: typeof RefreshCw;
-  accent?: boolean;
-  onPress: () => void;
-}) {
+function Action({ title, icon, primary, onPress }: { title: string; icon: IconSvgElement; primary?: boolean; onPress: () => void }) {
+  const styles = useThemedStyles(createStyles);
+  const fg = primary ? onVideo.dark : onVideo.ink;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={title}
       onPress={onPress}
-      style={({ pressed }) => ({
-        flex: 1,
-        minHeight: 44,
-        flexDirection: 'row',
-        gap: 6,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 14,
-        borderRadius: radius.pill,
-        backgroundColor: accent ? colors.accent : 'rgba(255,255,255,0.1)',
-        opacity: pressed ? 0.72 : 1,
-      })}
+      style={({ pressed }) => [styles.action, primary && styles.actionPrimary, pressed && { opacity: 0.75 }]}
     >
-      <Icon size={13} color={accent ? '#000' : colors.text} />
-      <MText size={13} weight="semibold" color={accent ? '#000' : colors.text} numberOfLines={1}>
+      <Icon icon={icon} size={18} color={fg} strokeWidth={2} />
+      <Text numberOfLines={1} style={[styles.actionLabel, { color: fg }]}>
         {title}
-      </MText>
+      </Text>
     </Pressable>
   );
 }
@@ -60,6 +45,7 @@ export function SessionRecoveryOverlay({
   /** Offered when nothing is connected and the demo camera can stand in. */
   onDemo?: () => void;
 }) {
+  const styles = useThemedStyles(createStyles);
   const conn = useCamera((s) => s.connection);
   const name = useCamera((s) => s.identity?.name ?? 'The camera');
   const [graceElapsed, setGraceElapsed] = useState(false);
@@ -100,38 +86,71 @@ export function SessionRecoveryOverlay({
   const spinning = recovering || connecting;
 
   return (
-    <View style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.34)' }} />
-      <PanelSurface radius={radius.lg} style={{ width: '90%', maxWidth: 460, paddingHorizontal: 18, paddingVertical: 16, gap: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <View style={{ width: 26, alignItems: 'center' }}>
-            {spinning ? <ActivityIndicator size="small" color={colors.accent} /> : <Unplug size={20} color={colors.accent} />}
-          </View>
-          <View style={{ flex: 1, gap: 3 }}>
-            <MText size={16} weight="semibold" accessibilityRole="header">
-              {title}
-            </MText>
-            <MText size={12} weight="medium" color={colors.muted}>
-              {detail}
-            </MText>
-            {recovering && conn.detail ? (
-              <MText size={12} weight="medium">
-                {conn.detail}
-              </MText>
-            ) : null}
-          </View>
-        </View>
+    <View style={styles.root}>
+      <View pointerEvents="none" style={styles.scrim} />
+      <View style={styles.card}>
+        <Squircle width={52} height={52} radius={17} color={onVideo.well}>
+          {spinning ? <Spinner size={22} opacity={1} color={onVideo.ink} /> : <Icon icon={Unlink04Icon} size={24} color={onVideo.ink} />}
+        </Squircle>
+        <Text style={styles.title} accessibilityRole="header">
+          {title}
+        </Text>
+        <Text style={styles.detail}>{detail}</Text>
+        {recovering && conn.detail ? <Text style={styles.status}>{conn.detail}</Text> : null}
         {!connecting ? (
-          <View style={{ flexDirection: 'row', gap: 10 }}>
+          <View style={styles.actions}>
             {idle ? (
-              onDemo ? <Action title="Demo camera" icon={MonitorPlay} accent onPress={onDemo} /> : null
+              onDemo ? <Action title="Demo camera" icon={Video01Icon} primary onPress={onDemo} /> : null
             ) : (
-              <Action title="Retry connection" icon={RefreshCw} accent onPress={onRetry} />
+              <Action title="Retry connection" icon={Refresh01Icon} primary onPress={onRetry} />
             )}
-            <Action title="Cameras" icon={ChevronLeft} onPress={onExit} />
+            <Action title="Cameras" icon={ArrowLeft01Icon} onPress={onExit} />
           </View>
         ) : null}
-      </PanelSurface>
+      </View>
     </View>
   );
+}
+
+function createStyles(_colors: ThemeColors) {
+  return {
+    root: {
+      position: 'absolute' as const,
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      padding: spacing.md,
+    },
+    scrim: { position: 'absolute' as const, left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' },
+    card: {
+      width: '100%' as const,
+      maxWidth: 400,
+      alignItems: 'center' as const,
+      gap: spacing.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.lg,
+      borderRadius: 28,
+      backgroundColor: 'rgba(16,16,16,0.82)',
+    },
+    title: { marginTop: spacing.xs, fontFamily: fonts.semibold, fontSize: 20, color: onVideo.ink, textAlign: 'center' as const },
+    detail: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: onVideo.inkMuted, textAlign: 'center' as const },
+    status: { fontFamily: fonts.medium, fontSize: 13, color: onVideo.ink, textAlign: 'center' as const },
+    actions: { alignSelf: 'stretch' as const, flexDirection: 'row' as const, gap: spacing.sm, marginTop: spacing.sm },
+    action: {
+      flex: 1,
+      minHeight: 46,
+      flexDirection: 'row' as const,
+      gap: 6,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      paddingHorizontal: 14,
+      borderRadius: 16,
+      backgroundColor: onVideo.well,
+    },
+    actionPrimary: { backgroundColor: onVideo.chosen },
+    actionLabel: { fontFamily: fonts.semibold, fontSize: 15 },
+  };
 }

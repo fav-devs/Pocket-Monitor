@@ -20,7 +20,7 @@ function launch(session: CameraSession, target: DiscoveredCamera | SavedCamera, 
   });
 }
 
-/** Connect entry points shared by Your cameras, the pair wizard and Settings. */
+/** Connect entry points shared by Cameras, the pair wizard and Settings. */
 export function useConnectActions() {
   const session = useCameraSession();
   const setSession = useSetCameraSession();

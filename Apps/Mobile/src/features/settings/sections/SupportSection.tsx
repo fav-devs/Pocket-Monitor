@@ -1,70 +1,84 @@
-import { ChevronDown, ChevronUp } from 'lucide-react-native';
+import {
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  Bug01Icon,
+  Delete02Icon,
+  Download01Icon,
+  MessageQuestionIcon,
+  Settings02Icon,
+  Share08Icon,
+  Shield01Icon,
+} from '@hugeicons/core-free-icons';
 import { useState } from 'react';
-import { View } from 'react-native';
-import { MText, colors } from '@/theme';
-import { PressableScale } from '@/ui';
-import { CardColumns } from '../components/CardColumns';
-import { ActionRow, CardCaption, SettingsCard, ValueRow } from '../components/SettingsControls';
-import { SettingsCopy } from '../copy';
+import { Icon } from '@/components/icon';
+import { SettingsRow } from '@/components/settings-ui';
+import { useTheme } from '@/constants/theme';
+import { ActionRow, Group, LinkRow, ValueRow } from '../components/ui';
+import { SettingsCopy, SettingsRowCopy } from '../copy';
 import { clearConnectionEvents } from '../diagnostics';
 import { useShareDiagnostics } from '../useShareDiagnostics';
 
 /** Support: report a problem, share diagnostics, local report options (`MonitorSupportSettings`). */
-export function SupportSection({
-  width,
-  onReport,
-  onPrivacy,
-}: {
-  width: number;
-  onReport: () => void;
-  onPrivacy: () => void;
-}) {
+export function SupportSection({ onReport, onPrivacy }: { onReport: () => void; onPrivacy: () => void }) {
+  const { colors } = useTheme();
   const diagnostics = useShareDiagnostics();
   const [expanded, setExpanded] = useState(false);
   const [cleared, setCleared] = useState(false);
   return (
-    <CardColumns width={width}>
-      <SettingsCard key="help" title="Help & Feedback">
-        <ActionRow divider={false} title="Report a problem" help={SettingsCopy.report} action="Open" onPress={onReport} testID="support.report.open" />
-        <ActionRow title="Diagnostics" help={SettingsCopy.shareDiagnostics} action="Share" onPress={() => void diagnostics.share()} testID="support.diagnostics" />
-        <ValueRow title="Automatic error reports" help={SettingsCopy.automaticReportsUnavailable} value="Off" />
-        <ActionRow title="Reporting Privacy" help="What reports contain and where they go." action="Read" onPress={onPrivacy} />
-        {diagnostics.note ? <CardCaption>{diagnostics.note}</CardCaption> : null}
-      </SettingsCard>
-      <SettingsCard key="options">
-        <PressableScale
-          noScale
-          accessibilityLabel="Diagnostic options"
-          accessibilityState={{ expanded }}
+    <>
+      <Group label="Help & feedback" note={diagnostics.note ?? SettingsCopy.shareDiagnostics}>
+        <LinkRow
+          icon={MessageQuestionIcon}
+          title="Report a problem"
+          subtitle={SettingsRowCopy.report}
+          onPress={onReport}
+          testID="support.report.open"
+        />
+        <ActionRow
+          icon={Share08Icon}
+          title="Diagnostics"
+          subtitle={SettingsRowCopy.shareDiagnostics}
+          action="Share"
+          onPress={() => void diagnostics.share()}
+          testID="support.diagnostics"
+        />
+        <ValueRow icon={Bug01Icon} title="Automatic error reports" subtitle={SettingsRowCopy.automaticReports} value="Off" />
+        <LinkRow icon={Shield01Icon} title="Reporting Privacy" subtitle={SettingsRowCopy.reportingPrivacy} onPress={onPrivacy} last />
+      </Group>
+      <Group>
+        <SettingsRow
+          icon={Settings02Icon}
+          title="Diagnostic options"
+          subtitle="Save or remove reports on this phone"
           onPress={() => setExpanded((e) => !e)}
-          style={{ flexDirection: 'row', alignItems: 'center', minHeight: 56, gap: 10 }}
-        >
-          <View style={{ flex: 1, gap: 4 }}>
-            <MText size={13} weight="semibold">
-              Diagnostic options
-            </MText>
-            <MText size={11.5} color={colors.muted}>
-              Save or remove reports on this phone
-            </MText>
-          </View>
-          {expanded ? <ChevronUp size={20} color={colors.muted} /> : <ChevronDown size={20} color={colors.muted} />}
-        </PressableScale>
+          accessory={<Icon icon={expanded ? ArrowUp01Icon : ArrowDown01Icon} size={16} color={colors.mutedForeground} />}
+          last={!expanded}
+        />
         {expanded ? (
           <>
-            <ActionRow title="Save diagnostic report" help="Keep a copy or share it with support." action="Save" onPress={() => void diagnostics.share()} />
             <ActionRow
+              icon={Download01Icon}
+              title="Save diagnostic report"
+              subtitle={SettingsRowCopy.saveReport}
+              action="Save"
+              onPress={() => void diagnostics.share()}
+            />
+            <ActionRow
+              icon={Delete02Icon}
               title="Delete connection events"
-              help={SettingsCopy.deleteReports}
+              subtitle={SettingsRowCopy.deleteReports}
               action={cleared ? 'Deleted' : 'Delete'}
+              destructive={!cleared}
               disabled={cleared}
               onPress={() => {
                 clearConnectionEvents();
                 setCleared(true);
               }}
+              last
             />
           </>
         ) : null}
-      </SettingsCard>
-    </CardColumns>
+      </Group>
+    </>
   );
 }

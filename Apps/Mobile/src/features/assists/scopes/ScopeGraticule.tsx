@@ -9,6 +9,7 @@ import {
   type ScopeGuides,
   type TrafficLightsReading,
 } from '@/core/media';
+import { fonts } from '@/constants/theme';
 import { HISTO, SCOPE_COLORS, histogramPlotRect, plotX, plotY, vectorscopeSquare, waveformPlotRect } from './scopeGeometry';
 
 /** Solid 0 / 100, dashed safe 5 / 95, grey at the transfer's paper IRE. */
@@ -137,8 +138,7 @@ export function VectorscopeGraticule({ width, height }: { width: number; height:
               y={py + (dy / len) * 10 + 2.5}
               fill={SCOPE_COLORS.label}
               fontSize={6.5}
-              fontWeight="bold"
-              fontFamily="monospace"
+              fontFamily={fonts.semibold}
               textAnchor="middle"
             >
               {t.label}

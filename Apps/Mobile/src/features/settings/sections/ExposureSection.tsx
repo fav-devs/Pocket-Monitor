@@ -1,17 +1,27 @@
+import {
+  ColorsIcon,
+  PaintBoardIcon,
+  PlusMinus01Icon,
+  Sun02Icon,
+  Sun03Icon,
+  Timer01Icon,
+  CameraVideoIcon,
+  DropletIcon,
+  SlidersHorizontalIcon,
+} from '@hugeicons/core-free-icons';
 import { useRouter } from 'expo-router';
 import { useCamera, useCameraSession } from '@/camera';
 import type { ExposureMode } from '@/camera/types';
 import { transferForColorMode } from '@/core/media/transfer';
 import { resolveLut, useAssists } from '@/state/assists';
-import { CardColumns } from '../components/CardColumns';
-import { ActionPill, CardCaption, SegmentedControl, SettingsCard, SettingsRow, SwitchRow, ValueRow, ValueText } from '../components/SettingsControls';
+import { FieldRow, Group, LinkRow, Segments, SwitchRow, ValueRow } from '../components/ui';
 import { usePref } from '../components/usePref';
-import { SettingsCopy } from '../copy';
+import { SettingsNoteCopy, SettingsRowCopy } from '../copy';
 
 const evLabel = (ev: number) => (ev === 0 ? '0.0' : `${ev > 0 ? '+' : '−'}${Math.abs(ev).toFixed(1)}`);
 
 /** Exposure & Look: EV meter, camera exposure readouts and the monitor look. */
-export function ExposureSection({ width }: { width: number }) {
+export function ExposureSection() {
   const router = useRouter();
   const session = useCameraSession();
   const live = useCamera((s) => s.connection.phase === 'live');
@@ -26,43 +36,60 @@ export function ExposureSection({ width }: { width: number }) {
   const look = resolveLut(lut, lutOn, transferForColorMode(live ? colorMode : undefined)).label;
 
   return (
-    <CardColumns width={width}>
-      <SettingsCard key="ev" title="EV Meter">
-        <SwitchRow divider={false} title="Enabled" help={SettingsCopy.evMeter} value={evOn} onChange={(v) => setAssist('EV', v)} />
-        <SwitchRow title="Shutter as angle" help={SettingsCopy.shutterAngle} value={angle} onChange={setAngle} />
-      </SettingsCard>
-      <SettingsCard key="lut" title="LUT">
-        <SettingsRow divider={false} title="Look" help={SettingsCopy.look}>
-          <ValueText value={look} />
-        </SettingsRow>
-        <SettingsRow title="Choose look">
-          <ActionPill title="Open" onPress={() => router.push('/settings/assists')} accessibilityLabel="Choose look in View Assists" />
-        </SettingsRow>
-      </SettingsCard>
-      <SettingsCard key="camera" title="Camera exposure">
+    <>
+      <Group label="EV meter" note={SettingsNoteCopy.evMeter}>
+        <SwitchRow icon={Sun03Icon} title="Enabled" subtitle={SettingsRowCopy.evMeter} value={evOn} onChange={(v) => setAssist('EV', v)} />
+        <SwitchRow icon={Timer01Icon} title="Shutter as angle" subtitle={SettingsRowCopy.shutterAngle} value={angle} onChange={setAngle} last />
+      </Group>
+      <Group label="LUT" note={SettingsRowCopy.look}>
+        <ValueRow icon={ColorsIcon} title="Look" value={look} />
+        <LinkRow icon={PaintBoardIcon} title="Choose look" subtitle="In View Assists" onPress={() => router.push('/settings/assists')} last />
+      </Group>
+      <Group
+        label="Camera exposure"
+        note={live ? 'Change exposure from the capture controls in Live View.' : 'Connect a camera to read its exposure here.'}
+      >
         {live ? (
           <>
-            <SettingsRow divider={false} title="Exposure mode" stacked>
-              <SegmentedControl
-                options={['auto', 'manual'] as const}
+            <FieldRow icon={CameraVideoIcon} title="Exposure mode">
+              <Segments
+                label="Exposure mode"
+                options={[
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'manual', label: 'Manual' },
+                ]}
                 value={exposure.mode}
                 onChange={(m: ExposureMode) => session.control.setExposureMode(m).catch(() => {})}
-                title={(m) => (m === 'auto' ? 'Auto' : 'Manual')}
               />
-            </SettingsRow>
-            <ValueRow title="ISO" value={exposure.isoAuto ? `Auto${exposure.iso ? ` · ${exposure.iso}` : ''}` : String(exposure.iso ?? '—')} />
+            </FieldRow>
             <ValueRow
-              title="Shutter"
-              value={exposure.shutterAuto ? `Auto${exposure.shutterDenom ? ` · 1/${exposure.shutterDenom}` : ''}` : exposure.shutterDenom ? `1/${exposure.shutterDenom}` : '—'}
+              icon={SlidersHorizontalIcon}
+              title="ISO"
+              value={exposure.isoAuto ? `Auto${exposure.iso ? ` · ${exposure.iso}` : ''}` : String(exposure.iso ?? '—')}
             />
-            <ValueRow title="EV" value={evLabel(exposure.ev)} />
-            <ValueRow title="White balance" value={wb.preset === 'auto' ? `Auto${wb.kelvin ? ` · ${wb.kelvin}K` : ''}` : `${wb.kelvin ?? '—'}K`} />
-            <CardCaption>Change exposure from the capture controls in Live View.</CardCaption>
+            <ValueRow
+              icon={Timer01Icon}
+              title="Shutter"
+              value={
+                exposure.shutterAuto
+                  ? `Auto${exposure.shutterDenom ? ` · 1/${exposure.shutterDenom}` : ''}`
+                  : exposure.shutterDenom
+                    ? `1/${exposure.shutterDenom}`
+                    : '—'
+              }
+            />
+            <ValueRow icon={PlusMinus01Icon} title="EV" value={evLabel(exposure.ev)} />
+            <ValueRow
+              icon={DropletIcon}
+              title="White balance"
+              value={wb.preset === 'auto' ? `Auto${wb.kelvin ? ` · ${wb.kelvin}K` : ''}` : `${wb.kelvin ?? '—'}K`}
+              last
+            />
           </>
         ) : (
-          <CardCaption>Connect a camera to read its exposure here.</CardCaption>
+          <ValueRow icon={Sun02Icon} title="Exposure" value="Not connected" last />
         )}
-      </SettingsCard>
-    </CardColumns>
+      </Group>
+    </>
   );
 }

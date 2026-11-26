@@ -1,40 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, TextInput, View } from 'react-native';
-import { MText, colors, fonts } from '@/theme';
-import { CameraPageButton } from './CameraPageButton';
+import { useEffect, useState } from 'react';
+import { Text, View } from 'react-native';
+import { Button } from '@/components/button';
+import { Sheet } from '@/components/sheet';
+import { TextField } from '@/components/text-field';
+import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
 
-function DialogFrame({ visible, onClose, children }: { visible: boolean; onClose: () => void; children: ReactNode }) {
-  return (
-    <Modal transparent visible={visible} onRequestClose={onClose} animationType="fade">
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <Pressable
-          accessibilityLabel="Dismiss"
-          onPress={onClose}
-          style={{ flex: 1, backgroundColor: colors.scrim, alignItems: 'center', justifyContent: 'center', padding: 24 }}
-        >
-          <Pressable
-            onPress={() => {}}
-            accessibilityRole="alert"
-            style={{
-              width: '100%',
-              maxWidth: 360,
-              borderRadius: 16,
-              backgroundColor: colors.surface,
-              borderWidth: 1,
-              borderColor: colors.borderStrong,
-              padding: 18,
-              gap: 12,
-            }}
-          >
-            {children}
-          </Pressable>
-        </Pressable>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-/** A two-button confirmation (SwiftUI `.alert` with a destructive role). Works on web too. */
+/** A two-button confirmation as a compact sheet (a destructive choice reads red). Works on web too. */
 export function ConfirmDialog({
   visible,
   title,
@@ -52,23 +23,25 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <DialogFrame visible={visible} onClose={onCancel}>
-      <MText size={16} weight="semibold">
-        {title}
-      </MText>
-      <MText size={12.5} color={colors.muted} style={{ lineHeight: 18 }}>
-        {message}
-      </MText>
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 4 }}>
-        <CameraPageButton title="Cancel" onPress={onCancel} />
-        <CameraPageButton title={confirmTitle} destructive={destructive} primary={!destructive} onPress={onConfirm} />
+    <Sheet visible={visible} title={title} onClose={onCancel} expandable={false}>
+      <Text style={styles.message}>{message}</Text>
+      <View style={styles.actions}>
+        <Button
+          title={confirmTitle}
+          size="lg"
+          variant={destructive ? 'secondary' : 'primary'}
+          destructive={destructive}
+          onPress={onConfirm}
+        />
+        <Button title="Cancel" variant="ghost" onPress={onCancel} />
       </View>
-    </DialogFrame>
+    </Sheet>
   );
 }
 
-/** A one-field prompt (`Rename camera`). */
+/** A one-field prompt (`Rename camera`), the ai-cut rename sheet. */
 export function TextPromptDialog({
   visible,
   title,
@@ -88,45 +61,34 @@ export function TextPromptDialog({
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }) {
+  const styles = useThemedStyles(createStyles);
   const [value, setValue] = useState(initialValue);
   useEffect(() => {
     if (visible) setValue(initialValue);
   }, [visible, initialValue]);
   const trimmed = value.trim();
   return (
-    <DialogFrame visible={visible} onClose={onCancel}>
-      <MText size={16} weight="semibold">
-        {title}
-      </MText>
-      <MText size={12.5} color={colors.muted}>
-        {message}
-      </MText>
-      <TextInput
+    <Sheet visible={visible} title={title} onClose={onCancel} expandable={false}>
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+      <TextField
         value={value}
         onChangeText={setValue}
         placeholder={placeholder}
-        placeholderTextColor={colors.faint}
         autoFocus
+        selectTextOnFocus
         maxLength={40}
         returnKeyType="done"
         onSubmitEditing={() => trimmed && onSubmit(trimmed)}
         accessibilityLabel={placeholder ?? title}
-        style={{
-          minHeight: 44,
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          backgroundColor: colors.background,
-          borderWidth: 1,
-          borderColor: colors.border,
-          color: colors.text,
-          fontFamily: fonts.medium,
-          fontSize: 14,
-        }}
       />
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 9 }}>
-        <CameraPageButton title="Cancel" onPress={onCancel} />
-        <CameraPageButton title={confirmTitle} primary disabled={!trimmed} onPress={() => onSubmit(trimmed)} />
-      </View>
-    </DialogFrame>
+      <Button title={confirmTitle} size="lg" disabled={!trimmed} onPress={() => onSubmit(trimmed)} />
+    </Sheet>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    message: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: colors.mutedForeground },
+    actions: { gap: spacing.xs, paddingTop: spacing.xs },
+  };
 }

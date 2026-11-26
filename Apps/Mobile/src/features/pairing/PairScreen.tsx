@@ -1,72 +1,43 @@
+import { BluetoothIcon, EyeIcon, Location01Icon, Share08Icon, Wifi01Icon } from '@hugeicons/core-free-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Bluetooth, MapPin, Wifi } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { useCameraSession } from '@/camera';
 import { modelDisplayName } from '@/camera/defaults';
 import type { CameraNetworkPath, DiscoveredCamera, SavedCamera } from '@/camera/types';
+import { spacing } from '@/constants/theme';
 import { ProblemReportSheet } from '@/features/settings/ProblemReportSheet';
 import { useShareDiagnostics } from '@/features/settings/useShareDiagnostics';
 import { useSavedCameras } from '@/state/savedCameras';
-import { MText, colors, withAlpha } from '@/theme';
-import { DeviceRow, InstructionCard, NoteCard } from './components/PairPieces';
-import { PairPage } from './components/PairPage';
-import { PairingWizardCopy, PermissionCopy, SetupChooserCopy, SetupChooserText, StartupConnectionCopy, type SetupKind } from './copy';
+import { DeviceRow, InfoRow, InstructionCard, ListGroup, NoteCard } from './components/PairPieces';
+import { PairPage, type PairMenuItem } from './components/PairPage';
+import { NetworkSetupCopy, PairingWizardCopy, PermissionCopy, SetupChooserCopy, SetupChooserText, StartupConnectionCopy, type SetupKind } from './copy';
 import { saveWifiPassword } from './credentials';
 import { rssiToBars } from './presentation';
 import { HotspotForm, SetupChooser, SoftApSummary, StationNetworkForm, acceptsPassword, type NetworkDraft } from './SetupFlow';
 import { useConnectActions } from './useConnectActions';
 
-type Stage = 'permission' | 'find' | 'setup';
+/** Permission explainer → scan → choose a setup → (Wi-Fi or Hotspot) network details. */
+type Stage = 'permission' | 'find' | 'setup' | 'details';
 
 let permissionsExplained = false;
 
 const steps = PairingWizardCopy.titles.map((title, i) => ({ title, subtitle: PairingWizardCopy.rail[i] }));
+const permissionIcons = { bluetooth: BluetoothIcon, localNetwork: Wifi01Icon, location: Location01Icon } as const;
 
 function PermissionList() {
-  const icons = { bluetooth: Bluetooth, localNetwork: Wifi, location: MapPin } as const;
   return (
-    <View style={{ gap: 8 }}>
-      {PermissionCopy.items.map((item) => {
-        const Icon = icons[item.id as keyof typeof icons];
-        return (
-          <View
-            key={item.id}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-              padding: 13,
-              borderRadius: 11,
-              backgroundColor: 'rgba(255,255,255,0.03)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.06)',
-            }}
-          >
-            <View
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 9,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: withAlpha(colors.accent, 0.12),
-              }}
-            >
-              <Icon size={16} color={colors.accent} />
-            </View>
-            <View style={{ flex: 1, gap: 2 }}>
-              <MText size={13} weight="semibold">
-                {item.title}
-              </MText>
-              <MText size={11} color={colors.muted}>
-                {item.detail}
-              </MText>
-            </View>
-          </View>
-        );
-      })}
-    </View>
+    <ListGroup>
+      {PermissionCopy.items.map((item, i) => (
+        <InfoRow
+          key={item.id}
+          icon={permissionIcons[item.id as keyof typeof permissionIcons]}
+          title={item.title}
+          detail={item.detail}
+          last={i === PermissionCopy.items.length - 1}
+        />
+      ))}
+    </ListGroup>
   );
 }
 
@@ -116,9 +87,9 @@ export default function PairScreen() {
   const subjectName = subject?.name ?? null;
 
   const exit = () => (router.canGoBack() ? router.back() : router.replace('/'));
-  const menuItems = [
-    { id: 'diagnostics', title: 'Share Diagnostics', onPress: () => void diagnostics.share() },
-    { id: 'watch', title: 'Watch a feed', onPress: () => router.push('/watcher') },
+  const menuItems: PairMenuItem[] = [
+    { id: 'diagnostics', title: 'Share Diagnostics', icon: Share08Icon, onPress: () => void diagnostics.share() },
+    { id: 'watch', title: 'Watch a feed', icon: EyeIcon, onPress: () => router.push('/watcher') },
   ];
 
   const pathFor = (k: SetupKind): CameraNetworkPath => {
@@ -163,7 +134,7 @@ export default function PairScreen() {
     subtitle: `${modelDisplayName(cam.model)}${cam.pairable ? '' : ` · ${notReady.toLowerCase()}`}`,
     selected: cam.id === selection,
     bars: rssiToBars(cam.rssi),
-    badge: savedIds.has(cam.id) || cam.saved ? 'SAVED' : undefined,
+    badge: savedIds.has(cam.id) || cam.saved ? 'Saved' : undefined,
     disabled: !cam.pairable,
   }));
 
@@ -199,12 +170,18 @@ export default function PairScreen() {
     hint = selected ? `Selected ${selected.name}` : PairingWizardCopy.hints[0];
     primary = { title: 'Continue', enabled: !!selected?.pairable, onPress: () => setStage('setup') };
     back = saved.length ? { title: 'Back', onPress: exit } : null;
+    const looking = scanning && !scanLooksEmpty;
     page = (
       <>
-        {devices.map((d) => (
-          <DeviceRow key={d.id} device={d} onPress={() => setSelection(d.id)} />
-        ))}
-        {!found.length ? <NoteCard title={scanning && !scanLooksEmpty ? 'Looking for cameras' : 'No cameras yet'} /> : null}
+        {devices.length ? (
+          <ListGroup label="Nearby">
+            {devices.map((d, i) => (
+              <DeviceRow key={d.id} device={d} onPress={() => setSelection(d.id)} last={i === devices.length - 1} />
+            ))}
+          </ListGroup>
+        ) : (
+          <NoteCard title={looking ? 'Looking for cameras' : 'No cameras yet'} busy={looking} />
+        )}
         <InstructionCard
           instruction={
             scanLooksEmpty && !found.length
@@ -214,24 +191,21 @@ export default function PairScreen() {
         />
       </>
     );
-  } else {
+  } else if (stage === 'setup') {
     const chosen = kind ? SetupChooserCopy[kind] : null;
-    const who = subject ? `${subject.name} · ${modelDisplayName(subject.model)}. ` : '';
     title = SetupChooserText.title;
-    body = addSetupFor
-      ? `${who}Choose another way to reach this camera.`
-      : `${who}Camera Wi-Fi works anywhere with nothing to type.`;
+    body = addSetupFor ? 'Choose another way to reach this camera.' : 'Camera Wi-Fi works anywhere with nothing to type.';
     hint = chosen ? `${chosen.title} · ${chosen.tag}` : 'Choose a setup to continue';
-    primary = {
-      title: kind === 'station' ? 'Connect over Wi-Fi' : kind === 'hotspot' ? 'Connect over Hotspot' : 'Connect',
-      enabled: !!kind && setupValid && !!subject,
-      onPress: () => void finishSetup(),
-    };
+    // Camera Wi-Fi needs nothing typed, so it connects from here; the others ask for a network next.
+    primary =
+      kind === 'softap'
+        ? { title: 'Connect', enabled: setupValid && !!subject, onPress: () => void finishSetup() }
+        : { title: 'Continue', enabled: !!kind && !!subject, onPress: () => setStage('details') };
     back = { title: 'Back', onPress: () => (addSetupFor ? exit() : setStage('find')) };
     const detail = subject ? `${subject.name} · ${modelDisplayName(subject.model)}` : '';
     const added = addSetupFor ? { [addSetupFor.path.kind]: addSetupFor.path.ssid || 'saved' } : undefined;
     page = (
-      <View style={{ gap: 16 }}>
+      <View style={{ gap: spacing.md }}>
         <SetupChooser
           showTitle={false}
           detail={detail}
@@ -243,10 +217,20 @@ export default function PairScreen() {
           }}
         />
         {kind === 'softap' ? <SoftApSummary cameraName={subjectName ?? 'The camera'} /> : null}
-        {kind === 'station' ? <StationNetworkForm draft={draft} onChange={setDraft} /> : null}
-        {kind === 'hotspot' ? <HotspotForm draft={draft} onChange={setDraft} /> : null}
       </View>
     );
+  } else {
+    const hotspot = kind === 'hotspot';
+    title = hotspot ? 'Personal Hotspot' : NetworkSetupCopy.networkTitle;
+    body = hotspot ? SetupChooserCopy.hotspot.body : NetworkSetupCopy.networkHint;
+    hint = kind ? `${SetupChooserCopy[kind].title} · ${SetupChooserCopy[kind].tag}` : '';
+    primary = {
+      title: kind === 'station' ? 'Connect over Wi-Fi' : kind === 'hotspot' ? 'Connect over Hotspot' : 'Connect',
+      enabled: !!kind && setupValid && !!subject,
+      onPress: () => void finishSetup(),
+    };
+    back = { title: 'Back', onPress: () => setStage('setup') };
+    page = kind === 'station' ? <StationNetworkForm draft={draft} onChange={setDraft} /> : <HotspotForm draft={draft} onChange={setDraft} />;
   }
 
   return (
@@ -257,9 +241,9 @@ export default function PairScreen() {
         currentStep={0}
         title={title}
         body={body}
-        target={subjectName ?? 'Nothing selected yet'}
+        target={(stage === 'setup' || stage === 'details') && subject ? `${subject.name} · ${modelDisplayName(subject.model)}` : null}
         hint={diagnostics.note ?? hint}
-        progress={stage === 'find' && scanning && !scanLooksEmpty ? 'Scanning for camera…' : null}
+        progress={stage === 'find' && scanning && !scanLooksEmpty && found.length ? 'Scanning for camera…' : null}
         primaryAction={primary}
         backAction={back}
         onExit={exit}

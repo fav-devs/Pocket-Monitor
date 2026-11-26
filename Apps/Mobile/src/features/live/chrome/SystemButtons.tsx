@@ -1,21 +1,30 @@
-import { ChevronLeft, Clapperboard, Expand, Lock, LockOpen, Settings, Shrink } from 'lucide-react-native';
+import {
+  ArrowExpand01Icon,
+  ArrowLeft01Icon,
+  ArrowShrink02Icon,
+  Film02Icon,
+  LockIcon,
+  Settings02Icon,
+  SquareUnlock02Icon,
+} from '@hugeicons/core-free-icons';
 import { Pressable, View } from 'react-native';
-import { MText, colors, radius } from '@/theme';
+import { Icon } from '@/components/icon';
+import { type ThemeColors, useThemedStyles } from '@/constants/theme';
 import { haptics } from '../haptics';
 import { useLiveUi } from '../liveUiStore';
-import { ChromeButton } from './primitives';
+import { RailButton, onVideo } from './primitives';
 
 /** `LiveLockButton`: locks every other live control (lock stays reachable). */
-export function LiveLockButton({ size }: { size: number }) {
+export function LiveLockButton() {
   const locked = useLiveUi((s) => s.locked);
   const set = useLiveUi((s) => s.set);
   return (
-    <ChromeButton
+    <RailButton
       testID="monitor.system.lock"
-      icon={locked ? Lock : LockOpen}
+      icon={locked ? LockIcon : SquareUnlock02Icon}
       label={locked ? 'Unlock controls' : 'Lock controls'}
+      caption={locked ? 'Locked' : 'Lock'}
       active={locked}
-      size={size}
       onPress={() => {
         haptics.medium();
         // The Motion Control run pill stays: Stop must remain reachable while locked.
@@ -27,54 +36,40 @@ export function LiveLockButton({ size }: { size: number }) {
 }
 
 /** `LiveDispToggle`: DISP 1 (live chrome) ↔ DISP 2 (clean picture). Two dashes show which. */
-export function LiveDispToggle({ width, height }: { width: number; height: number }) {
+export function LiveDispToggle() {
   const disp = useLiveUi((s) => s.disp);
   const set = useLiveUi((s) => s.set);
+  const styles = useThemedStyles(createStyles);
   return (
-    <Pressable
+    <RailButton
       testID="monitor.system.display"
-      accessibilityRole="button"
-      accessibilityLabel="Display"
+      label="Display"
+      caption="DISP"
       accessibilityValue={{ text: disp === 'live' ? 'Controls shown' : 'Clean picture' }}
-      hitSlop={Math.max(0, (44 - height) / 2)}
       onPress={() => {
         haptics.light();
         set({ disp: disp === 'live' ? 'clean' : 'live', captureSheet: null, zoomDialOpen: false });
       }}
-      style={({ pressed }) => ({
-        width,
-        height,
-        borderRadius: radius.md + 2,
-        backgroundColor: 'rgba(20,21,22,0.78)',
-        borderWidth: 1,
-        borderColor: colors.border,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        opacity: pressed ? 0.72 : 1,
-      })}
     >
-      <MText size={13} weight="semibold" tracking={0.8} color={colors.secondary}>
-        DISP
-      </MText>
-      <View style={{ flexDirection: 'row', gap: 3 }}>
-        <View style={{ width: 11, height: 3, borderRadius: 1.5, backgroundColor: disp === 'live' ? colors.accent : colors.faint }} />
-        <View style={{ width: 11, height: 3, borderRadius: 1.5, backgroundColor: disp === 'clean' ? colors.accent : colors.faint }} />
+      <View style={styles.dashes}>
+        <View style={[styles.dash, disp === 'live' && styles.dashOn]} />
+        <View style={[styles.dash, disp === 'clean' && styles.dashOn]} />
       </View>
-    </Pressable>
+    </RailButton>
   );
 }
 
-export function LiveSettingsButton({ size, onPress, disabled }: { size: number; onPress: () => void; disabled?: boolean }) {
-  return <ChromeButton testID="monitor.system.settings" icon={Settings} label="Settings" size={size} onPress={onPress} disabled={disabled} />;
+export function LiveSettingsButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
+  return <RailButton testID="monitor.system.settings" icon={Settings02Icon} label="Settings" onPress={onPress} disabled={disabled} />;
 }
 
-export function LiveMediaButton({ size, onPress, disabled }: { size: number; onPress: () => void; disabled?: boolean }) {
-  return <ChromeButton testID="monitor.system.media" icon={Clapperboard} label="Camera media" size={size} onPress={onPress} disabled={disabled} />;
+export function LiveMediaButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
+  return <RailButton testID="monitor.system.media" icon={Film02Icon} label="Camera media" caption="Media" onPress={onPress} disabled={disabled} />;
 }
 
-/** Back to the camera list (closes the viewfinder, disconnects). */
+/** Back to the camera list (closes the viewfinder, disconnects). ai-cut's close: a plain white glyph. */
 export function LiveBackButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <Pressable
       testID="monitor.system.back"
@@ -82,41 +77,39 @@ export function LiveBackButton({ onPress, disabled }: { onPress: () => void; dis
       accessibilityLabel="Back to cameras"
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => ({
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: 'rgba(0,0,0,0.45)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: disabled ? 0.4 : pressed ? 0.72 : 1,
-      })}
+      hitSlop={8}
+      style={({ pressed }) => [styles.back, disabled && { opacity: 0.4 }, pressed && { opacity: 0.7 }]}
     >
-      <ChevronLeft size={22} color={colors.text} />
+      <Icon icon={ArrowLeft01Icon} size={20} color={onVideo.ink} strokeWidth={2} />
     </Pressable>
   );
 }
 
 /** `PortraitAspectToggle`: FIT ↔ FILL for the portrait picture. */
 export function PortraitAspectToggle({ fill, onPress, disabled }: { fill: boolean; onPress: () => void; disabled?: boolean }) {
-  const Icon = fill ? Shrink : Expand;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={fill ? 'Fit picture' : 'Fill picture'}
-      disabled={disabled}
+    <RailButton
+      icon={fill ? ArrowShrink02Icon : ArrowExpand01Icon}
+      label={fill ? 'Fit picture' : 'Fill picture'}
+      caption={fill ? 'Fit' : 'Fill'}
       onPress={onPress}
-      style={({ pressed }) => ({
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: 'rgba(0,0,0,0.55)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: disabled ? 0.4 : pressed ? 0.72 : 1,
-      })}
-    >
-      <Icon size={18} color={colors.text} />
-    </Pressable>
+      disabled={disabled}
+    />
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    dashes: { flexDirection: 'row' as const, gap: 3 },
+    dash: { width: 9, height: 3, borderRadius: 1.5, backgroundColor: onVideo.inkFaint },
+    dashOn: { backgroundColor: colors.accent },
+    back: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      backgroundColor: onVideo.pill,
+    },
+  };
 }

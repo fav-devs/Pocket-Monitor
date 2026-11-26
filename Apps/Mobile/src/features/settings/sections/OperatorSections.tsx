@@ -1,12 +1,31 @@
-import { View } from 'react-native';
+import {
+  Activity01Icon,
+  Alert02Icon,
+  CropIcon,
+  FocusPointIcon,
+  Layers01Icon,
+  RecordIcon,
+  SmartPhone01Icon,
+  Sun02Icon,
+  Sun03Icon,
+  Tap02Icon,
+  Target02Icon,
+  Timer01Icon,
+  TouchInteraction01Icon,
+  ViewOffIcon,
+} from '@hugeicons/core-free-icons';
+import { ResetAction } from '@/components/reset-action';
+import { Slider } from '@/components/slider';
 import { useAssists } from '@/state/assists';
-import { CardColumns } from '../components/CardColumns';
-import { CardCaption, SegmentedControl, SettingsCard, SettingsRow, Stepper, SwitchRow, ToggleTile } from '../components/SettingsControls';
+import { FieldRow, Group, Segments, SwitchRow } from '../components/ui';
 import { resetPrefs, usePref } from '../components/usePref';
-import { SettingsCopy } from '../copy';
+import { SettingsCopy, SettingsNoteCopy, SettingsRowCopy } from '../copy';
+import { settingsFeedback } from '../components/feedback';
+
+const percent = (v: number) => `${Math.round(v * 100)}%`;
 
 /** Display: panel, recording chrome and picture fit (`MonitorPanelSettings`, display sections). */
-export function DisplaySection({ width }: { width: number }) {
+export function DisplaySection() {
   const [hdr, setHdr] = usePref('hdrChrome');
   const [border, setBorder] = usePref('showRecordingBorder');
   const [hide, setHide] = usePref('hideChromeWhileRecording');
@@ -16,51 +35,63 @@ export function DisplaySection({ width }: { width: number }) {
   const ev = useAssists((st) => st.on.EV);
   const setAssist = useAssists((st) => st.setOn);
   return (
-    <CardColumns width={width}>
-      <SettingsCard key="panel" title="Panel">
-        <SwitchRow divider={false} title="HDR display" help={SettingsCopy.hdrPanel} value={hdr} onChange={setHdr} />
-      </SettingsCard>
-      <SettingsCard
-        key="picture"
-        title="Picture"
-        onReset={() => resetPrefs(['pictureFit', 'chromeOpacity'])}
+    <>
+      <Group label="Panel" note={SettingsCopy.hdrPanel.replace(SettingsRowCopy.hdrPanel, '').trim()}>
+        <SwitchRow icon={Sun03Icon} title="HDR display" subtitle={SettingsRowCopy.hdrPanel} value={hdr} onChange={setHdr} last />
+      </Group>
+      <Group
+        label="Picture"
+        trailing={<ResetAction label="Reset" accessibilityLabel="Reset picture" onReset={() => resetPrefs(['pictureFit', 'chromeOpacity'])} />}
       >
-        <SettingsRow divider={false} title="Picture fit" help={SettingsCopy.pictureFit} stacked>
-          <SegmentedControl options={['fit', 'fill'] as const} value={fit} onChange={setFit} title={(v) => (v === 'fit' ? 'Fit' : 'Fill')} />
-        </SettingsRow>
-        <SettingsRow title="Chrome opacity" help={SettingsCopy.chromeOpacity}>
-          <Stepper
-            label="Chrome opacity"
+        <FieldRow icon={CropIcon} title="Picture fit" subtitle={SettingsRowCopy.pictureFit}>
+          <Segments
+            label="Picture fit"
+            options={[
+              { value: 'fit', label: 'Fit' },
+              { value: 'fill', label: 'Fill' },
+            ]}
+            value={fit}
+            onChange={setFit}
+          />
+        </FieldRow>
+        <FieldRow icon={Layers01Icon} title="Chrome opacity" subtitle={SettingsRowCopy.chromeOpacity} value={percent(opacity)} last>
+          <Slider
             value={opacity}
             min={0.4}
             max={1}
             step={0.1}
-            onChange={setOpacity}
-            format={(v) => `${Math.round(v * 100)}%`}
+            format={percent}
+            onChange={(v) => setOpacity(Number(v.toFixed(2)))}
+            onEnd={(v) => {
+              settingsFeedback();
+              setOpacity(Number(v.toFixed(2)));
+            }}
           />
-        </SettingsRow>
-      </SettingsCard>
-      <SettingsCard
-        key="recording"
-        title="While recording"
-        onReset={() => resetPrefs(['showRecordingBorder', 'hideChromeWhileRecording'])}
+        </FieldRow>
+      </Group>
+      <Group
+        label="While recording"
+        trailing={
+          <ResetAction
+            label="Reset"
+            accessibilityLabel="Reset while recording"
+            onReset={() => resetPrefs(['showRecordingBorder', 'hideChromeWhileRecording'])}
+          />
+        }
       >
-        <SwitchRow divider={false} title="Recording border" help={SettingsCopy.recordingBorder} value={border} onChange={setBorder} />
-        <SwitchRow title="Hide chrome" help={SettingsCopy.hideChrome} value={hide} onChange={setHide} />
-      </SettingsCard>
-      <SettingsCard key="pins" title="DISP 1 readouts">
-        <CardCaption>Readouts that stay on the clean picture. Assist tools have their own page.</CardCaption>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, paddingBottom: 9 }}>
-          <ToggleTile title="Link stats" value={stats} onChange={setStats} />
-          <ToggleTile title="EV meter" value={ev} onChange={(v) => setAssist('EV', v)} />
-        </View>
-      </SettingsCard>
-    </CardColumns>
+        <SwitchRow icon={RecordIcon} title="Recording border" subtitle={SettingsRowCopy.recordingBorder} value={border} onChange={setBorder} />
+        <SwitchRow icon={ViewOffIcon} title="Hide chrome" subtitle={SettingsRowCopy.hideChrome} value={hide} onChange={setHide} last />
+      </Group>
+      <Group label="DISP 1 readouts" note="Readouts that stay on the clean picture. Assist tools have their own page.">
+        <SwitchRow icon={Activity01Icon} title="Link stats" subtitle={SettingsRowCopy.linkStats} value={stats} onChange={setStats} />
+        <SwitchRow icon={Sun02Icon} title="EV meter" subtitle={SettingsRowCopy.evMeter} value={ev} onChange={(v) => setAssist('EV', v)} last />
+      </Group>
+    </>
   );
 }
 
 /** Operator: touch & safety, recording and picture gestures (`MonitorOperatorSafetySettings`). */
-export function OperatorSection({ width }: { width: number }) {
+export function OperatorSection() {
   const [confirm, setConfirm] = usePref('confirmStopRecording');
   const [haptics, setHaptics] = usePref('recordHaptics');
   const [awake, setAwake] = usePref('keepScreenAwake');
@@ -69,24 +100,49 @@ export function OperatorSection({ width }: { width: number }) {
   const [tapTrack, setTapTrack] = usePref('tapToTrack');
   const [level, setLevel] = usePref('doubleTapLevel');
   return (
-    <CardColumns width={width}>
-      <SettingsCard key="safety" title="Touch & safety">
-        <SwitchRow divider={false} title="Record confirmation" help={SettingsCopy.recordConfirmation} value={confirm} onChange={setConfirm} />
-        <SwitchRow title="Haptics" help={SettingsCopy.gimbalHaptics} value={haptics} onChange={setHaptics} />
-        <SwitchRow title="Keep screen awake" help={SettingsCopy.keepScreenAwake} value={awake} onChange={setAwake} />
-      </SettingsCard>
-      <SettingsCard key="record" title="Recording">
-        <SwitchRow divider={false} title="Record countdown" help={SettingsCopy.recordCountdown} value={countdown} onChange={setCountdown} />
-      </SettingsCard>
-      <SettingsCard
-        key="gestures"
-        title="Picture gestures"
-        onReset={() => resetPrefs(['tapToFocus', 'tapToTrack', 'doubleTapLevel'])}
+    <>
+      <Group label="Touch & safety" note={SettingsNoteCopy.keepScreenAwake}>
+        <SwitchRow
+          icon={Alert02Icon}
+          title="Record confirmation"
+          subtitle={SettingsRowCopy.recordConfirmation}
+          value={confirm}
+          onChange={setConfirm}
+        />
+        <SwitchRow icon={TouchInteraction01Icon} title="Haptics" subtitle={SettingsRowCopy.gimbalHaptics} value={haptics} onChange={setHaptics} />
+        <SwitchRow
+          icon={SmartPhone01Icon}
+          title="Keep screen awake"
+          subtitle={SettingsRowCopy.keepScreenAwake}
+          value={awake}
+          onChange={setAwake}
+          last
+        />
+      </Group>
+      <Group label="Recording">
+        <SwitchRow
+          icon={Timer01Icon}
+          title="Record countdown"
+          subtitle={SettingsRowCopy.recordCountdown}
+          value={countdown}
+          onChange={setCountdown}
+          last
+        />
+      </Group>
+      <Group
+        label="Picture gestures"
+        trailing={
+          <ResetAction
+            label="Reset"
+            accessibilityLabel="Reset picture gestures"
+            onReset={() => resetPrefs(['tapToFocus', 'tapToTrack', 'doubleTapLevel'])}
+          />
+        }
       >
-        <SwitchRow divider={false} title="Tap to focus" help={SettingsCopy.tapToFocus} value={tapFocus} onChange={setTapFocus} />
-        <SwitchRow title="Hold to track" help={SettingsCopy.tapToTrack} value={tapTrack} onChange={setTapTrack} />
-        <SwitchRow title="Double-tap to level" help={SettingsCopy.doubleTapLevel} value={level} onChange={setLevel} />
-      </SettingsCard>
-    </CardColumns>
+        <SwitchRow icon={FocusPointIcon} title="Tap to focus" subtitle={SettingsRowCopy.tapToFocus} value={tapFocus} onChange={setTapFocus} />
+        <SwitchRow icon={Target02Icon} title="Hold to track" subtitle={SettingsRowCopy.tapToTrack} value={tapTrack} onChange={setTapTrack} />
+        <SwitchRow icon={Tap02Icon} title="Double-tap to level" subtitle={SettingsRowCopy.doubleTapLevel} value={level} onChange={setLevel} last />
+      </Group>
+    </>
   );
 }

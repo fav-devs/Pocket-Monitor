@@ -1,10 +1,10 @@
-import { Eye, EyeOff } from 'lucide-react-native';
+import { ViewIcon, ViewOffSlashIcon } from '@hugeicons/core-free-icons';
 import { useState } from 'react';
-import { TextInput, View, type TextInputProps } from 'react-native';
-import { MText, colors, fonts } from '@/theme';
-import { PressableScale } from '@/ui';
+import { Platform, Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { Icon } from '@/components/icon';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 
-/** Caps label over a dark input (`secureField` / `InputStyle`). */
+/** A labelled text field (`secureField` / `InputStyle`), with a show/hide toggle for passwords. */
 export function FormField({
   label,
   value,
@@ -23,24 +23,14 @@ export function FormField({
   placeholder?: string;
   testID?: string;
 } & Omit<TextInputProps, 'value' | 'onChangeText' | 'secureTextEntry'>) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [reveal, setReveal] = useState(false);
+  const [focused, setFocused] = useState(false);
   return (
-    <View style={{ gap: 6 }}>
-      <MText size={8.5} weight="bold" tracking={1.5} color={colors.faint}>
-        {label}
-      </MText>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          minHeight: 46,
-          borderRadius: 12,
-          backgroundColor: colors.surface,
-          borderWidth: 1,
-          borderColor: colors.border,
-          paddingLeft: 14,
-        }}
-      >
+    <View style={styles.block}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={[styles.field, focused && styles.fieldFocused]}>
         <TextInput
           testID={testID}
           value={value}
@@ -49,26 +39,54 @@ export function FormField({
           autoCapitalize="none"
           autoCorrect={false}
           placeholder={placeholder}
-          placeholderTextColor={colors.faint}
+          placeholderTextColor={colors.mutedForeground}
           accessibilityLabel={label}
-          style={{ flex: 1, minHeight: 44, color: colors.text, fontFamily: fonts.medium, fontSize: 14, outlineStyle: 'none' } as object}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={[styles.input, Platform.OS === 'web' && ({ outlineStyle: 'none' } as object)]}
           {...rest}
         />
         {secure ? (
-          <PressableScale
+          <Pressable
+            accessibilityRole="button"
             accessibilityLabel={reveal ? 'Hide password' : 'Show password'}
             onPress={() => setReveal((r) => !r)}
-            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            style={({ pressed }) => [styles.reveal, pressed && styles.pressed]}
           >
-            {reveal ? <EyeOff size={17} color={colors.muted} /> : <Eye size={17} color={colors.muted} />}
-          </PressableScale>
+            <Icon icon={reveal ? ViewOffSlashIcon : ViewIcon} size={20} color={colors.mutedForeground} />
+          </Pressable>
         ) : null}
       </View>
-      {hint ? (
-        <MText size={10.5} color={colors.muted} style={{ lineHeight: 15 }}>
-          {hint}
-        </MText>
-      ) : null}
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    block: { gap: spacing.sm },
+    label: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground, paddingHorizontal: 4 },
+    field: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      minHeight: 50,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+      paddingLeft: spacing.md,
+    },
+    fieldFocused: { borderColor: colors.primary },
+    input: {
+      flex: 1,
+      minHeight: 48,
+      color: colors.foreground,
+      fontFamily: fonts.regular,
+      fontSize: 16,
+      paddingRight: spacing.md,
+    },
+    reveal: { width: 48, height: 48, alignItems: 'center' as const, justifyContent: 'center' as const },
+    pressed: { opacity: 0.6 },
+    hint: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, color: colors.mutedForeground, paddingHorizontal: 4 },
+  };
 }

@@ -18,7 +18,7 @@ import {
   type Rect,
   type Size,
 } from '@/core/media';
-import { colors } from '@/theme';
+import { useTheme } from '@/constants/theme';
 import { useAssists, type ScopePanelId } from '@/state/assists';
 
 export interface MovableScopePanelProps {
@@ -57,6 +57,7 @@ export function MovableScopePanel({
   accessibilityLabel,
   children,
 }: MovableScopePanelProps) {
+  const { colors } = useTheme();
   const slot = canvasSlot(canvas.width, canvas.height);
   const placement = useAssists((s) => s.panels[id][slot]);
   const setPanel = useAssists((s) => s.setPanel);
@@ -173,11 +174,11 @@ export function MovableScopePanel({
       {showGrip ? (
         <View
           accessibilityLabel={`Resize ${accessibilityLabel}`}
-          style={{ position: 'absolute', left: size.width - 12, top: size.height - 12, width: 44, height: 44 }}
+          style={{ position: 'absolute', left: size.width - 30, top: size.height - 30, width: 44, height: 44, paddingLeft: 12, paddingTop: 12 }}
           {...grip.panHandlers}
         >
           <Svg width={14} height={14}>
-            <Path d="M14 14 H0 M14 14 V0" stroke={resizing ? colors.accent : colors.muted} strokeWidth={1.5} />
+            <Path d="M13 4 V9 A4 4 0 0 1 9 13 H4" stroke={resizing ? colors.primary : 'rgba(255,255,255,0.55)'} strokeWidth={2} strokeLinecap="round" fill="none" />
           </Svg>
         </View>
       ) : null}

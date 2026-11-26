@@ -1,27 +1,25 @@
+import { Key01Icon, LiveStreaming01Icon, QrCode01Icon, SignalFull02Icon, UserMultipleIcon, ViewIcon } from '@hugeicons/core-free-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import Svg, { Rect } from 'react-native-svg';
 import { useCamera } from '@/camera';
-import { MText, colors } from '@/theme';
-import { CardColumns } from '../components/CardColumns';
-import {
-  ActionPill,
-  CardCaption,
-  InlineTextInput,
-  SegmentedControl,
-  SettingsCard,
-  SettingsRow,
-  SwitchRow,
-} from '../components/SettingsControls';
-import { SettingsCopy } from '../copy';
-import { OverlayScreen } from '../OverlayScreen';
+import { Chip } from '@/components/chip';
+import { ChipRow } from '@/components/field-section';
+import { SettingsRow } from '@/components/settings-ui';
+import { Sheet } from '@/components/sheet';
+import { TextField } from '@/components/text-field';
+import { fonts, radius, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
+import { settingsFeedback } from '../components/feedback';
+import { ActionRow, FieldRow, Group, LinkRow, SwitchRow } from '../components/ui';
+import { SettingsCopy, SettingsRowCopy } from '../copy';
 import { passcodeEntry, passcodeTooShortHint, useSettingsLocal, type BroadcastPriority } from '../settingsStore';
 
 const priorities: BroadcastPriority[] = ['Lowest delay', 'Balanced', 'Steadier picture'];
 
 /** A deterministic placeholder matrix standing in for the join code until the relay exists. */
-function CodeGlyph({ seed, size = 168 }: { seed: string; size?: number }) {
+function CodeGlyph({ seed, size = 184 }: { seed: string; size?: number }) {
+  const styles = useThemedStyles(createStyles);
   const n = 21;
   const cell = size / n;
   let h = 2166136261;
@@ -52,7 +50,7 @@ function CodeGlyph({ seed, size = 168 }: { seed: string; size?: number }) {
     }
   }
   return (
-    <View style={{ padding: 12, backgroundColor: '#fff', borderRadius: 12 }}>
+    <View style={styles.codePlate}>
       <Svg width={size} height={size}>
         {rects}
       </Svg>
@@ -64,8 +62,9 @@ function CodeGlyph({ seed, size = 168 }: { seed: string; size?: number }) {
  * Feed sharing (`MonitorFeedSharingSettings`): watcher relay host options. The relay itself is not
  * built yet, so these values are stored and shown but do not start a broadcast.
  */
-export function SharingSection({ width }: { width: number }) {
+export function SharingSection() {
   const router = useRouter();
+  const styles = useThemedStyles(createStyles);
   const live = useCamera((s) => s.connection.phase === 'live');
   const ssid = useCamera((s) => s.identity?.ssid);
   const sharing = useSettingsLocal((s) => s.shareThisFeed);
@@ -79,23 +78,32 @@ export function SharingSection({ width }: { width: number }) {
 
   return (
     <>
-    <CardColumns width={width}>
-      <SettingsCard key="share">
+      <Group
+        label="Share"
+        note={live ? SettingsCopy.shareThisFeed : 'Connect to one camera from Your cameras to share its feed with watchers.'}
+      >
         <SwitchRow
-          divider={false}
+          icon={LiveStreaming01Icon}
           title="Share this feed"
-          help={SettingsCopy.shareThisFeed}
+          subtitle={SettingsRowCopy.shareThisFeed}
           value={sharing}
           onChange={(v) => set('shareThisFeed', v)}
           disabled={!live}
         />
-        {!live ? <CardCaption>Connect to one camera from Your cameras to share its feed with watchers.</CardCaption> : null}
-        <SettingsRow title="Join camera Wi-Fi" help={SettingsCopy.joinWifi}>
-          <ActionPill title="Show Wi-Fi code" onPress={() => setShowCode(true)} disabled={!live} />
-        </SettingsRow>
-        <SettingsRow title="Watcher passcode" help={SettingsCopy.watcherPasscode}>
-          <View style={{ alignItems: 'flex-end', gap: 4 }}>
-            <InlineTextInput
+        <ActionRow
+          icon={QrCode01Icon}
+          title="Join camera Wi-Fi"
+          subtitle={SettingsRowCopy.joinWifi}
+          action="Show code"
+          disabled={!live}
+          onPress={() => setShowCode(true)}
+        />
+        <SettingsRow
+          icon={Key01Icon}
+          title="Watcher passcode"
+          subtitle={entry?.tooShort ? passcodeTooShortHint : SettingsRowCopy.watcherPasscode}
+          accessory={
+            <TextField
               value={draft ?? passcode}
               onChangeText={(text) => {
                 setDraft(text);
@@ -106,47 +114,87 @@ export function SharingSection({ width }: { width: number }) {
               placeholder="Optional"
               secureTextEntry
               maxLength={12}
+              autoCapitalize="none"
+              autoCorrect={false}
               accessibilityLabel="Watcher passcode"
-              width={130}
+              style={styles.passcode}
             />
-            {entry?.tooShort ? (
-              <MText size={10} color={colors.muted} style={{ maxWidth: 170, textAlign: 'right' }}>
-                {passcodeTooShortHint}
-              </MText>
-            ) : null}
-          </View>
-        </SettingsRow>
+          }
+        />
         <SwitchRow
+          icon={UserMultipleIcon}
           title="Control requests"
-          help={SettingsCopy.controlRequests}
+          subtitle={SettingsRowCopy.controlRequests}
           value={controlRequests}
           onChange={(v) => set('controlRequests', v)}
         />
-        <SettingsRow title="Broadcast priority" help={SettingsCopy.broadcastPriority} stacked>
-          <SegmentedControl options={priorities} value={priority} onChange={(v) => set('broadcastPriority', v)} />
-        </SettingsRow>
-      </SettingsCard>
-      <SettingsCard key="watch" title="Watch a feed">
-        <SettingsRow divider={false} title="Join as watcher" help="Watch another phone’s shared feed on the same camera Wi-Fi. Only the host opens a camera session.">
-          <ActionPill title="Open" onPress={() => router.push('/watcher')} accessibilityLabel="Open Watch a feed" />
-        </SettingsRow>
-        <CardCaption>Watcher relay hosting is coming in a later build. Settings here are kept for when it arrives.</CardCaption>
-      </SettingsCard>
-    </CardColumns>
-      <OverlayScreen visible={showCode} eyebrow="Feed sharing" title="Join camera Wi-Fi" onClose={() => setShowCode(false)}>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 16 }}>
+        <FieldRow icon={SignalFull02Icon} title="Broadcast priority" subtitle={SettingsRowCopy.broadcastPriority} last>
+          <ChipRow>
+            {priorities.map((p) => (
+              <Chip
+                key={p}
+                label={p}
+                selected={p === priority}
+                onPress={() => {
+                  if (p === priority) return;
+                  settingsFeedback();
+                  set('broadcastPriority', p);
+                }}
+              />
+            ))}
+          </ChipRow>
+        </FieldRow>
+      </Group>
+      <Group label="Watch a feed" note="Watcher relay hosting is coming in a later build. Settings here are kept for when it arrives.">
+        <LinkRow
+          icon={ViewIcon}
+          title="Join as watcher"
+          subtitle={SettingsRowCopy.joinWatcher}
+          onPress={() => router.push('/watcher')}
+          last
+        />
+      </Group>
+      <Sheet visible={showCode} title="Join camera Wi-Fi" onClose={() => setShowCode(false)} expandable={false}>
+        <View style={styles.codeBody}>
           <CodeGlyph seed={ssid ?? 'camera'} />
-          <MText size={16} weight="semibold" align="center">
-            {ssid ?? 'Camera Wi-Fi'}
-          </MText>
-          <MText size={12.5} color={colors.muted} align="center" style={{ maxWidth: 360 }}>
-            {SettingsCopy.joinWifi}
-          </MText>
-          <MText size={10.5} color={colors.faint} align="center" style={{ maxWidth: 360 }}>
-            Preview code. The scannable join code arrives with watcher relay hosting.
-          </MText>
+          <Text style={styles.codeName}>{ssid ?? 'Camera Wi-Fi'}</Text>
+          <Text style={styles.codeHelp}>{SettingsCopy.joinWifi}</Text>
+          <Text style={styles.codeNote}>Preview code. The scannable join code arrives with watcher relay hosting.</Text>
         </View>
-      </OverlayScreen>
+      </Sheet>
     </>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    passcode: {
+      width: 128,
+      minHeight: 40,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      fontFamily: fonts.medium,
+      fontSize: 14,
+      textAlign: 'right' as const,
+    },
+    codeBody: { alignItems: 'center' as const, gap: spacing.sm, paddingVertical: spacing.md },
+    codePlate: {
+      padding: 14,
+      backgroundColor: '#ffffff',
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginBottom: spacing.sm,
+    },
+    codeName: { fontFamily: fonts.semibold, fontSize: 18, letterSpacing: -0.3, color: colors.foreground, textAlign: 'center' as const },
+    codeHelp: {
+      fontFamily: fonts.regular,
+      fontSize: 14,
+      lineHeight: 20,
+      color: colors.mutedForeground,
+      textAlign: 'center' as const,
+      maxWidth: 360,
+    },
+    codeNote: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedForeground, textAlign: 'center' as const, maxWidth: 360 },
+  };
 }

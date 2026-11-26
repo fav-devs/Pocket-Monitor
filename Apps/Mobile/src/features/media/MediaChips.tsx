@@ -1,251 +1,237 @@
-import type { LucideIcon } from 'lucide-react-native';
+import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react-native';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Platform, Switch, View, type StyleProp, type ViewStyle } from 'react-native';
-import { MText, colors, minTouch, radius, withAlpha } from '@/theme';
-import { PressableScale } from '@/ui';
+import { Pressable, type StyleProp, Switch, Text, View, type ViewStyle } from 'react-native';
+import { Icon } from '@/components/icon';
+import { Spinner } from '@/components/spinner';
+import { Squircle } from '@/components/squircle';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 
-export const favoriteGold = '#E9C35A';
-export const onPhoneTint = '#3FD3A3';
+/** Fill for a favorite star: the app's accent yellow reads on any picture. */
+export const favoriteColor = '#fedb2e';
+/** Over a picture: the pill and its text (ai-cut's duration / source badges). */
+export const artPillColor = 'rgba(0,0,0,0.55)';
 
-/** `MonitorMediaCatalogChip`: icon (+ text) on a faint plate, 44pt target. */
-export function MediaChip({
-  icon: Icon,
-  text,
-  label,
-  onPress,
-  active,
-  danger,
-  disabled,
-  filled,
-  trailing,
-}: {
-  icon: LucideIcon;
-  text?: string;
-  label: string;
-  onPress?: () => void;
-  active?: boolean;
-  danger?: boolean;
-  disabled?: boolean;
-  filled?: boolean;
-  trailing?: ReactNode;
-}) {
-  const fg = danger ? colors.recording : active ? colors.text : colors.secondary;
-  return (
-    <PressableScale
-      accessibilityLabel={label}
-      accessibilityState={{ selected: !!active, disabled: !!disabled }}
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        minWidth: minTouch,
-        minHeight: minTouch,
-        paddingHorizontal: text ? 11 : 9,
-        borderRadius: 9,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 7,
-        backgroundColor: active ? withAlpha(colors.accent, 0.18) : 'rgba(255,255,255,0.04)',
-      }}
-    >
-      <Icon size={13} color={fg} strokeWidth={2} fill={filled ? fg : 'transparent'} />
-      {text ? (
-        <MText size={10.5} weight="semibold" color={fg} numberOfLines={1}>
-          {text}
-        </MText>
-      ) : null}
-      {trailing}
-    </PressableScale>
-  );
+/** A Hugeicon that can be filled (a favorite star, the play triangle). */
+export function Glyph({ icon, size = 20, color, filled = false, strokeWidth = 1.5 }: { icon: IconSvgElement; size?: number; color: string; filled?: boolean; strokeWidth?: number }) {
+  return <HugeiconsIcon icon={icon} size={size} color={color} strokeWidth={strokeWidth} fill={filled ? color : 'none'} />;
 }
 
-/** `MonitorPlaybackChip`: a 44pt glass square on the player's chrome. */
-export function PlaybackChip({
-  icon: Icon,
-  label,
-  onPress,
-  active,
-  destructive,
-  text,
-  accent,
-  tint,
-  filled,
-  disabled,
-}: {
-  icon: LucideIcon;
-  label: string;
-  onPress?: () => void;
-  active?: boolean;
-  destructive?: boolean;
-  text?: string;
-  accent?: boolean;
-  tint?: string;
-  filled?: boolean;
-  disabled?: boolean;
-}) {
-  const fg = tint ?? (destructive ? colors.recording : accent || active ? colors.accent : colors.secondary);
-  const bg = destructive
-    ? withAlpha(colors.recording, 0.2)
-    : accent
-      ? withAlpha(colors.accent, 0.2)
-      : active
-        ? withAlpha(colors.accent, 0.16)
-        : 'rgba(40,42,44,0.72)';
-  const border = destructive ? withAlpha(colors.recording, 0.5) : accent ? withAlpha(colors.accent, 0.55) : colors.border;
+/** A small pill over a picture: duration, "3 frames", "On phone". */
+export function ArtPill({ text, icon, style }: { text?: string; icon?: IconSvgElement; style?: StyleProp<ViewStyle> }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <PressableScale
-      accessibilityLabel={label}
-      accessibilityState={{ selected: !!active, disabled: !!disabled }}
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        height: minTouch,
-        minWidth: minTouch,
-        paddingHorizontal: text ? 14 : 0,
-        borderRadius: radius.md,
-        backgroundColor: bg,
-        borderWidth: 1,
-        borderColor: border,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-      }}
-    >
-      <Icon size={18} color={fg} strokeWidth={1.9} fill={filled ? fg : 'transparent'} />
+    <View pointerEvents="none" style={[styles.artPill, !text && styles.artPillIcon, style]}>
+      {icon ? <Icon icon={icon} size={11} color="#ffffff" strokeWidth={2} /> : null}
       {text ? (
-        <MText size={13} weight="bold" tracking={1} color={fg} uppercase>
+        <Text numberOfLines={1} style={styles.artPillText}>
           {text}
-        </MText>
+        </Text>
       ) : null}
-    </PressableScale>
-  );
-}
-
-/** Black rounded tag over artwork ("ON CAMERA", "0:21", "3 frames"). */
-export function ArtTag({ text, color = colors.text, tracking }: { text: string; color?: string; tracking?: number }) {
-  return (
-    <View style={{ backgroundColor: 'rgba(0,0,0,0.66)', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 3 }}>
-      <MText size={8.5} weight="bold" color={color} tracking={tracking} mono>
-        {text}
-      </MText>
     </View>
   );
 }
 
-/** A thin accent progress bar on a faint track. */
-export function ProgressTrack({ fraction, height = 4, style }: { fraction: number; height?: number; style?: StyleProp<ViewStyle> }) {
-  const f = Math.min(1, Math.max(0, fraction));
+/** A thin progress bar; `onVideo` draws it white on a translucent track. */
+export function ProgressBar({ fraction, height = 4, onVideo, style }: { fraction: number; height?: number; onVideo?: boolean; style?: StyleProp<ViewStyle> }) {
+  const { colors } = useTheme();
+  const f = Math.min(1, Math.max(0, Number.isFinite(fraction) ? fraction : 0));
   return (
-    <View style={[{ height, borderRadius: height, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' }, style]}>
-      <View style={{ width: `${f * 100}%`, minWidth: f > 0 ? height : 0, height, borderRadius: height, backgroundColor: colors.accent }} />
+    <View
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(f * 100) }}
+      style={[{ height, borderRadius: height, overflow: 'hidden', backgroundColor: onVideo ? 'rgba(255,255,255,0.25)' : colors.surfaceStrong }, style]}
+    >
+      <View style={{ width: `${f * 100}%`, minWidth: f > 0 ? height : 0, height, borderRadius: height, backgroundColor: onVideo ? '#ffffff' : colors.primary }} />
     </View>
   );
 }
 
-/** Settings-style toggle row: title, help, switch. */
-export function ToggleRow({
+/** "Native exporter": a quiet tag beside a control that this build can't run. */
+export function Tag({ text }: { text: string }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.tag}>
+      <Text style={styles.tagText}>{text}</Text>
+    </View>
+  );
+}
+
+/** A row with a title, an optional one-line help and a switch (sheet bodies and settings cards). */
+export function SwitchRow({
   title,
   help,
   value,
   onChange,
   disabled,
-  badge,
+  tag,
+  icon,
+  last,
+  inset = true,
 }: {
   title: string;
   help?: string;
   value: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
-  badge?: string;
+  tag?: string;
+  /** In a settings card: the 36pt icon well. */
+  icon?: IconSvgElement;
+  last?: boolean;
+  /** Card padding (settings); false for a flat sheet body. */
+  inset?: boolean;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
-    <PressableScale
-      noScale
+    <Pressable
       accessibilityRole="switch"
       accessibilityLabel={title}
       accessibilityState={{ checked: value, disabled: !!disabled }}
       onPress={() => !disabled && onChange(!value)}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: minTouch, paddingVertical: 6 }}
+      style={[styles.switchRow, inset && styles.cardRow, !last && inset && styles.rowBorder]}
     >
-      <View style={{ flex: 1, gap: 2 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <MText size={12.5} weight="semibold" color={disabled ? colors.faint : colors.text}>
-            {title}
-          </MText>
-          {badge ? <Badge text={badge} /> : null}
+      {icon ? (
+        <Squircle width={36} height={36} radius={12} color={colors.surfaceStrong} style={disabled ? styles.dim : undefined}>
+          <Icon icon={icon} size={18} color={colors.foreground} />
+        </Squircle>
+      ) : null}
+      <View style={[styles.switchText, disabled && styles.dim]}>
+        <View style={styles.titleLine}>
+          <Text style={styles.rowTitle}>{title}</Text>
+          {tag ? <Tag text={tag} /> : null}
         </View>
-        {help ? (
-          <MText size={10.5} color={colors.muted}>
-            {help}
-          </MText>
-        ) : null}
+        {help ? <Text style={styles.rowHelp}>{help}</Text> : null}
       </View>
       <Switch
         value={value}
         disabled={disabled}
         onValueChange={onChange}
-        trackColor={{ false: colors.raised, true: colors.accent }}
-        thumbColor="#fff"
-        {...(Platform.OS === 'web' ? ({ activeThumbColor: '#fff' } as object) : {})}
+        trackColor={{ true: colors.primary, false: colors.surfaceStrong }}
+        thumbColor="#ffffff"
         accessibilityLabel={title}
+        {...({ activeThumbColor: '#ffffff' } as object)}
       />
-    </PressableScale>
+    </Pressable>
   );
 }
 
-export function Badge({ text, tone = 'warn' }: { text: string; tone?: 'warn' | 'accent' | 'muted' }) {
-  const c = tone === 'warn' ? colors.digitalCrop : tone === 'accent' ? colors.accent : colors.muted;
+/** A text action in `primary` ("Clear", "Reload"), 44pt tall. */
+export function TextAction({ title, onPress, disabled, label, tone = 'primary' }: { title: string; onPress: () => void; disabled?: boolean; label?: string; tone?: 'primary' | 'muted' | 'destructive' }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const color = tone === 'muted' ? colors.mutedForeground : tone === 'destructive' ? colors.destructive : colors.primary;
   return (
-    <View style={{ borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2, backgroundColor: withAlpha(c, 0.16) }}>
-      <MText size={8.5} weight="bold" tracking={0.6} color={c} uppercase>
-        {text}
-      </MText>
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label ?? title}
+      accessibilityState={{ disabled: !!disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => [styles.textAction, (pressed || disabled) && { opacity: disabled ? 0.4 : 0.7 }]}
+    >
+      <Text style={[styles.textActionLabel, { color }]}>{title}</Text>
+    </Pressable>
   );
 }
 
-/** Segmented choice (pill group). */
-export function Segmented<T extends string>({
-  options,
-  value,
-  onChange,
-  label,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-  label: string;
-}) {
-  return (
-    <View accessibilityLabel={label} style={{ flexDirection: 'row', padding: 3, gap: 2, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.35)', alignSelf: 'flex-start', flexWrap: 'wrap' }}>
-      {options.map((o) => {
-        const on = o.value === value;
-        return (
-          <PressableScale
-            key={o.value}
-            accessibilityLabel={o.label}
-            accessibilityState={{ selected: on }}
-            onPress={() => onChange(o.value)}
-            style={{ minHeight: 38, minWidth: 44, paddingHorizontal: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? 'rgba(255,255,255,0.14)' : 'transparent' }}
-          >
-            <MText size={11.5} weight="semibold" color={on ? colors.text : colors.muted}>
-              {o.label}
-            </MText>
-          </PressableScale>
-        );
-      })}
-    </View>
-  );
-}
-
+/** A spinner and a short line ("Loading projects…"). */
 export function Busy({ label }: { label: string }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <ActivityIndicator size="small" color={colors.accent} />
-      <MText size={12} color={colors.muted}>
-        {label}
-      </MText>
+    <View style={styles.busy}>
+      <Spinner opacity={1} color={colors.mutedForeground} />
+      <Text style={styles.rowHelp}>{label}</Text>
     </View>
   );
+}
+
+/** Header icon button (ai-cut home): a bare 22pt icon, or a 32pt round surface well. */
+export function HeaderButton({
+  icon,
+  label,
+  onPress,
+  disabled,
+  round,
+  badge,
+  busy,
+  children,
+}: {
+  icon: IconSvgElement;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  round?: boolean;
+  /** A count in a small dot. */
+  badge?: number;
+  busy?: boolean;
+  children?: ReactNode;
+}) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      hitSlop={8}
+      style={({ pressed }) => [styles.headerButton, round && styles.headerRound, (pressed || disabled) && { opacity: disabled ? 0.35 : 0.7 }]}
+    >
+      {busy ? <Spinner opacity={1} size={round ? 16 : 20} color={colors.foreground} /> : <Icon icon={icon} size={round ? 17 : 22} color={colors.foreground} />}
+      {badge ? (
+        <View pointerEvents="none" style={styles.badge}>
+          <Text style={styles.badgeText}>{badge}</Text>
+        </View>
+      ) : null}
+      {children}
+    </Pressable>
+  );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    artPill: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 4,
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: artPillColor,
+    },
+    artPillIcon: { paddingHorizontal: 5, paddingVertical: 5 },
+    artPillText: { fontFamily: fonts.semibold, fontSize: 10, color: '#ffffff', fontVariant: ['tabular-nums' as const] },
+    tag: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.surfaceStrong },
+    tagText: { fontFamily: fonts.medium, fontSize: 11, color: colors.mutedForeground },
+    switchRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12, minHeight: 52, paddingVertical: 10 },
+    cardRow: { paddingHorizontal: spacing.md },
+    rowBorder: { borderBottomWidth: 0.5, borderBottomColor: colors.border },
+    switchText: { flex: 1, minWidth: 0, gap: 2 },
+    titleLine: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, flexWrap: 'wrap' as const },
+    rowTitle: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    rowHelp: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: colors.mutedForeground },
+    dim: { opacity: 0.45 },
+    textAction: { minHeight: 44, justifyContent: 'center' as const, paddingHorizontal: 2 },
+    textActionLabel: { fontFamily: fonts.semibold, fontSize: 14 },
+    busy: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm, minHeight: 32 },
+    headerButton: { minWidth: 32, minHeight: 32, alignItems: 'center' as const, justifyContent: 'center' as const, padding: 4 },
+    headerRound: { width: 32, height: 32, borderRadius: 16, padding: 0, backgroundColor: colors.surface },
+    badge: {
+      position: 'absolute' as const,
+      top: -2,
+      right: -4,
+      minWidth: 16,
+      height: 16,
+      paddingHorizontal: 4,
+      borderRadius: 8,
+      backgroundColor: colors.primary,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    badgeText: { fontFamily: fonts.semibold, fontSize: 10, color: '#ffffff' },
+    radiusLg: { borderRadius: radius.lg },
+  };
 }

@@ -1,48 +1,52 @@
+import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+  ChartHistogramIcon,
+  Delete02Icon,
+  GoBackward15SecIcon,
+  GoForward15SecIcon,
+  InformationCircleIcon,
+  NextIcon,
+  PauseIcon,
+  PlayIcon,
+  PreviousIcon,
+  RepeatIcon,
+  RotateClockwiseIcon,
+  Share08Icon,
+  StarIcon,
+  Timer02Icon,
+  ViewIcon,
+  ViewOffSlashIcon,
+  VolumeHighIcon,
+  VolumeMute02Icon,
+} from '@hugeicons/core-free-icons';
+import type { IconSvgElement } from '@hugeicons/react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { VideoView } from 'expo-video';
-import {
-  Box,
-  ChevronLeft,
-  ChevronRight,
-  Info,
-  Maximize,
-  Minimize,
-  Pause,
-  Play,
-  Repeat,
-  RotateCw,
-  Share as ShareIcon,
-  SkipBack,
-  SkipForward,
-  Star,
-  StepBack,
-  StepForward,
-  Timer,
-  Trash2,
-  Volume2,
-  VolumeX,
-} from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, View, useWindowDimensions, type LayoutRectangle } from 'react-native';
+import { Platform, Pressable, ScrollView, Text, View, useWindowDimensions, type LayoutRectangle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCameraSession } from '@/camera';
+import { Chip } from '@/components/chip';
+import { ChipRow } from '@/components/field-section';
+import { Sheet } from '@/components/sheet';
+import { Spinner } from '@/components/spinner';
+import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import AssistBar from '@/features/assists/AssistBar';
 import AssistOverlays from '@/features/assists/AssistOverlays';
 import LivePicture from '@/features/picture/LivePicture';
 import { useMediaPreferences } from '@/state/media';
-import { MText, colors, minTouch, radius } from '@/theme';
-import { PressableScale } from '@/ui';
-import { DeliveryProgressPill, DeliveryQueuePanel } from './DeliveryQueue';
+import { DeliveryProgressPill, DeliveryQueueSheet } from './DeliveryQueue';
 import { DeliverySheet } from './DeliverySheet';
 import { useDelivery } from './deliveryStore';
 import { durationLabel, playbackSubtitle, timecodeLabel } from './format';
 import { deriveGallery } from './gallery';
 import { useMediaBrowsing, useMediaLibrary } from './libraryStore';
-import { favoriteGold, PlaybackChip } from './MediaChips';
-import { ConfirmDialog, NoticeToast } from './MediaOverlays';
-import { ClipInfoPanel, clipInfoRows, PlaybackMeters, PlaybackScrubber, RatingAnchor, StarRating } from './PlaybackParts';
+import { favoriteColor, Glyph } from './MediaChips';
+import { ConfirmSheet, NoticeToast } from './MediaOverlays';
+import { ClipInfoList, clipInfoRows, PlaybackMeters, PlaybackScrubber, SideButton, StarRating, ToolWell, videoText } from './PlaybackParts';
 import { usePlaybackEngine } from './usePlaybackEngine';
 
 function fit(aspect: number, w: number, h: number): LayoutRectangle {
@@ -59,18 +63,31 @@ function conformTargets(fps?: number): number[] {
   return [30, 25, 24].filter((t) => t < fps);
 }
 
-function TransportButton({ icon: Icon, label, onPress, size = 22, disabled }: { icon: typeof Play; label: string; onPress: () => void; size?: number; disabled?: boolean }) {
+/** A plain white transport icon (ai-cut watch chrome), or the big white play disc. */
+function Transport({ icon, label, onPress, primary }: { icon: IconSvgElement; label: string; onPress: () => void; primary?: boolean }) {
   return (
-    <PressableScale accessibilityLabel={label} onPress={onPress} disabled={disabled} style={{ width: size > 24 ? 56 : minTouch, height: minTouch, alignItems: 'center', justifyContent: 'center' }}>
-      <Icon size={size} color={colors.text} strokeWidth={1.8} fill={Icon === Play || Icon === Pause ? colors.text : 'transparent'} />
-    </PressableScale>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => ({ width: primary ? 64 : 48, height: primary ? 64 : 48, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.65 : 1 })}
+    >
+      {primary ? (
+        <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
+          <Glyph icon={icon} size={26} color="#111111" filled={icon !== RotateClockwiseIcon} strokeWidth={2} />
+        </View>
+      ) : (
+        <Glyph icon={icon} size={24} color="#ffffff" strokeWidth={1.8} />
+      )}
+    </Pressable>
   );
 }
 
 /**
  * The player (`MonitorPlaybackScreen`): one fixed picture child (expo-video, or the demo
  * picture with a simulated timeline), with header actions, transport, scrubber, clip info,
- * star rating, conform preview, assists and clean view layered over it.
+ * star rating, conform preview, assists and clean view layered over it. Always on black.
  */
 export default function PlaybackScreen() {
   const params = useLocalSearchParams<{ id: string }>();
@@ -78,6 +95,7 @@ export default function PlaybackScreen() {
   const router = useRouter();
   const session = useCameraSession();
   const insets = useSafeAreaInsets();
+  const styles = useThemedStyles(createStyles);
   const { width, height } = useWindowDimensions();
   const portrait = height >= width;
   useMediaBrowsing();
@@ -131,7 +149,7 @@ export default function PlaybackScreen() {
 
   const isVideo = item?.kind === 'video';
   const localUri = item ? lib.localFiles[item.id] : undefined;
-  const uri = isVideo ? (localUri || item?.previewUrl || item?.originalUrl || null) : null;
+  const uri = isVideo ? localUri || item?.previewUrl || item?.originalUrl || null : null;
   const fps = item?.fps ?? 30;
   const targets = conformTargets(item?.fps);
   const engine = usePlaybackEngine({
@@ -165,16 +183,16 @@ export default function PlaybackScreen() {
     else router.replace('/media');
   };
   const goTo = (target?: { id: string }) => target && router.setParams({ id: target.id });
+  const sideInset = Math.max(insets.left, insets.right);
 
   if (!item) {
+    const waiting = lib.status === 'loading' || lib.status === 'idle';
     return (
-      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24 }}>
-        {lib.status === 'loading' || lib.status === 'idle' ? <ActivityIndicator color={colors.accent} /> : null}
-        <MText size={14} weight="medium" color={colors.muted} align="center">
-          {lib.status === 'loading' || lib.status === 'idle' ? 'Preparing playback…' : lib.error ?? 'This clip is no longer on the camera.'}
-        </MText>
-        <View style={{ position: 'absolute', left: insets.left + 16, top: insets.top + 12 }}>
-          <PlaybackChip icon={ChevronLeft} label="Back to media" onPress={goBack} />
+      <View style={styles.missing}>
+        {waiting ? <Spinner opacity={1} size={24} color="#ffffff" /> : null}
+        <Text style={styles.missingText}>{waiting ? 'Preparing playback…' : (lib.error ?? 'This clip is no longer on the camera.')}</Text>
+        <View style={{ position: 'absolute', left: sideInset + 16, top: insets.top + 12 }}>
+          <SideButton icon={ArrowLeft01Icon} label="Back to media" onPress={goBack} />
         </View>
       </View>
     );
@@ -185,13 +203,14 @@ export default function PlaybackScreen() {
   const timecode = prefs.playbackTimecode;
   const positionText = timecode ? timecodeLabel(position, item.fps) : durationLabel(position);
   const durationText = timecode ? timecodeLabel(engine.duration, item.fps) : durationLabel(engine.duration);
-  const source = localUri ? 'ORIGINAL · ON PHONE' : !isVideo ? 'ON CAMERA' : engine.kind === 'simulated' ? 'ON CAMERA · DEMO PICTURE' : 'PREVIEW · ON CAMERA';
+  const source = localUri ? 'Original · on phone' : !isVideo ? 'On camera' : engine.kind === 'simulated' ? 'On camera · demo picture' : 'Preview · on camera';
   const aspect = item.width && item.height ? item.width / item.height : 16 / 9;
   const rect = fit(aspect, canvas.width, canvas.height);
-  const sideInset = Math.max(insets.left, insets.right);
   const t = engine.position;
   const meterL = engine.playing ? -22 + 10 * Math.sin(t * 3.1) + 6 * Math.sin(t * 11.7) : -120;
   const meterR = engine.playing ? -24 + 10 * Math.sin(t * 2.7 + 1) + 6 * Math.sin(t * 9.3) : -120;
+  const muted = prefs.mutePlayback || conform != null;
+  const favoriteIds = burst.length ? burst.map((b) => b.id) : [item.id];
 
   const doDelete = async () => {
     setConfirmDelete(false);
@@ -212,26 +231,74 @@ export default function PlaybackScreen() {
       <LivePicture source={{ kind: 'demo', scene: 'studio' }} resizeMode="fit" context="playback" />
     );
 
-  const headerActions = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: portrait ? 'flex-end' : undefined }}>
-      <RatingAnchor stars={rating} expanded={ratingOpen} onToggle={() => setRatingOpen((v) => !v)} />
-      <PlaybackChip
-        icon={Star}
-        label="Favorite clip"
-        filled={item.favorite}
-        tint={item.favorite ? favoriteGold : undefined}
-        onPress={() => void lib.setFavorite(session.media, burst.length ? burst.map((b) => b.id) : [item.id], !item.favorite)}
+  const tool = {
+    assists: <ToolWell key="assists" icon={ChartHistogramIcon} label="Assists" caption="Assists" active={assists} onPress={() => setAssists((a) => !a)} />,
+    conform: (
+      <ToolWell
+        key="conform"
+        icon={Timer02Icon}
+        label="Conform preview"
+        caption={conform ? `${conform}p` : 'Conform'}
+        active={conform != null}
+        disabled={!targets.length}
+        onPress={() => setConformOpen(true)}
       />
-      <PlaybackChip icon={Info} label="Clip information" active={info} onPress={() => setInfo((v) => !v)} />
-      <PlaybackChip icon={ShareIcon} label="Share clip" accent text={portrait ? undefined : 'Share'} onPress={() => setSharing(true)} />
-      <PlaybackChip icon={Trash2} label="Delete clip from camera" destructive onPress={() => setConfirmDelete(true)} />
+    ),
+    sound: (
+      <ToolWell
+        key="sound"
+        icon={muted ? VolumeMute02Icon : VolumeHighIcon}
+        label={prefs.mutePlayback ? 'Unmute' : 'Mute'}
+        caption={muted ? 'Muted' : 'Sound'}
+        onPress={() => prefs.set('mutePlayback', !prefs.mutePlayback)}
+      />
+    ),
+    loop: <ToolWell key="loop" icon={RepeatIcon} label="Loop playback" caption="Loop" active={prefs.loopPlayback} onPress={() => prefs.set('loopPlayback', !prefs.loopPlayback)} />,
+    rate: (
+      <ToolWell
+        key="rate"
+        icon={StarIcon}
+        label="Star rating"
+        caption={rating ? `${rating} of 5` : 'Rate'}
+        filledIcon={rating > 0}
+        iconColor={rating > 0 ? favoriteColor : undefined}
+        onPress={() => setRatingOpen(true)}
+      />
+    ),
+    remove: <ToolWell key="delete" icon={Delete02Icon} label="Delete clip from camera" caption="Delete" destructive onPress={() => setConfirmDelete(true)} />,
+    hide: <ToolWell key="hide" icon={ViewOffSlashIcon} label="Hide playback controls" caption="Clean" onPress={() => setChrome(false)} />,
+  };
+
+  const transport = (
+    <View style={styles.transport}>
+      <Transport icon={PreviousIcon} label="Back one frame" onPress={() => engine.stepFrames(-1)} />
+      <Transport icon={GoBackward15SecIcon} label="Back 15 seconds" onPress={() => engine.seek(engine.position - 15)} />
+      <Transport
+        primary
+        icon={engine.reachedEnd ? RotateClockwiseIcon : engine.playing ? PauseIcon : PlayIcon}
+        label={engine.reachedEnd ? 'Restart clip' : engine.playing ? 'Pause' : 'Play'}
+        onPress={() => (engine.reachedEnd ? (engine.seek(0), engine.play()) : engine.toggle())}
+      />
+      <Transport icon={GoForward15SecIcon} label="Forward 15 seconds" onPress={() => engine.seek(engine.position + 15)} />
+      <Transport icon={NextIcon} label="Forward one frame" onPress={() => engine.stepFrames(1)} />
     </View>
   );
 
+  const shareButton = portrait ? (
+    <Pressable accessibilityRole="button" accessibilityLabel="Share clip" onPress={() => setSharing(true)} hitSlop={6} style={({ pressed }) => [styles.shareSquare, pressed && { opacity: 0.75 }]}>
+      <Glyph icon={Share08Icon} size={21} color="#111111" strokeWidth={1.8} />
+    </Pressable>
+  ) : (
+    <Pressable accessibilityRole="button" accessibilityLabel="Share clip" onPress={() => setSharing(true)} hitSlop={6} style={({ pressed }) => [styles.sharePill, pressed && { opacity: 0.75 }]}>
+      <Glyph icon={Share08Icon} size={18} color="#111111" strokeWidth={1.8} />
+      <Text style={styles.shareLabel}>Share</Text>
+    </Pressable>
+  );
+
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <View style={styles.root}>
       {/* Picture canvas: fixed child, assists drawn inside the fitted picture rect. */}
-      <View style={{ position: 'absolute', inset: 0 }} onLayout={(e) => setCanvas({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
+      <View style={styles.fill} onLayout={(e) => setCanvas({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
         <View style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, overflow: 'hidden' }}>{picture}</View>
         {assists && isVideo ? (
           <AssistOverlays
@@ -249,29 +316,21 @@ export default function PlaybackScreen() {
           style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
         />
         {chrome && prev ? (
-          <PressableScale accessibilityLabel="Previous clip" onPress={() => goTo(prev)} style={{ position: 'absolute', left: rect.x + 4, top: rect.y + rect.height / 2 - 22, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.glassStrong, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}>
-              <ChevronLeft size={14} color={colors.accent} strokeWidth={2.4} />
-            </View>
-          </PressableScale>
+          <View style={{ position: 'absolute', left: rect.x + 10 + (portrait ? 0 : sideInset), top: rect.y + rect.height / 2 - 22 }}>
+            <SideButton icon={ArrowLeft01Icon} label="Previous clip" onPress={() => goTo(prev)} />
+          </View>
         ) : null}
         {chrome && next ? (
-          <PressableScale accessibilityLabel="Next clip" onPress={() => goTo(next)} style={{ position: 'absolute', left: rect.x + rect.width - 48, top: rect.y + rect.height / 2 - 22, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.glassStrong, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}>
-              <ChevronRight size={14} color={colors.accent} strokeWidth={2.4} />
-            </View>
-          </PressableScale>
+          <View style={{ position: 'absolute', left: rect.x + rect.width - 54 - (portrait ? 0 : sideInset), top: rect.y + rect.height / 2 - 22 }}>
+            <SideButton icon={ArrowRight01Icon} label="Next clip" onPress={() => goTo(next)} />
+          </View>
         ) : null}
       </View>
 
       {isVideo && engine.kind === 'video' && (!engine.ready || engine.error) ? (
-        <View pointerEvents="none" style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)' }}>
-          <View style={{ padding: 24, gap: 12, alignItems: 'center', borderRadius: radius.md, backgroundColor: colors.glassStrong }}>
-            {engine.error ? null : <ActivityIndicator color={colors.accent} />}
-            <MText size={14} weight="medium" color={colors.muted} align="center">
-              {engine.error ?? 'Preparing playback…'}
-            </MText>
-          </View>
+        <View pointerEvents="none" style={styles.loading}>
+          {engine.error ? null : <Spinner opacity={1} size={24} color="#ffffff" />}
+          <Text style={styles.loadingText}>{engine.error ?? 'Preparing playback…'}</Text>
         </View>
       ) : null}
 
@@ -279,94 +338,94 @@ export default function PlaybackScreen() {
         <>
           {/* Header */}
           <View
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: 0,
-              paddingTop: insets.top + (portrait ? 8 : 12),
-              paddingLeft: sideInset + 16,
-              paddingRight: sideInset + 16,
-              paddingBottom: 18,
-            }}
+            style={[styles.header, { paddingTop: insets.top + (portrait ? 8 : 12), paddingLeft: sideInset + 16, paddingRight: sideInset + 16 }]}
             onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)}
           >
-            <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0.72)', 'rgba(0,0,0,0)']} style={{ position: 'absolute', inset: 0 }} />
-            <View style={{ flexDirection: portrait ? 'column' : 'row', gap: portrait ? 8 : 12, alignItems: portrait ? 'stretch' : 'flex-start' }}>
-              <View style={{ flexDirection: 'row', gap: 12, flex: portrait ? undefined : 1, alignItems: 'flex-start' }}>
-                <PressableScale accessibilityLabel="Back to media" onPress={goBack} style={{ width: 48, height: 48, borderRadius: radius.md, backgroundColor: 'rgba(40,42,44,0.72)', alignItems: 'center', justifyContent: 'center' }}>
-                  <ChevronLeft size={24} color={colors.text} strokeWidth={2} />
-                </PressableScale>
-                <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
-                  <MText size={13} weight="semibold" numberOfLines={1}>
-                    {item.fileName}
-                  </MText>
-                  <MText size={9.5} color={colors.muted} numberOfLines={portrait ? 2 : 1}>
-                    {playbackSubtitle(item)}
-                  </MText>
-                  <View style={{ alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 4, borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-                    <MText size={8} weight="bold" tracking={0.5} color={colors.secondary}>
-                      {source}
-                    </MText>
-                  </View>
-                </View>
+            <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0.7)', 'rgba(0,0,0,0)']} style={styles.fill} />
+            <View style={styles.headerRow}>
+              <SideButton icon={ArrowLeft01Icon} label="Back to media" onPress={goBack} />
+              <View style={styles.titleBlock}>
+                <Text numberOfLines={1} style={styles.title}>
+                  {item.fileName}
+                </Text>
+                <Text numberOfLines={1} style={styles.subtitle}>
+                  {playbackSubtitle(item)}
+                </Text>
               </View>
-              {headerActions}
+              <View style={styles.headerActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Favorite clip"
+                  accessibilityState={{ selected: item.favorite }}
+                  onPress={() => void lib.setFavorite(session.media, favoriteIds, !item.favorite)}
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.headerIcon, pressed && { opacity: 0.7 }]}
+                >
+                  <Glyph icon={StarIcon} size={22} color={item.favorite ? favoriteColor : '#ffffff'} filled={item.favorite} strokeWidth={1.7} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clip information"
+                  accessibilityState={{ selected: info }}
+                  onPress={() => setInfo(true)}
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.headerIcon, pressed && { opacity: 0.7 }]}
+                >
+                  <Glyph icon={InformationCircleIcon} size={22} color="#ffffff" strokeWidth={1.7} />
+                </Pressable>
+                {shareButton}
+              </View>
             </View>
-            {ratingOpen ? (
-              <View style={{ alignItems: 'flex-end', marginTop: 8 }}>
-                <StarRating stars={rating} onSelect={(s) => prefs.setRating(item.id, s)} />
+            <View style={styles.sourceRow}>
+              <View style={styles.sourcePill}>
+                <Text style={styles.sourceText}>{source}</Text>
               </View>
-            ) : null}
+              {conform ? (
+                <View style={styles.sourcePill}>
+                  <Text style={styles.sourceText}>{`${conform}p conform`}</Text>
+                </View>
+              ) : null}
+            </View>
             {isVideo && engine.kind === 'simulated' && prefs.playbackAudioMeters ? (
-              <View style={{ position: 'absolute', left: sideInset + 76, bottom: -30 }}>
+              <View style={styles.meters}>
                 <PlaybackMeters left={meterL} right={meterR} />
               </View>
             ) : null}
           </View>
 
-          {/* Bottom: transport for clips, filmstrip for bursts */}
-          <View
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              paddingBottom: Math.max(insets.bottom, 8),
-              paddingTop: 16,
-              paddingHorizontal: sideInset + 12,
-              alignItems: 'center',
-            }}
-            onLayout={(e) => setBottomH(e.nativeEvent.layout.height)}
-          >
-            <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.8)']} locations={[0, 0.38, 1]} style={{ position: 'absolute', inset: 0 }} />
-            <View style={{ width: '100%', maxWidth: 680, gap: 2 }}>
+          {/* Bottom: filmstrip for bursts, transport and tools */}
+          <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 10), paddingLeft: sideInset + 16, paddingRight: sideInset + 16 }]} onLayout={(e) => setBottomH(e.nativeEvent.layout.height)}>
+            <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.45)', 'rgba(0,0,0,0.82)']} locations={[0, 0.35, 1]} style={styles.fill} />
+            <View style={styles.bottomColumn}>
               {burst.length > 1 ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filmstrip}>
                   {burst.map((b, i) => (
-                    <PressableScale key={b.id} accessibilityLabel={`Frame ${i + 1} of ${burst.length}`} accessibilityState={{ selected: b.id === item.id }} onPress={() => router.setParams({ id: b.id })} style={{ width: 64, height: 44, borderRadius: 6, overflow: 'hidden', borderWidth: 2, borderColor: b.id === item.id ? colors.accent : 'transparent' }}>
+                    <Pressable
+                      key={b.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Frame ${i + 1} of ${burst.length}`}
+                      accessibilityState={{ selected: b.id === item.id }}
+                      onPress={() => router.setParams({ id: b.id })}
+                      style={[styles.frame, b.id === item.id && styles.frameOn]}
+                    >
                       <Image source={{ uri: b.thumbnailUrl }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
-                    </PressableScale>
+                    </Pressable>
                   ))}
                 </ScrollView>
               ) : null}
               {isVideo ? (
                 <>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <PressableScale noScale accessibilityLabel={timecode ? 'Show minutes and seconds' : 'Show timecode'} onPress={() => prefs.set('playbackTimecode', !timecode)} style={{ minHeight: 32, justifyContent: 'center' }}>
-                      <MText size={11} weight="bold" mono>
-                        {positionText}
-                      </MText>
-                    </PressableScale>
-                    <View style={{ flex: 1 }} />
-                    {conform ? (
-                      <MText size={9.5} weight="bold" color={colors.accent} style={{ marginRight: 10 }}>
-                        {`${conform}p CONFORM`}
-                      </MText>
-                    ) : null}
-                    <MText size={11} color={colors.secondary} mono>
-                      {durationText}
-                    </MText>
+                  <View style={styles.clockRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={timecode ? 'Show minutes and seconds' : 'Show timecode'}
+                      onPress={() => prefs.set('playbackTimecode', !timecode)}
+                      hitSlop={8}
+                      style={styles.clockHit}
+                    >
+                      <Text style={styles.clock}>{positionText}</Text>
+                    </Pressable>
+                    <Text style={styles.clockMuted}>{durationText}</Text>
                   </View>
                   <PlaybackScrubber
                     position={position}
@@ -384,41 +443,21 @@ export default function PlaybackScreen() {
                       if (scrubbing?.wasPlaying) engine.play();
                     }}
                   />
-                  <View style={{ flexDirection: portrait ? 'column' : 'row', alignItems: 'center', gap: portrait ? 4 : 10 }}>
-                    {!portrait ? (
-                      <View style={{ flex: 1, flexDirection: 'row' }}>
-                        <PlaybackChip icon={Box} label="Assists" active={assists} onPress={() => setAssists((a) => !a)} />
-                      </View>
-                    ) : null}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                      <TransportButton icon={StepBack} label="Back one frame" onPress={() => engine.stepFrames(-1)} size={18} />
-                      <TransportButton icon={SkipBack} label="Back 15 seconds" onPress={() => engine.seek(engine.position - 15)} />
-                      <TransportButton
-                        icon={engine.reachedEnd ? RotateCw : engine.playing ? Pause : Play}
-                        label={engine.reachedEnd ? 'Restart clip' : engine.playing ? 'Pause' : 'Play'}
-                        onPress={() => (engine.reachedEnd ? (engine.seek(0), engine.play()) : engine.toggle())}
-                        size={28}
-                      />
-                      <TransportButton icon={SkipForward} label="Forward 15 seconds" onPress={() => engine.seek(engine.position + 15)} />
-                      <TransportButton icon={StepForward} label="Forward one frame" onPress={() => engine.stepFrames(1)} size={18} />
+                  {portrait ? (
+                    <>
+                      {transport}
+                      <View style={styles.tools}>{[tool.assists, tool.conform, tool.sound, tool.loop, tool.rate, tool.remove, tool.hide]}</View>
+                    </>
+                  ) : (
+                    <View style={styles.landscapeRow}>
+                      <View style={[styles.toolGroup, { justifyContent: 'flex-start' }]}>{[tool.assists, tool.conform, tool.sound, tool.loop]}</View>
+                      {transport}
+                      <View style={[styles.toolGroup, { justifyContent: 'flex-end' }]}>{[tool.rate, tool.remove, tool.hide]}</View>
                     </View>
-                    <View style={{ flex: portrait ? undefined : 1, flexDirection: 'row', justifyContent: portrait ? 'center' : 'flex-end', gap: 8 }}>
-                      {portrait ? <PlaybackChip icon={Box} label="Assists" active={assists} onPress={() => setAssists((a) => !a)} /> : null}
-                      <PlaybackChip icon={Timer} label="Conform preview" active={conform != null || conformOpen} disabled={!targets.length} onPress={() => setConformOpen((v) => !v)} />
-                      <PlaybackChip
-                        icon={prefs.mutePlayback || conform != null ? VolumeX : Volume2}
-                        label={prefs.mutePlayback ? 'Unmute' : 'Mute'}
-                        onPress={() => prefs.set('mutePlayback', !prefs.mutePlayback)}
-                      />
-                      <PlaybackChip icon={Repeat} label="Loop playback" active={prefs.loopPlayback} onPress={() => prefs.set('loopPlayback', !prefs.loopPlayback)} />
-                      <PlaybackChip icon={Maximize} label="Hide playback controls" onPress={() => setChrome(false)} />
-                    </View>
-                  </View>
+                  )}
                 </>
               ) : (
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 4 }}>
-                  <PlaybackChip icon={Maximize} label="Hide playback controls" onPress={() => setChrome(false)} />
-                </View>
+                <View style={[styles.tools, styles.photoTools]}>{[tool.rate, tool.remove, tool.hide]}</View>
               )}
             </View>
           </View>
@@ -436,60 +475,98 @@ export default function PlaybackScreen() {
           ) : null}
         </>
       ) : (
-        <View style={{ position: 'absolute', right: sideInset + 12, bottom: Math.max(insets.bottom, 8) + 12 }}>
-          <PlaybackChip icon={Minimize} label="Show playback controls" onPress={() => setChrome(true)} />
+        <View style={{ position: 'absolute', right: sideInset + 16, bottom: Math.max(insets.bottom, 10) + 12 }}>
+          <SideButton icon={ViewIcon} label="Show playback controls" onPress={() => setChrome(true)} />
         </View>
       )}
 
-      {conformOpen && targets.length ? (
-        <View style={{ position: 'absolute', left: 12, right: 12, bottom: Math.max(insets.bottom, 8) + (portrait ? 190 : 120), alignItems: 'center' }}>
-          <View style={{ width: '100%', maxWidth: 420, padding: 14, gap: 8, borderRadius: 14, backgroundColor: colors.glassStrong, borderWidth: 1, borderColor: colors.border }}>
-            <MText size={9} weight="bold" tracking={1.8}>
-              CONFORM PREVIEW
-            </MText>
-            <MText size={9.5} color={colors.muted}>
-              {`Shot at ${item.fps} fps. Play it back at:`}
-            </MText>
-            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-              {[null, ...targets].map((target) => {
-                const on = conform === target;
-                const label = target == null ? 'Real time' : `${target}p · ${Math.round((target / (item.fps ?? target)) * 100)}%`;
-                return (
-                  <PressableScale key={String(target)} accessibilityLabel={label} accessibilityState={{ selected: on }} onPress={() => setConform(target)} style={{ minHeight: 40, paddingHorizontal: 12, borderRadius: 9, justifyContent: 'center', backgroundColor: on ? colors.accent : 'rgba(255,255,255,0.06)' }}>
-                    <MText size={12} weight="semibold" color={on ? colors.onAccent : colors.secondary}>
-                      {label}
-                    </MText>
-                  </PressableScale>
-                );
-              })}
-            </View>
-            {conform != null ? (
-              <MText size={9} color={colors.muted}>
-                Audio is muted while conformed.
-              </MText>
-            ) : null}
-          </View>
-        </View>
-      ) : null}
+      <DeliveryProgressPill bottom={chrome ? bottomH + 8 : Math.max(insets.bottom, 10) + 70} />
+      {lib.notice ? <NoticeToast text={lib.notice} bottom={(chrome ? bottomH : Math.max(insets.bottom, 10)) + 90} /> : null}
 
-      {info ? (
-        <View style={{ position: 'absolute', right: sideInset + 12, top: insets.top + 12, bottom: Math.max(insets.bottom, 8) + 12, width: Math.min(300, width - 24) }}>
-          <ClipInfoPanel rows={clipInfoRows(item, { source: localUri ? 'On this phone (original)' : 'On camera', rating, frames: burst.length || undefined })} onClose={() => setInfo(false)} />
+      <Sheet visible={info} title="Clip info" onClose={() => setInfo(false)}>
+        <ClipInfoList rows={clipInfoRows(item, { source: localUri ? 'On this phone (original)' : 'On camera', rating, frames: burst.length || undefined })} />
+      </Sheet>
+      <Sheet visible={ratingOpen} title="Rating" onClose={() => setRatingOpen(false)} expandable={false}>
+        <View style={styles.ratingBody}>
+          <StarRating stars={rating} onSelect={(s) => prefs.setRating(item.id, s)} />
+          <Text style={styles.sheetMuted}>{rating ? `${rating} of 5` : 'Unrated'}</Text>
         </View>
-      ) : null}
-
-      <DeliveryProgressPill bottom={Math.max(insets.bottom, 8) + (portrait ? 200 : 130)} />
-      {lib.notice ? <NoticeToast text={lib.notice} bottom={Math.max(insets.bottom, 8) + (portrait ? 260 : 170)} /> : null}
-      {sharing ? <DeliverySheet items={burst.length ? burst : [item]} onClose={() => setSharing(false)} /> : null}
-      {deliveryPanelOpen ? <DeliveryQueuePanel onClose={() => setDeliveryPanel(false)} /> : null}
-      {confirmDelete ? (
-        <ConfirmDialog
-          title={burst.length > 1 ? `Delete this burst (${burst.length} photos) from the camera?` : isVideo ? 'Delete this clip from the camera?' : 'Delete this photo from the camera?'}
-          message="This removes the file from the camera card."
-          onCancel={() => setConfirmDelete(false)}
-          onConfirm={() => void doDelete()}
-        />
-      ) : null}
+      </Sheet>
+      <Sheet visible={conformOpen && targets.length > 0} title="Conform preview" onClose={() => setConformOpen(false)} expandable={false} passthrough>
+        <Text style={styles.sheetMuted}>{`Shot at ${item.fps} fps. Play it back at:`}</Text>
+        <ChipRow>
+          {[null, ...targets].map((target) => (
+            <Chip
+              key={String(target)}
+              label={target == null ? 'Real time' : `${target}p · ${Math.round((target / (item.fps ?? target)) * 100)}%`}
+              selected={conform === target}
+              onPress={() => setConform(target)}
+            />
+          ))}
+        </ChipRow>
+        {conform != null ? <Text style={styles.sheetMuted}>Audio is muted while conformed.</Text> : null}
+        <View style={{ height: spacing.sm }} />
+      </Sheet>
+      <DeliverySheet visible={sharing} items={burst.length ? burst : [item]} onClose={() => setSharing(false)} />
+      <DeliveryQueueSheet visible={deliveryPanelOpen} onClose={() => setDeliveryPanel(false)} />
+      <ConfirmSheet
+        visible={confirmDelete}
+        title={burst.length > 1 ? `Delete this burst (${burst.length} photos)?` : isVideo ? 'Delete this clip?' : 'Delete this photo?'}
+        message="This removes the file from the camera card."
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => void doDelete()}
+      />
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  const fill = { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0 };
+  return {
+    root: { flex: 1, backgroundColor: colors.preview },
+    fill,
+    missing: { flex: 1, backgroundColor: colors.preview, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 12, padding: 24 },
+    missingText: { fontFamily: fonts.medium, fontSize: 14, color: 'rgba(255,255,255,0.7)', textAlign: 'center' as const },
+    loading: { ...fill, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 12, backgroundColor: 'rgba(0,0,0,0.6)' },
+    loadingText: { fontFamily: fonts.medium, fontSize: 14, ...videoText, textAlign: 'center' as const, maxWidth: 320 },
+    header: { position: 'absolute' as const, left: 0, right: 0, top: 0, paddingBottom: 18 },
+    headerRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12 },
+    titleBlock: { flex: 1, minWidth: 0, gap: 2 },
+    title: { fontFamily: fonts.semibold, fontSize: 16, ...videoText },
+    subtitle: { fontFamily: fonts.medium, fontSize: 12, color: 'rgba(255,255,255,0.7)', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 },
+    headerActions: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4 },
+    headerIcon: { width: 40, height: 44, alignItems: 'center' as const, justifyContent: 'center' as const },
+    shareSquare: { width: 44, height: 44, borderRadius: 14, borderCurve: 'continuous' as const, backgroundColor: '#ffffff', alignItems: 'center' as const, justifyContent: 'center' as const, marginLeft: 4 },
+    sharePill: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 8,
+      height: 44,
+      paddingHorizontal: 18,
+      borderRadius: 999,
+      backgroundColor: '#ffffff',
+      marginLeft: 6,
+    },
+    shareLabel: { fontFamily: fonts.semibold, fontSize: 15, color: '#111111' },
+    sourceRow: { flexDirection: 'row' as const, gap: 6, marginTop: 10, marginLeft: 56 },
+    sourcePill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.45)' },
+    sourceText: { fontFamily: fonts.medium, fontSize: 11, color: '#ffffff' },
+    meters: { position: 'absolute' as const, left: 72, bottom: -40 },
+    bottom: { position: 'absolute' as const, left: 0, right: 0, bottom: 0, paddingTop: 28, alignItems: 'center' as const },
+    bottomColumn: { width: '100%' as const, maxWidth: 760, gap: 4 },
+    filmstrip: { gap: 6, paddingVertical: 4 },
+    frame: { width: 64, height: 44, borderRadius: 8, overflow: 'hidden' as const, borderWidth: 2, borderColor: 'transparent' },
+    frameOn: { borderColor: '#ffffff' },
+    clockRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
+    clockHit: { minHeight: 28, justifyContent: 'center' as const },
+    clock: { fontFamily: fonts.semibold, fontSize: 13, ...videoText, fontVariant: ['tabular-nums' as const] },
+    clockMuted: { fontFamily: fonts.medium, fontSize: 13, color: 'rgba(255,255,255,0.65)', fontVariant: ['tabular-nums' as const] },
+    transport: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 6 },
+    tools: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, paddingTop: 6 },
+    photoTools: { justifyContent: 'flex-end' as const, gap: 12 },
+    landscapeRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8 },
+    toolGroup: { flex: 1, flexDirection: 'row' as const, gap: 6 },
+    ratingBody: { alignItems: 'center' as const, gap: 4, paddingBottom: spacing.md },
+    sheetMuted: { fontFamily: fonts.regular, fontSize: 14, color: colors.mutedForeground },
+  };
 }

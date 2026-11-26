@@ -1,8 +1,9 @@
-import { MemoryStick, Thermometer } from 'lucide-react-native';
-import { useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { SdCardIcon, ThermometerIcon } from '@hugeicons/core-free-icons';
+import { useState, type ReactNode } from 'react';
+import { Text, View } from 'react-native';
 import { useCamera, type CameraState } from '@/camera';
-import { MText, colors } from '@/theme';
+import { Icon } from '@/components/icon';
+import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import {
   COLOR_LABEL,
   MODE_LABEL,
@@ -13,238 +14,189 @@ import {
   storageForms,
   timecodeComponents,
 } from '../format';
-import type { FieldMonitorLayout } from '../layout/fieldMonitorLayout';
+import { STATUS_GAP, STATUS_ROW, type FieldMonitorLayout } from '../layout/fieldMonitorLayout';
 import { useLiveUi, type CaptureSheetId } from '../liveUiStore';
-import { readoutShadow, rectStyle } from '../chrome/primitives';
+import { LiveBackButton } from '../chrome/SystemButtons';
+import { PillText, VideoPill, onVideo, textShadow } from '../chrome/primitives';
 import { CameraBatteryGauge, LinkGauge, PhoneBatteryGauge } from './LiveTelemetry';
 
-/** `MonitorRecordingReadout`: STBY/REC + elapsed in a dark capsule. */
+/** `MonitorRecordingReadout`: a pill with the dotPink REC dot (white at standby) and elapsed time. */
 export function RecordingReadout() {
+  const styles = useThemedStyles(createStyles);
   const rec = useCamera((s) => s.recording);
   const recording = rec.recording;
   return (
-    <View
-      accessible
-      accessibilityLabel={recording ? 'Recording' : 'Standby'}
+    <VideoPill
+      label={recording ? 'Recording' : 'Standby'}
       accessibilityValue={{ text: elapsedLabel(rec.elapsedSec) }}
-      style={{
-        flexDirection: 'row',
-        gap: 5,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 999,
-        backgroundColor: 'rgba(0,0,0,0.65)',
-      }}
+      style={recording ? styles.recPill : undefined}
     >
-      <MText size={10} weight="semibold" mono color={recording ? colors.recording : colors.text}>
-        {recording ? 'REC' : 'STBY'}
-      </MText>
-      <MText size={10} weight="semibold" mono color={colors.secondary}>
-        {elapsedLabel(recording ? rec.elapsedSec : 0)}
-      </MText>
-    </View>
+      <View style={[styles.recDot, recording && styles.recDotOn]} />
+      <PillText>{recording ? 'REC' : 'STBY'}</PillText>
+      <PillText mono>{elapsedLabel(recording ? rec.elapsedSec : 0)}</PillText>
+    </VideoPill>
   );
 }
 
 /** `MonitorClock`: the reported timecode; the last field in accent. Never invents a clock. */
-export function MonitorClock({ size }: { size: number }) {
+export function MonitorClock() {
+  const styles = useThemedStyles(createStyles);
   const tc = useCamera((s) => s.recording.timecode);
-  const shown = tc ?? TIMECODE_PLACEHOLDER;
-  const { base, accent } = timecodeComponents(shown);
+  const { base, accent } = timecodeComponents(tc ?? TIMECODE_PLACEHOLDER);
   return (
-    <MText
-      size={size}
-      weight="medium"
-      mono
-      numberOfLines={1}
-      style={readoutShadow}
-      accessibilityLabel={tc ? `Timecode ${tc}` : 'Timecode not available'}
-    >
+    <Text numberOfLines={1} style={styles.clock} accessibilityLabel={tc ? `Timecode ${tc}` : 'Timecode not available'}>
       {base}
-      <MText size={size} weight="medium" mono color={colors.accent}>
-        {accent}
-      </MText>
-    </MText>
-  );
-}
-
-/** Storage remaining; tap cycles free space → record time → percent. */
-export function StorageReadout({ size }: { size: number }) {
-  const forms = useCamera(storageFormsKey);
-  const [form, setForm] = useState(0);
-  const list = forms.split('|');
-  const value = list[form % list.length];
-  const locked = useLiveUi((s) => s.locked);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Storage remaining"
-      accessibilityValue={{ text: value }}
-      disabled={locked}
-      onPress={() => setForm((f) => (f + 1) % list.length)}
-      hitSlop={10}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 32 }}
-    >
-      <MemoryStick size={12} color={colors.text} />
-      <MText size={size} weight="medium" mono numberOfLines={1} style={readoutShadow}>
-        {value}
-      </MText>
-    </Pressable>
+      <Text style={styles.clockAccent}>{accent}</Text>
+    </Text>
   );
 }
 
 // Selector returns a primitive so the subscription stays stable.
 const storageFormsKey = (s: CameraState) => storageForms(s).join('|');
 
-function TopReadout({
-  sheet,
-  value,
-  size,
-  accent,
-  caption,
-  label,
-  weight = 'medium',
-}: {
-  sheet: CaptureSheetId;
-  value: string;
-  size: number;
-  accent?: boolean;
-  caption?: string;
-  label: string;
-  weight?: 'medium' | 'semibold';
-}) {
+/** Storage remaining; tap cycles free space → record time → percent. */
+export function StorageReadout() {
+  const forms = useCamera(storageFormsKey);
+  const [form, setForm] = useState(0);
+  const list = forms.split('|');
+  const value = list[form % list.length];
+  const locked = useLiveUi((s) => s.locked);
+  return (
+    <VideoPill label="Storage remaining" accessibilityValue={{ text: value }} disabled={locked} onPress={() => setForm((f) => (f + 1) % list.length)}>
+      <Icon icon={SdCardIcon} size={14} color={onVideo.ink} />
+      <PillText mono>{value}</PillText>
+    </VideoPill>
+  );
+}
+
+/** A pill that opens one of the top-edge capture sheets (format, colour, mode). */
+function SheetPill({ sheet, value, label, accent }: { sheet: CaptureSheetId; value: string; label: string; accent?: boolean }) {
+  const { colors } = useTheme();
   const open = useLiveUi((s) => s.captureSheet === sheet);
   const locked = useLiveUi((s) => s.locked);
   const set = useLiveUi((s) => s.set);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
+    <VideoPill
+      testID={`monitor.capture.${sheet}`}
+      label={label}
       accessibilityValue={{ text: value }}
+      chosen={open}
       disabled={locked}
-      hitSlop={10}
       onPress={() => set({ captureSheet: open ? null : sheet, gimbalPanel: 'none', zoomDialOpen: false })}
-      style={{ minHeight: 32, justifyContent: 'center', alignItems: caption ? 'flex-end' : 'flex-start' }}
     >
-      <MText size={size} weight={weight} mono numberOfLines={1} color={accent || open ? colors.accent : colors.text} style={readoutShadow}>
+      <PillText chosen={open} color={accent ? colors.accent : undefined}>
         {value}
-      </MText>
-      {caption ? (
-        <MText size={11} weight="semibold" numberOfLines={1} color={open ? colors.accent : colors.text} style={readoutShadow}>
-          {caption}
-        </MText>
-      ) : null}
-    </Pressable>
+      </PillText>
+    </VideoPill>
   );
 }
 
 function ThermalBadge() {
+  const { colors } = useTheme();
   const thermal = useCamera((s) => s.power.thermal);
   if (thermal === 'normal') return null;
-  const tint = thermal === 'hot' ? colors.recording : colors.linkWatch;
+  const tint = thermal === 'hot' ? colors.destructive : colors.warning;
   return (
-    <View
-      accessible
-      accessibilityLabel={thermal === 'hot' ? 'Camera hot' : 'Camera warm'}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}
-    >
-      <Thermometer size={14} color={tint} />
-      <MText size={12} weight="semibold" color={tint} uppercase style={readoutShadow}>
-        {thermal}
-      </MText>
+    <VideoPill label={thermal === 'hot' ? 'Camera hot' : 'Camera warm'}>
+      <Icon icon={ThermometerIcon} size={14} color={tint} />
+      <PillText color={tint}>{thermal === 'hot' ? 'Hot' : 'Warm'}</PillText>
+    </VideoPill>
+  );
+}
+
+function Row({ children, style }: { children: ReactNode; style?: object }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View pointerEvents="box-none" style={[styles.row, style]}>
+      {children}
     </View>
   );
 }
 
-/** `LiveStatusChrome` over `MonitorStatusChrome`: storage, format, colour, mode, REC + clock. */
-export function LiveStatusChrome({ layout }: { layout: FieldMonitorLayout }) {
+/**
+ * `LiveStatusChrome`: status pills along the top. Landscape is one row (back, REC and timecode
+ * leading; format, colour, mode and telemetry trailing). Portrait is two rows: telemetry, then
+ * REC + timecode with format and colour.
+ */
+export function LiveStatusChrome({ layout, onBack }: { layout: FieldMonitorLayout; onBack: () => void }) {
+  const styles = useThemedStyles(createStyles);
   const format = useCamera((s) => s.format);
   const photo = isPhotoMode(format.shootingMode);
-  const tablet = layout.tablet;
+  const { status } = layout;
+
+  const formatPills = photo ? (
+    <SheetPill sheet="mode" value={MODE_LABEL[format.shootingMode]} accent label="Shooting mode" />
+  ) : (
+    <>
+      <SheetPill sheet="format" value={formatChip(format.resolution, format.fps)} label="Recording format" />
+      <SheetPill sheet="color" value={COLOR_LABEL[format.colorMode]} label="Color mode" />
+    </>
+  );
+  const recGroup = !photo ? (
+    <>
+      <RecordingReadout />
+      <MonitorClock />
+    </>
+  ) : null;
 
   if (layout.portrait) {
-    const clockSize = tablet ? 25 : 23;
+    const roomy = status.width >= 560;
     return (
-      <>
-        {/* Storage + link on the left of the island, batteries trailing it. */}
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: 'absolute',
-            left: layout.status.x,
-            top: layout.telemetry.y - 6,
-            right: layout.viewport.width - layout.telemetry.x + 8,
-            height: 32,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <StorageReadout size={14} />
+      <View pointerEvents="box-none" style={[styles.box, { left: status.x, top: status.y, width: status.width }]}>
+        <Row>
+          <LiveBackButton onPress={onBack} />
+          <StorageReadout />
           <LinkGauge />
           <ThermalBadge />
-        </View>
-        <View
-          pointerEvents="box-none"
-          style={{ ...rectStyle(layout.telemetry), flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}
-        >
+          <View style={styles.spacer} />
           <PhoneBatteryGauge />
           <CameraBatteryGauge />
-        </View>
-        <View
-          pointerEvents="box-none"
-          style={{ ...rectStyle(layout.status), top: layout.status.y + 14, flexDirection: 'row', alignItems: 'flex-start' }}
-        >
-          <View style={{ flex: 1, alignItems: 'flex-start', paddingTop: 4 }}>{!photo ? <RecordingReadout /> : null}</View>
-          <View style={{ alignItems: 'center' }}>{!photo ? <MonitorClock size={clockSize} /> : null}</View>
-          <View style={{ flex: 1, alignItems: 'flex-end' }}>
-            {photo ? (
-              <TopReadout sheet="mode" value="MODE" size={12} weight="semibold" label="Shooting mode" />
-            ) : (
-              <TopReadout
-                sheet="format"
-                value={`${format.resolution}${format.fps}p`}
-                caption={COLOR_LABEL[format.colorMode]}
-                size={tablet ? 18 : 16}
-                label="Recording options"
-              />
-            )}
-          </View>
-        </View>
-      </>
+        </Row>
+        <Row style={{ marginTop: STATUS_GAP }}>
+          {recGroup}
+          <View style={styles.spacer} />
+          {formatPills}
+          {!photo && roomy ? <SheetPill sheet="mode" value={MODE_LABEL[format.shootingMode]} accent label="Shooting mode" /> : null}
+        </Row>
+      </View>
     );
   }
 
-  const size = tablet ? 18 : 16;
+  const showsMode = !photo && status.width >= 700;
   return (
-    <View
-      pointerEvents="box-none"
-      style={{ ...rectStyle(layout.status), flexDirection: 'row', alignItems: 'center' }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 24, flexShrink: 1 }}>
-        <StorageReadout size={size} />
-        {photo ? (
-          <TopReadout sheet="mode" value={MODE_LABEL[format.shootingMode]} size={size} accent label="Shooting mode" />
-        ) : (
-          <>
-            <TopReadout sheet="format" value={formatChip(format.resolution, format.fps)} size={size} label="Recording format" />
-            <TopReadout sheet="color" value={COLOR_LABEL[format.colorMode]} size={size} label="Color mode" />
-            {layout.viewport.width >= 800 ? (
-              <TopReadout sheet="mode" value={MODE_LABEL[format.shootingMode]} size={size} accent label="Shooting mode" />
-            ) : null}
-          </>
-        )}
+    <View pointerEvents="box-none" style={[styles.box, { left: status.x, top: status.y, width: status.width }]}>
+      <Row>
+        <LiveBackButton onPress={onBack} />
+        {recGroup}
+        <View style={styles.spacer} />
+        {formatPills}
+        {showsMode ? <SheetPill sheet="mode" value={MODE_LABEL[format.shootingMode]} accent label="Shooting mode" /> : null}
+        <StorageReadout />
+        <LinkGauge />
+        <PhoneBatteryGauge />
+        <CameraBatteryGauge />
         <ThermalBadge />
-      </View>
-      <View style={{ flex: 1, minWidth: 24 }} />
-      {!photo ? (
-        <View
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingRight: layout.recordingReadoutTrailingInset }}
-        >
-          <RecordingReadout />
-          <MonitorClock size={tablet ? 25 : 23} />
-        </View>
-      ) : null}
+      </Row>
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    box: { position: 'absolute' as const },
+    row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, height: STATUS_ROW },
+    spacer: { flex: 1, minWidth: 4 },
+    recPill: { backgroundColor: 'rgba(214,21,95,0.28)' },
+    recDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: onVideo.inkMuted },
+    recDotOn: { backgroundColor: colors.dotPink },
+    clock: {
+      fontFamily: fonts.semibold,
+      fontSize: 13,
+      color: onVideo.ink,
+      fontVariant: ['tabular-nums' as const],
+      marginLeft: 2,
+      ...textShadow,
+    },
+    clockAccent: { color: colors.accent },
+  };
 }

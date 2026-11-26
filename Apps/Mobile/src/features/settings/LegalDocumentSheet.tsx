@@ -1,27 +1,27 @@
-import { ScrollView } from 'react-native';
-import { MText, colors } from '@/theme';
-import { appBrand } from '@/features/startup/brand';
+import { useRef } from 'react';
+import { Text } from 'react-native';
+import { Sheet } from '@/components/sheet';
+import { fonts, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import { legalDocuments, legalTitles, type LegalPage } from './legal';
-import { OverlayScreen } from './OverlayScreen';
 
-/** One legal page over the whole window, from bundled text. */
+/** One legal page in a tall sheet, from bundled text. */
 export function LegalDocumentSheet({ page, onClose }: { page: LegalPage | null; onClose: () => void }) {
+  const styles = useThemedStyles(createStyles);
+  // The page stays on screen while the sheet slides away.
+  const last = useRef<LegalPage | null>(page);
+  if (page) last.current = page;
+  const shown = page ?? last.current;
   return (
-    <OverlayScreen visible={!!page} eyebrow={appBrand.name} title={page ? legalTitles[page] : ''} onClose={onClose}>
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{
-          padding: 16,
-          borderRadius: 12,
-          backgroundColor: colors.surface,
-          borderWidth: 1,
-          borderColor: colors.border,
-        }}
-      >
-        <MText size={14} selectable style={{ lineHeight: 21 }} testID={page ? `legal.document.${page}` : undefined}>
-          {page ? legalDocuments[page] : ''}
-        </MText>
-      </ScrollView>
-    </OverlayScreen>
+    <Sheet visible={!!page} title={shown ? legalTitles[shown] : ''} onClose={onClose} tall>
+      <Text selectable style={styles.text} testID={shown ? `legal.document.${shown}` : undefined}>
+        {shown ? legalDocuments[shown] : ''}
+      </Text>
+    </Sheet>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    text: { fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, color: colors.foreground, paddingBottom: 24 },
+  };
 }

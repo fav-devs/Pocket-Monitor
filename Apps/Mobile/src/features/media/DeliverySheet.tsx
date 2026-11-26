@@ -1,29 +1,30 @@
-import { Check, ChevronLeft, ChevronRight, CloudUpload, Download, Folder, Share as ShareIcon } from 'lucide-react-native';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ScrollView, View } from 'react-native';
+import { Folder01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { useEffect, useMemo, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import type { CameraMediaItem } from '@/camera';
 import { useCameraSession } from '@/camera';
-import { useMediaPreferences } from '@/state/media';
-import { MText, colors, minTouch, radius, withAlpha } from '@/theme';
-import { PressableScale, SectionHeader } from '@/ui';
+import { Button } from '@/components/button';
+import { FieldSection } from '@/components/field-section';
+import { Icon } from '@/components/icon';
+import { SegmentedControl } from '@/components/segmented-control';
+import { SettingsRow } from '@/components/settings-ui';
+import { Sheet } from '@/components/sheet';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { type MediaOutputCurve, type MediaShareFormat, useMediaPreferences } from '@/state/media';
 import { deliveryPlatform } from './deliveryPlatform';
-import { type DeliveryDestination, useDelivery } from './deliveryStore';
+import { destinationIcon } from './DeliveryQueue';
+import { type DeliveryDestination, destinationTitle, useDelivery } from './deliveryStore';
 import { type ExportOptions, mediaExporter } from './export';
 import { byteLabel, isLogColor } from './format';
 import { type FrameioProject, useFrameioAccount } from './frameio';
-import { Badge, Busy, Segmented, ToggleRow } from './MediaChips';
-import { ActionButton, CloseButton, OverlayCard } from './MediaOverlays';
+import { Busy, SwitchRow, Tag, TextAction } from './MediaChips';
 
 const copy = {
-  convertHelp: 'Choose one output curve for every selected D-Log or D-Log2 clip. Camera originals stay untouched.',
-  convertUnavailableHelp: 'Needs a D-Log or D-Log2 clip. Rec.709 stays as-shot.',
-  exporterNotice: 'Convert log, Bake LUT and re-encoding need the native exporter, which is not in this build yet. Originals are delivered unchanged.',
+  convertHelp: 'One output curve for every D-Log or D-Log2 clip. Originals stay untouched.',
+  convertUnavailableHelp: 'Needs a D-Log or D-Log2 clip.',
+  exporterNotice: 'Convert log, Bake LUT and re-encoding need the native exporter. Originals are delivered unchanged.',
 };
-
-export function DestinationIcon({ destination, color = colors.accent, size = 18 }: { destination: DeliveryDestination; color?: string; size?: number }) {
-  const Icon = destination === 'share' ? ShareIcon : destination === 'photos' ? Download : CloudUpload;
-  return <Icon size={size} color={color} strokeWidth={1.9} />;
-}
+const NATIVE = 'Native exporter';
 
 function selectionLabel(items: CameraMediaItem[]): string {
   const bytes = byteLabel(items.reduce((n, i) => n + i.sizeBytes, 0));
@@ -34,49 +35,42 @@ function selectionLabel(items: CameraMediaItem[]): string {
   return `${parts.filter(Boolean).join(' + ')} · ${bytes}`;
 }
 
-function Plate({ children, onPress, disabled, label }: { children: ReactNode; onPress?: () => void; disabled?: boolean; label: string }) {
-  return (
-    <PressableScale
-      accessibilityLabel={label}
-      onPress={onPress}
-      disabled={disabled}
-      noScale
-      style={{
-        minHeight: 56,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: radius.md,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderWidth: 1,
-        borderColor: colors.border,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-      }}
-    >
-      {children}
-    </PressableScale>
-  );
-}
-
 /**
  * `MonitorMediaDeliveryPanel`: choose a destination, then its options, then begin. The accepted
- * request joins the delivery queue; progress shows in the queue panel and the compact pill.
+ * request joins the delivery queue; progress shows in the queue sheet and the compact pill.
  */
-export function DeliverySheet({ items, onClose, initialDestination }: { items: CameraMediaItem[]; onClose: () => void; initialDestination?: DeliveryDestination }) {
+export function DeliverySheet({
+  visible,
+  items,
+  onClose,
+  onDismiss,
+  initialDestination,
+}: {
+  visible: boolean;
+  items: CameraMediaItem[];
+  onClose: () => void;
+  onDismiss?: () => void;
+  initialDestination?: DeliveryDestination;
+}) {
+  const styles = useThemedStyles(createStyles);
   const session = useCameraSession();
   const demo = session.kind === 'demo';
   const prefs = useMediaPreferences();
   const account = useFrameioAccount();
   const enqueue = useDelivery((s) => s.enqueue);
-  const [destination, setDestination] = useState<DeliveryDestination | null>(
-    initialDestination ?? (useMediaPreferences.getState().postExportAction === 'save-to-photos' ? 'photos' : null),
-  );
+  const initial = () => initialDestination ?? (useMediaPreferences.getState().postExportAction === 'save-to-photos' ? 'photos' : null);
+  const [destination, setDestination] = useState<DeliveryDestination | null>(initial);
+
+  // Each opening starts from the default destination.
+  useEffect(() => {
+    if (visible) setDestination(initial());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   useEffect(() => {
-    void account.refresh(demo);
+    if (visible) void account.refresh(demo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demo]);
+  }, [demo, visible]);
 
   useEffect(() => {
     if (destination === 'frameio' && account.status === 'signed-in' && !account.projects && !account.loadingProjects) void account.loadProjects();
@@ -121,93 +115,72 @@ export function DeliverySheet({ items, onClose, initialDestination }: { items: C
   const canBegin = destination !== 'frameio' || (account.status === 'signed-in' && !!project);
 
   return (
-    <OverlayCard onDismiss={onClose} maxWidth={460} align="center" label="Share">
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: destination ? 4 : 16, paddingRight: 8, paddingTop: 8 }}>
-        {destination ? (
-          <>
-            <PressableScale accessibilityLabel="Back" onPress={() => setDestination(null)} style={{ minHeight: minTouch, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <ChevronLeft size={14} color={colors.accent} strokeWidth={2.2} />
-              <MText size={13} weight="semibold" color={colors.accent}>
-                Back
-              </MText>
-            </PressableScale>
-            <View style={{ flex: 1, gap: 2 }}>
-              <MText size={9} weight="bold" tracking={1.8} uppercase>
-                {destinations.find((d) => d.id === destination)?.title}
-              </MText>
-              <MText size={11} weight="medium" color={colors.muted}>
-                Options
-              </MText>
-            </View>
-          </>
-        ) : (
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <ShareIcon size={14} color={colors.text} strokeWidth={2.2} />
-            <MText size={14} weight="bold" tracking={1} uppercase>
-              Share
-            </MText>
+    <Sheet
+      visible={visible}
+      title={destination ? destinationTitle(destination) : 'Share'}
+      onClose={onClose}
+      onDismiss={onDismiss}
+      action={destination ? <TextAction title="Back" onPress={() => setDestination(null)} /> : undefined}
+      footer={
+        destination ? (
+          <View style={styles.footer}>
+            <Text style={styles.footerText} numberOfLines={2}>
+              {destination === 'frameio' && !project ? 'Choose a project to upload into.' : `${items.length} item${items.length === 1 ? '' : 's'} · ${options.convertLog || options.bakeLUT ? 'Transformed' : 'Originals'}`}
+            </Text>
+            <Button title={actionTitle} icon={destinationIcon(destination)} onPress={begin} disabled={!canBegin} accessibilityLabel={`${actionTitle} ${items.length === 1 ? 'item' : 'items'}`} style={styles.footerButton} />
           </View>
-        )}
-        <CloseButton onPress={onClose} />
+        ) : undefined
+      }
+    >
+      <View style={styles.summary}>
+        <Text style={styles.summaryTitle} numberOfLines={2}>
+          {selectionLabel(items)}
+        </Text>
+        {destination && !exporter && anyVideo ? <Text style={styles.muted}>{copy.exporterNotice}</Text> : null}
       </View>
-      <View style={{ flexShrink: 1 }}>
-        <ScrollBody>
-          <View style={{ gap: 6 }}>
-            <MText size={15} weight="semibold">
-              {selectionLabel(items)}
-            </MText>
-            {destination && !exporter && anyVideo ? (
-              <MText size={12} color={colors.muted}>
-                {copy.exporterNotice}
-              </MText>
+      {!destination ? (
+        <View style={styles.card}>
+          {destinations.map((d, i) => (
+            <SettingsRow
+              key={d.id}
+              icon={destinationIcon(d.id)}
+              title={d.title}
+              subtitle={d.subtitle}
+              chevron
+              disabled={!d.enabled}
+              last={i === destinations.length - 1}
+              onPress={() => setDestination(d.id)}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.sections}>
+          {destination === 'frameio' ? <FrameioService project={project} /> : null}
+          <FieldSection title="Export">
+            {items.length === 1 ? (
+              <View style={styles.fileRow}>
+                <Text style={styles.fileLabel}>Filename</Text>
+                <Text style={styles.fileName} numberOfLines={1} selectable>
+                  {items[0].fileName}
+                </Text>
+              </View>
             ) : null}
-          </View>
-          {!destination ? (
-            <View style={{ gap: 8 }}>
-              <SectionHeader title="Destination" />
-              {destinations.map((d) => (
-                <Plate key={d.id} label={d.title} onPress={() => setDestination(d.id)} disabled={!d.enabled}>
-                  <DestinationIcon destination={d.id} />
-                  <View style={{ flex: 1, gap: 2 }}>
-                    <MText size={14} weight="semibold" color={d.enabled ? colors.text : colors.faint}>
-                      {d.title}
-                    </MText>
-                    <MText size={11} color={colors.muted}>
-                      {d.subtitle}
-                    </MText>
-                  </View>
-                  <ChevronRight size={13} color={colors.faint} />
-                </Plate>
-              ))}
-            </View>
-          ) : (
-            <View style={{ gap: 18 }}>
-              {destination === 'frameio' ? <FrameioService project={project} /> : null}
-              <View style={{ gap: 4 }}>
-                <SectionHeader title="Export" />
-                {items.length === 1 ? (
-                  <View style={{ padding: 12, borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.05)', gap: 4, marginBottom: 4 }}>
-                    <MText size={12} weight="semibold" color={colors.muted}>
-                      Filename
-                    </MText>
-                    <MText size={13} mono>
-                      {items[0].fileName}
-                    </MText>
-                  </View>
-                ) : null}
-                {anyVideo ? (
-                  <>
-                    <ToggleRow
-                      title="Convert log"
-                      help={anyLog ? copy.convertHelp : copy.convertUnavailableHelp}
-                      value={options.convertLog}
-                      onChange={(v) => prefs.set('convertLog', v)}
-                      disabled={!exporter || !anyLog}
-                      badge={exporter ? undefined : 'Native exporter'}
-                    />
-                    {options.convertLog ? (
-                      <Segmented
-                        label="Output curve"
+            <View>
+              {anyVideo ? (
+                <>
+                  <SwitchRow
+                    inset={false}
+                    title="Convert log"
+                    help={anyLog ? copy.convertHelp : copy.convertUnavailableHelp}
+                    value={options.convertLog}
+                    onChange={(v) => prefs.set('convertLog', v)}
+                    disabled={!exporter || !anyLog}
+                    tag={exporter ? undefined : NATIVE}
+                  />
+                  {options.convertLog ? (
+                    <View style={styles.control}>
+                      <SegmentedControl<MediaOutputCurve>
+                        accessibilityLabel="Output curve"
                         value={prefs.outputCurve}
                         onChange={(v) => prefs.set('outputCurve', v)}
                         options={[
@@ -215,122 +188,94 @@ export function DeliverySheet({ items, onClose, initialDestination }: { items: C
                           { value: 'hlg', label: 'HLG' },
                         ]}
                       />
-                    ) : null}
-                    <ToggleRow
-                      title="Bake LUT"
-                      help="Burn the monitoring LUT into the delivered file."
-                      value={options.bakeLUT}
-                      onChange={(v) => prefs.set('bakeLUT', v)}
-                      disabled={!exporter}
-                      badge={exporter ? undefined : 'Native exporter'}
-                    />
-                    {options.bakeLUT ? (
-                      <ToggleRow title="Bake exposure" help="Apply the LUT exposure offset too." value={options.bakeExposure} onChange={(v) => prefs.set('bakeExposure', v)} />
-                    ) : null}
-                    <View style={{ gap: 6, paddingVertical: 6 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <MText size={12.5} weight="semibold" color={exporter ? colors.text : colors.faint}>
-                          Format
-                        </MText>
-                        {exporter ? null : <Badge text="Native exporter" />}
-                      </View>
-                      <Segmented
-                        label="Format"
-                        value={options.format}
-                        onChange={(v) => exporter && prefs.set('shareFormat', v)}
-                        options={[
-                          { value: 'original', label: 'Original' },
-                          { value: 'h264', label: 'H.264' },
-                          { value: 'hevc', label: 'HEVC' },
-                        ]}
-                      />
                     </View>
-                  </>
-                ) : null}
-                <ToggleRow title="Include metadata" help="Keep camera, lens and timecode tags." value={prefs.includeMetadata} onChange={(v) => prefs.set('includeMetadata', v)} />
-                {destination === 'frameio' ? (
-                  <ToggleRow title="Upload again" help="Upload clips already sent to Frame.io." value={prefs.frameioReupload} onChange={(v) => prefs.set('frameioReupload', v)} />
-                ) : null}
-              </View>
+                  ) : null}
+                  <SwitchRow
+                    inset={false}
+                    title="Bake LUT"
+                    help="Burn the monitoring LUT into the file."
+                    value={options.bakeLUT}
+                    onChange={(v) => prefs.set('bakeLUT', v)}
+                    disabled={!exporter}
+                    tag={exporter ? undefined : NATIVE}
+                  />
+                  {options.bakeLUT ? (
+                    <SwitchRow inset={false} title="Bake exposure" help="Apply the LUT exposure offset too." value={options.bakeExposure} onChange={(v) => prefs.set('bakeExposure', v)} />
+                  ) : null}
+                  <View style={[styles.control, styles.formatBlock]}>
+                    <View style={styles.formatHead}>
+                      <Text style={[styles.controlTitle, !exporter && styles.dim]}>Format</Text>
+                      {exporter ? null : <Tag text={NATIVE} />}
+                    </View>
+                    <SegmentedControl<MediaShareFormat>
+                      accessibilityLabel="Format"
+                      value={options.format}
+                      onChange={(v) => exporter && prefs.set('shareFormat', v)}
+                      options={[
+                        { value: 'original', label: 'Original' },
+                        { value: 'h264', label: 'H.264' },
+                        { value: 'hevc', label: 'HEVC' },
+                      ]}
+                    />
+                  </View>
+                </>
+              ) : null}
+              <SwitchRow inset={false} title="Include metadata" help="Keep camera, lens and timecode tags." value={prefs.includeMetadata} onChange={(v) => prefs.set('includeMetadata', v)} />
+              {destination === 'frameio' ? (
+                <SwitchRow inset={false} title="Upload again" help="Upload clips already sent to Frame.io." value={prefs.frameioReupload} onChange={(v) => prefs.set('frameioReupload', v)} />
+              ) : null}
             </View>
-          )}
-        </ScrollBody>
-      </View>
-      {destination ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderTopWidth: 1, borderTopColor: colors.border }}>
-          <MText size={11} color={colors.muted} style={{ flex: 1 }} numberOfLines={2}>
-            {destination === 'frameio' && !project ? 'Choose a project to upload into.' : `${items.length} item${items.length === 1 ? '' : 's'} · ${options.convertLog || options.bakeLUT ? 'Transformed' : 'Originals'}`}
-          </MText>
-          <View style={{ width: 150, flexDirection: 'row' }}>
-            <ActionButton title={actionTitle} onPress={begin} disabled={!canBegin} icon={<DestinationIcon destination={destination} color={colors.onAccent} size={15} />} />
-          </View>
+          </FieldSection>
         </View>
-      ) : null}
-    </OverlayCard>
-  );
-}
-
-function ScrollBody({ children }: { children: ReactNode }) {
-  return (
-    <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ padding: 16, paddingTop: 10, gap: 16 }} showsVerticalScrollIndicator={false}>
-      {children}
-    </ScrollView>
+      )}
+    </Sheet>
   );
 }
 
 function FrameioService({ project }: { project?: FrameioProject }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const account = useFrameioAccount();
   const setPref = useMediaPreferences((s) => s.set);
   return (
-    <View style={{ gap: 10 }}>
-      <SectionHeader title={account.demo ? 'Frame.io · demo' : 'Frame.io'} />
+    <FieldSection title={account.demo ? 'Frame.io · demo' : 'Frame.io'}>
       {account.status === 'signed-in' ? (
         <>
-          <MText size={12} color={colors.muted}>
-            {account.userName ? `Signed in as ${account.userName}` : 'Signed in'}
-          </MText>
+          <Text style={styles.muted}>{account.userName ? `Signed in as ${account.userName}` : 'Signed in'}</Text>
           {account.loadingProjects ? (
             <Busy label="Loading projects…" />
           ) : account.error ? (
-            <View style={{ gap: 6 }}>
-              <MText size={12} color={colors.accent}>
-                {account.error}
-              </MText>
-              <ActionButton title="Retry" tone="plain" onPress={() => void account.loadProjects()} />
+            <View style={styles.inline}>
+              <Text style={[styles.muted, { color: colors.destructive, flex: 1 }]}>{account.error}</Text>
+              <TextAction title="Retry" onPress={() => void account.loadProjects()} />
             </View>
+          ) : (account.projects ?? []).length === 0 ? (
+            <Text style={styles.muted}>No projects in this account.</Text>
           ) : (
-            <View style={{ gap: 6 }}>
-              {(account.projects ?? []).length === 0 ? (
-                <MText size={12} color={colors.muted}>
-                  No projects in this account.
-                </MText>
-              ) : null}
-              {(account.projects ?? []).map((p) => {
+            <View style={styles.card}>
+              {(account.projects ?? []).map((p, i, all) => {
                 const on = p.id === project?.id;
                 return (
-                  <Plate
+                  <Pressable
                     key={p.id}
-                    label={`Project ${p.name}`}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: on }}
+                    accessibilityLabel={`Project ${p.name}`}
                     onPress={() => {
                       setPref('frameioProjectId', p.id);
                       setPref('frameioProjectName', p.name);
                       setPref('frameioRootFolderId', p.rootFolderId);
                       setPref('frameioAccountId', p.accountId);
                     }}
+                    style={({ pressed }) => [styles.projectRow, i < all.length - 1 && styles.rowBorder, pressed && { opacity: 0.7 }]}
                   >
-                    <Folder size={15} color={on ? colors.accent : colors.muted} />
-                    <View style={{ flex: 1 }}>
-                      <MText size={13} weight="semibold">
-                        {p.name}
-                      </MText>
-                      {p.workspaceName ? (
-                        <MText size={10.5} color={colors.muted}>
-                          {p.workspaceName}
-                        </MText>
-                      ) : null}
+                    <Icon icon={Folder01Icon} size={18} color={on ? colors.primary : colors.mutedForeground} />
+                    <View style={styles.projectText}>
+                      <Text style={styles.projectName}>{p.name}</Text>
+                      {p.workspaceName ? <Text style={styles.muted}>{p.workspaceName}</Text> : null}
                     </View>
-                    {on ? <Check size={15} color={colors.accent} strokeWidth={2.4} /> : null}
-                  </Plate>
+                    {on ? <Icon icon={Tick02Icon} size={20} color={colors.primary} /> : null}
+                  </Pressable>
                 );
               })}
             </View>
@@ -339,18 +284,47 @@ function FrameioService({ project }: { project?: FrameioProject }) {
       ) : account.status === 'signing-in' ? (
         <Busy label="Waiting for Adobe sign-in…" />
       ) : (
-        <View style={{ gap: 8 }}>
-          <MText size={12} color={account.error ? colors.accent : colors.muted}>
-            {account.error ?? 'Sign in with the Adobe ID linked to your Frame.io V4 account.'}
-          </MText>
-          <View style={{ flexDirection: 'row' }}>
-            <ActionButton title="Sign in" onPress={() => void account.beginSignIn()} />
-          </View>
-        </View>
+        <>
+          <Text style={[styles.muted, account.error ? { color: colors.destructive } : null]}>{account.error ?? 'Sign in with the Adobe ID linked to your Frame.io V4 account.'}</Text>
+          <Button title="Sign in" onPress={() => void account.beginSignIn()} style={styles.signIn} />
+        </>
       )}
-      {account.status === 'signed-in' ? null : (
-        <View style={{ height: 1, backgroundColor: withAlpha('#FFFFFF', 0.06) }} />
-      )}
-    </View>
+    </FieldSection>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    summary: { gap: 4, paddingBottom: spacing.sm },
+    summaryTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.foreground },
+    muted: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 18, color: colors.mutedForeground },
+    card: { backgroundColor: colors.surface, borderRadius: radius.lg, overflow: 'hidden' as const },
+    sections: { gap: spacing.md, paddingBottom: spacing.sm },
+    fileRow: { gap: 2, padding: 12, borderRadius: radius.md, backgroundColor: colors.surface },
+    fileLabel: { fontFamily: fonts.medium, fontSize: 12, color: colors.mutedForeground },
+    fileName: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    control: { paddingBottom: 10 },
+    formatBlock: { gap: 8, paddingTop: 8 },
+    formatHead: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
+    controlTitle: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    dim: { opacity: 0.45 },
+    inline: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm },
+    projectRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12, minHeight: 52, paddingHorizontal: spacing.md, paddingVertical: 8 },
+    rowBorder: { borderBottomWidth: 0.5, borderBottomColor: colors.border },
+    projectText: { flex: 1, minWidth: 0, gap: 1 },
+    projectName: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    signIn: { alignSelf: 'flex-start' as const },
+    footer: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing.md,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm + 4,
+      paddingBottom: spacing.md,
+      borderTopWidth: 0.5,
+      borderTopColor: colors.border,
+    },
+    footerText: { flex: 1, fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground },
+    footerButton: { minWidth: 132 },
+  };
 }

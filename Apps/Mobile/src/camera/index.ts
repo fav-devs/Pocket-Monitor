@@ -3,7 +3,11 @@ export * from './session';
 export * from './defaults';
 export {
   CameraProvider,
+  createDefaultSession,
+  createDemoSession,
+  currentCameraSession,
   registerSessionFactory,
+  replaceCameraSession,
   useCamera,
   useCameraSession,
   useSetCameraSession,
@@ -11,3 +15,4 @@ export {
   useNotices,
 } from './CameraProvider';
 export { DemoCameraSession } from './demo/DemoCameraSession';
+export { createNativeSession, nativeSessionAvailable } from './native/createNativeSession';

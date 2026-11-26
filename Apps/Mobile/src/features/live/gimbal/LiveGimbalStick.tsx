@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
-import { colors } from '@/theme';
+import { useTheme } from '@/constants/theme';
 import {
   DOUBLE_TAP_WINDOW_MS,
   KNOB_FRACTION,
@@ -14,10 +14,12 @@ import {
 } from '@/features/input';
 import { haptics } from '../haptics';
 import { useLiveUi } from '../liveUiStore';
+import { onVideo } from '../chrome/primitives';
 
 /**
  * `LiveGimbalStick`: on-feed analog stick. Streams drive at ~30 Hz while held (via the shared
- * pump), rests on lift. Double-tap levels / recenters; triple-tap flips. Held ink is accent.
+ * pump), rests on lift. Double-tap levels / recenters; triple-tap flips. Translucent well with
+ * a white rim and knob; held, both turn accent.
  */
 export function LiveGimbalStick({
   size,
@@ -32,6 +34,7 @@ export function LiveGimbalStick({
   onDoubleTap: () => void;
   onTripleTap: () => void;
 }) {
+  const { colors } = useTheme();
   const knob = size * KNOB_FRACTION;
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [contact, setContact] = useState(false);
@@ -125,8 +128,7 @@ export function LiveGimbalStick({
     },
   });
 
-  const ink = contact ? colors.accent : '#FFFFFF';
-  const opacity = contact ? 0.8 : 0.55;
+  const ink = contact ? colors.accent : onVideo.ink;
   return (
     <GestureDetector gesture={pan}>
       <View
@@ -144,12 +146,28 @@ export function LiveGimbalStick({
             width: size,
             height: size,
             borderRadius: size / 2,
-            borderWidth: 2,
-            borderColor: ink,
-            opacity,
-            backgroundColor: 'rgba(0,0,0,0.08)',
+            borderWidth: 1.5,
+            borderColor: contact ? colors.accent : 'rgba(255,255,255,0.7)',
+            backgroundColor: onVideo.rail,
           }}
         />
+        {/* Cardinal ticks: where the stick's travel ends. */}
+        {[0, 90, 180, 270].map((deg) => (
+          <View
+            key={deg}
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: size / 2 - 1,
+              top: 6,
+              width: 2,
+              height: 6,
+              borderRadius: 1,
+              backgroundColor: 'rgba(255,255,255,0.45)',
+              transform: [{ translateY: size / 2 - 9 }, { rotate: `${deg}deg` }, { translateY: -(size / 2 - 9) }],
+            }}
+          />
+        ))}
         <View
           pointerEvents="none"
           style={{
@@ -160,7 +178,11 @@ export function LiveGimbalStick({
             height: knob,
             borderRadius: knob / 2,
             backgroundColor: ink,
-            opacity,
+            opacity: contact ? 1 : 0.9,
+            shadowColor: '#000',
+            shadowOpacity: 0.35,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
           }}
         />
       </View>

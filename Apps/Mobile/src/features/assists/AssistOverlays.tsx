@@ -5,7 +5,7 @@ import type { ColorMode, PictureRect } from '@/camera/types';
 import { evMeterFrame, evMeterValue, type Insets, type Rect } from '@/core/media';
 import { useScopeBundle } from '@/features/picture/frameSample';
 import { useAssists, usePictureEffects, useSourceTransfer, type AssistContext } from '@/state/assists';
-import { AssistInspectorHost } from './AssistInspector';
+import { AssistInspectorHost, type AssistSheetPlacement } from './AssistInspector';
 import { CrosshairOverlay, GridOverlay, GuidesOverlay, LevelOverlay } from './overlays/Framing';
 import { EVMeter } from './overlays/Meters';
 import { FloatingPanels } from './scopes/FloatingPanels';
@@ -22,6 +22,11 @@ export interface AssistOverlaysProps {
   colorMode?: ColorMode | null;
   /** Disable panel gestures (e.g. interface lock). */
   locked?: boolean;
+  /**
+   * Where a tool's options sheet goes (the screen's sheet dock / tray inset). Default: docked on the left in
+   * landscape, a tray just under the picture in portrait.
+   */
+  sheetPlacement?: AssistSheetPlacement;
 }
 
 /**
@@ -29,7 +34,7 @@ export interface AssistOverlaysProps {
  * movable scope / meter panels and the false colour key, plus the long-press inspector host.
  * Fill the same container as `<LivePicture>` so `pictureRect` shares its coordinates.
  */
-export default function AssistOverlays({ pictureRect, context, obstacles, clearance, colorMode, locked }: AssistOverlaysProps) {
+export default function AssistOverlays({ pictureRect, context, obstacles, clearance, colorMode, locked, sheetPlacement }: AssistOverlaysProps) {
   const [canvas, setCanvas] = useState<Rect>({ x: 0, y: 0, width: 0, height: 0 });
   const on = useAssists((s) => (context === 'live' ? s.on : s.playbackOn));
   const grid = useAssists((s) => s.options.grid);
@@ -49,6 +54,12 @@ export default function AssistOverlays({ pictureRect, context, obstacles, cleara
   const feed: Rect = intersect(pictureRect, canvas);
   const size = { width: canvas.width, height: canvas.height };
   const ready = canvas.width > 0 && feed.width > 0 && feed.height > 0;
+  const portrait = canvas.height > canvas.width;
+  const placement =
+    sheetPlacement ??
+    (portrait && canvas.height > 0
+      ? { dock: null, topInset: Math.round(Math.min(canvas.height * 0.68, Math.max(canvas.height * 0.36, pictureRect.y + pictureRect.height + 10))) }
+      : undefined);
 
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} onLayout={onLayout}>
@@ -72,7 +83,7 @@ export default function AssistOverlays({ pictureRect, context, obstacles, cleara
           />
         </>
       ) : null}
-      <AssistInspectorHost />
+      <AssistInspectorHost priority={1} placement={placement} />
     </View>
   );
 }

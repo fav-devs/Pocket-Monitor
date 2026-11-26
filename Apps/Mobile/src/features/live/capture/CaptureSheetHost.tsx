@@ -1,8 +1,7 @@
-import { X } from 'lucide-react-native';
 import { useEffect, type ReactNode } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useCamera, useCameraSession, type CameraState } from '@/camera';
-import { MText, colors, withAlpha } from '@/theme';
+import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { usePreferences } from '@/state/preferences';
 import {
   COLOR_LABEL,
@@ -14,11 +13,9 @@ import {
   shutterAngleLabel,
   shutterLabel,
 } from '../format';
-import { capturePopupLayout, type FieldMonitorLayout } from '../layout/fieldMonitorLayout';
-import { TOP_EDGE_SHEETS, useLiveUi, type CaptureSheetId } from '../liveUiStore';
-import { ChoiceChips, FieldLabel, ModeBar, StepButton, ToggleRow } from './controls';
+import { useLiveUi, type CaptureSheetId } from '../liveUiStore';
+import { ChoiceChips, FieldLabel, Hint, ModeBar, StepButton, StepperRow, ToggleRow } from './controls';
 import { MonitorValueDrum } from './MonitorValueDrum';
-import { PanelSurface } from '../chrome/primitives';
 
 const nearestIndex = (options: number[], value: number | null | undefined) => {
   if (value == null || options.length === 0) return 0;
@@ -29,37 +26,15 @@ const nearestIndex = (options: number[], value: number | null | undefined) => {
   return best;
 };
 
-/** Run a camera write; a refusal becomes a notice instead of an unhandled rejection. */
+/** Run a camera write; a refusal must not become an unhandled rejection. */
 function useWrite() {
   return (p: Promise<unknown>) => {
     p.catch(() => {});
   };
 }
 
-function Header({ title, subtitle, onClose }: { title: string; subtitle?: string; onClose: () => void }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-      <View style={{ flex: 1 }}>
-        <MText size={13} weight="semibold" tracking={0.6} uppercase>
-          {title}
-        </MText>
-        {subtitle ? (
-          <MText size={11} color={colors.muted} numberOfLines={1}>
-            {subtitle}
-          </MText>
-        ) : null}
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close"
-        onPress={onClose}
-        hitSlop={8}
-        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}
-      >
-        <X size={18} color={colors.secondary} />
-      </Pressable>
-    </View>
-  );
+function Stack({ children, gap = spacing.md - 4 }: { children: ReactNode; gap?: number }) {
+  return <View style={{ gap }}>{children}</View>;
 }
 
 function IsoSheet({ s }: { s: CameraState }) {
@@ -68,7 +43,14 @@ function IsoSheet({ s }: { s: CameraState }) {
   const e = s.exposure;
   const limits = e.isoLimitOptions ?? e.isoOptions;
   return (
-    <View style={{ gap: 8 }}>
+    <Stack>
+      <ModeBar
+        accessibilityLabel="ISO mode"
+        tabs={['Auto', 'Manual']}
+        selected={e.isoAuto ? 0 : 1}
+        details={[e.isoAuto && e.iso != null ? String(e.iso) : undefined, undefined]}
+        onSelect={(i) => write(i === 0 ? control.setIso('auto') : control.setIso(e.iso ?? 400))}
+      />
       {e.isoAuto ? (
         <>
           <FieldLabel>Auto ISO limit</FieldLabel>
@@ -87,13 +69,7 @@ function IsoSheet({ s }: { s: CameraState }) {
           onChange={(i) => write(control.setIso(e.isoOptions[i]))}
         />
       )}
-      <ModeBar
-        tabs={['Auto', 'Manual']}
-        selected={e.isoAuto ? 0 : 1}
-        details={[e.isoAuto && e.iso != null ? String(e.iso) : undefined, undefined]}
-        onSelect={(i) => write(i === 0 ? control.setIso('auto') : control.setIso(e.iso ?? 400))}
-      />
-    </View>
+    </Stack>
   );
 }
 
@@ -106,17 +82,18 @@ function ShutterSheet({ s }: { s: CameraState }) {
   const photo = isPhotoMode(s.format.shootingMode);
   const useAngle = angle && !photo;
   return (
-    <View style={{ gap: 8 }}>
+    <Stack>
       <MonitorValueDrum
         accessibilityLabel="Shutter"
         options={e.shutterOptions.map((d) => (useAngle ? shutterAngleLabel(d, s.format.fps) : shutterLabel(d)))}
         index={nearestIndex(e.shutterOptions, e.shutterDenom)}
         onChange={(i) => write(control.setShutter(e.shutterOptions[i]))}
       />
-      <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         {!photo ? (
           <View style={{ flex: 1 }}>
             <ModeBar
+              accessibilityLabel="Shutter display"
               tabs={['Speed', 'Angle']}
               selected={useAngle ? 1 : 0}
               details={[shutterLabel(e.shutterDenom), shutterAngleLabel(e.shutterDenom, s.format.fps)]}
@@ -124,9 +101,9 @@ function ShutterSheet({ s }: { s: CameraState }) {
             />
           </View>
         ) : null}
-        <StepButton label="AUTO" active={e.shutterAuto} onPress={() => write(control.setShutter('auto'))} />
+        <StepButton label="Auto" accessibilityLabel="Auto shutter" active={e.shutterAuto} onPress={() => write(control.setShutter('auto'))} />
       </View>
-    </View>
+    </Stack>
   );
 }
 
@@ -135,17 +112,15 @@ function EvSheet({ s }: { s: CameraState }) {
   const write = useWrite();
   const e = s.exposure;
   return (
-    <View style={{ gap: 8 }}>
+    <Stack>
       <MonitorValueDrum
         accessibilityLabel="Exposure compensation"
         options={e.evOptions.map(evLabel)}
         index={nearestIndex(e.evOptions, e.ev)}
         onChange={(i) => write(control.setEv(e.evOptions[i]))}
       />
-      <MText size={11} color={colors.muted}>
-        Auto exposure. The camera chooses shutter{e.shutterDenom ? ` (now ${shutterLabel(e.shutterDenom)})` : ''}.
-      </MText>
-    </View>
+      <Hint>Auto exposure. The camera picks the shutter{e.shutterDenom ? ` (now ${shutterLabel(e.shutterDenom)})` : ''}.</Hint>
+    </Stack>
   );
 }
 
@@ -153,18 +128,17 @@ function ExposureSheet({ s }: { s: CameraState }) {
   const { control } = useCameraSession();
   const write = useWrite();
   return (
-    <View style={{ gap: 10 }}>
+    <Stack>
       <ModeBar
+        accessibilityLabel="Exposure program"
         tabs={['Auto', 'Manual']}
         selected={s.exposure.mode === 'auto' ? 0 : 1}
         onSelect={(i) => write(control.setExposureMode(i === 0 ? 'auto' : 'manual'))}
       />
-      <MText size={11} color={colors.muted}>
-        {s.exposure.mode === 'auto'
-          ? 'The camera sets ISO and shutter. Adjust EV to bias brightness.'
-          : 'You set ISO and shutter. Exposure stays fixed while you shoot.'}
-      </MText>
-    </View>
+      <Hint>
+        {s.exposure.mode === 'auto' ? 'The camera sets ISO and shutter. EV biases brightness.' : 'You set ISO and shutter. Exposure stays fixed while you shoot.'}
+      </Hint>
+    </Stack>
   );
 }
 
@@ -179,49 +153,9 @@ function WbSheet({ s }: { s: CameraState }) {
   for (let k = wb.kelvinMin; k <= wb.kelvinMax; k += wb.kelvinStep) kelvins.push(k);
   const tint = wb.tint ?? 0;
   return (
-    <View style={{ gap: 10 }}>
-      {tab === 2 ? (
-        <>
-          <MonitorValueDrum
-            accessibilityLabel="Colour temperature"
-            options={kelvins.map((k) => `${k}K`)}
-            index={nearestIndex(kelvins, wb.kelvin)}
-            onChange={(i) => write(control.setWhiteBalance({ kelvin: kelvins[i] }))}
-          />
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <MText size={11} weight="semibold" tracking={1} color={colors.muted} style={{ flex: 1 }}>
-              TINT
-            </MText>
-            <StepButton
-              label="− G"
-              accessibilityLabel="Tint toward green"
-              disabled={tint <= wb.tintMin}
-              onPress={() => write(control.setWhiteBalance({ tint: Math.max(wb.tintMin, tint - 1) }))}
-            />
-            <MText size={15} weight="semibold" mono style={{ minWidth: 40, textAlign: 'center' }}>
-              {tint > 0 ? `+${tint}` : String(tint)}
-            </MText>
-            <StepButton
-              label="+ M"
-              accessibilityLabel="Tint toward magenta"
-              disabled={tint >= wb.tintMax}
-              onPress={() => write(control.setWhiteBalance({ tint: Math.min(wb.tintMax, tint + 1) }))}
-            />
-          </View>
-        </>
-      ) : tab === 1 ? (
-        <ChoiceChips
-          options={[...WB_PRESETS]}
-          value={wb.preset as (typeof WB_PRESETS)[number]}
-          label={(p) => WB_PRESET_LABEL[p]}
-          onSelect={(p) => write(control.setWhiteBalance({ preset: p }))}
-        />
-      ) : (
-        <MText size={11} color={colors.muted}>
-          Auto white balance{wb.kelvin ? ` (measuring about ${wb.kelvin}K)` : ''}.
-        </MText>
-      )}
+    <Stack>
       <ModeBar
+        accessibilityLabel="White balance mode"
         tabs={['Auto', 'Preset', 'Kelvin']}
         selected={tab}
         onSelect={(i) =>
@@ -234,7 +168,37 @@ function WbSheet({ s }: { s: CameraState }) {
           )
         }
       />
-    </View>
+      {tab === 2 ? (
+        <>
+          <MonitorValueDrum
+            accessibilityLabel="Colour temperature"
+            options={kelvins.map((k) => `${k}K`)}
+            index={nearestIndex(kelvins, wb.kelvin)}
+            onChange={(i) => write(control.setWhiteBalance({ kelvin: kelvins[i] }))}
+          />
+          <StepperRow
+            title="Tint"
+            value={tint > 0 ? `+${tint}` : String(tint)}
+            minusLabel="Tint toward green"
+            plusLabel="Tint toward magenta"
+            minusDisabled={tint <= wb.tintMin}
+            plusDisabled={tint >= wb.tintMax}
+            onMinus={() => write(control.setWhiteBalance({ tint: Math.max(wb.tintMin, tint - 1) }))}
+            onPlus={() => write(control.setWhiteBalance({ tint: Math.min(wb.tintMax, tint + 1) }))}
+            detail="− green · + magenta"
+          />
+        </>
+      ) : tab === 1 ? (
+        <ChoiceChips
+          options={[...WB_PRESETS]}
+          value={wb.preset as (typeof WB_PRESETS)[number]}
+          label={(p) => WB_PRESET_LABEL[p]}
+          onSelect={(p) => write(control.setWhiteBalance({ preset: p }))}
+        />
+      ) : (
+        <Hint>Auto white balance{wb.kelvin ? `, measuring about ${wb.kelvin}K` : ''}.</Hint>
+      )}
+    </Stack>
   );
 }
 
@@ -246,7 +210,16 @@ function FocusSheet({ s }: { s: CameraState }) {
   const f = s.focus;
   const modes = ['afc', 'afs', 'mf'] as const;
   return (
-    <View style={{ gap: 10 }}>
+    <Stack>
+      <ModeBar
+        accessibilityLabel="Focus mode"
+        tabs={['AF-C', 'AF-S', 'MF']}
+        selected={modes.indexOf(f.mode)}
+        onSelect={(i) => {
+          if (modes[i] === 'mf' && !s.capabilities.manualFocus) return;
+          write(control.setFocusMode(modes[i]));
+        }}
+      />
       {f.mode === 'mf' ? (
         <MonitorValueDrum
           accessibilityLabel="Manual focus distance"
@@ -255,21 +228,9 @@ function FocusSheet({ s }: { s: CameraState }) {
           onChange={(i) => write(control.setManualFocus(MF_STEPS[i]))}
         />
       ) : (
-        <MText size={11} color={colors.muted}>
-          {f.mode === 'afc' ? 'Continuous autofocus follows the subject.' : 'Single autofocus locks on a tap.'} Tap the picture
-          to set the focus point.
-        </MText>
+        <Hint>{f.mode === 'afc' ? 'Continuous AF follows the subject.' : 'Single AF locks on a tap.'} Tap the picture to set the point.</Hint>
       )}
-      <ModeBar
-        tabs={['AF-C', 'AF-S', 'MF']}
-        uppercase={false}
-        selected={modes.indexOf(f.mode)}
-        onSelect={(i) => {
-          if (modes[i] === 'mf' && !s.capabilities.manualFocus) return;
-          write(control.setFocusMode(modes[i]));
-        }}
-      />
-    </View>
+    </Stack>
   );
 }
 
@@ -277,13 +238,7 @@ function ApertureSheet({ s }: { s: CameraState }) {
   const { control } = useCameraSession();
   const write = useWrite();
   const options = s.exposure.apertureOptions ?? [];
-  if (options.length === 0) {
-    return (
-      <MText size={11} color={colors.muted}>
-        This camera reports no iris stops.
-      </MText>
-    );
-  }
+  if (options.length === 0) return <Hint>This camera reports no iris stops.</Hint>;
   return (
     <MonitorValueDrum
       accessibilityLabel="Aperture"
@@ -295,15 +250,15 @@ function ApertureSheet({ s }: { s: CameraState }) {
 }
 
 function Meter({ label, db }: { label: string; db: number }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const frac = Math.max(0, Math.min(1, (db + 60) / 60));
-  const tint = db > -6 ? colors.recording : db > -18 ? colors.digitalCrop : colors.linkStable;
+  const tint = db > -6 ? colors.destructive : db > -18 ? colors.warning : colors.success;
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-      <MText size={10} weight="semibold" color={colors.muted} style={{ width: 10 }}>
-        {label}
-      </MText>
-      <View style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: withAlpha('#FFFFFF', 0.1), overflow: 'hidden' }}>
-        <View style={{ width: `${frac * 100}%`, height: 6, backgroundColor: tint }} />
+    <View style={styles.meterRow}>
+      <Text style={styles.meterLabel}>{label}</Text>
+      <View style={styles.meterTrack}>
+        <View style={[styles.meterFill, { width: `${frac * 100}%`, backgroundColor: tint }]} />
       </View>
     </View>
   );
@@ -315,23 +270,33 @@ function AudioSheet() {
   const a = useCamera((s) => s.audio);
   const dirs = ['off', 'front', 'rear', 'surround'] as const;
   return (
-    <View style={{ gap: 8 }}>
-      <Meter label="L" db={a.left.rmsDb} />
-      <Meter label="R" db={a.right.rmsDb} />
+    <Stack>
+      <View style={{ gap: 6 }}>
+        <Meter label="L" db={a.left.rmsDb} />
+        <Meter label="R" db={a.right.rmsDb} />
+      </View>
       <ModeBar
+        accessibilityLabel="Channels"
         tabs={['Stereo', 'Mono']}
         selected={a.channel === 'stereo' ? 0 : 1}
         onSelect={(i) => write(control.setAudio({ channel: i === 0 ? 'stereo' : 'mono' }))}
       />
       <FieldLabel>Directional</FieldLabel>
-      <ModeBar tabs={['Off', 'Front', 'Rear', 'Surround']} selected={dirs.indexOf(a.directional)} onSelect={(i) => write(control.setAudio({ directional: dirs[i] }))} />
-      <ToggleRow title="Wind reduction" value={a.windReduction} onChange={(v) => write(control.setAudio({ windReduction: v }))} />
-      <ToggleRow title="Vocal boost" value={a.vocalBoost} onChange={(v) => write(control.setAudio({ vocalBoost: v }))} />
-    </View>
+      <ModeBar
+        accessibilityLabel="Directional"
+        tabs={['Off', 'Front', 'Rear', 'Surround']}
+        selected={dirs.indexOf(a.directional)}
+        onSelect={(i) => write(control.setAudio({ directional: dirs[i] }))}
+      />
+      <View>
+        <ToggleRow title="Wind reduction" value={a.windReduction} onChange={(v) => write(control.setAudio({ windReduction: v }))} />
+        <ToggleRow title="Vocal boost" value={a.vocalBoost} onChange={(v) => write(control.setAudio({ vocalBoost: v }))} />
+      </View>
+    </Stack>
   );
 }
 
-/** `CaptureFormatPicker` + `CaptureCodecColorPanel`: resolution tabs, fps drum, codec, bitrate. */
+/** `CaptureFormatPicker` + `CaptureCodecColorPanel`: resolution, frame-rate drum, codec, bitrate. */
 function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   const { control } = useCameraSession();
   const write = useWrite();
@@ -341,17 +306,10 @@ function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   const fpsList = opt?.fps ?? [f.fps];
   const bitrates = ['low', 'normal', 'high'] as const;
   return (
-    <View style={{ gap: 8 }}>
-      <MonitorValueDrum
-        accessibilityLabel="Frame rate"
-        disabled={locked}
-        options={fpsList.map((v) => `${v}p`)}
-        index={nearestIndex(fpsList, f.fps)}
-        onChange={(i) => write(control.setFormat({ fps: fpsList[i] }))}
-      />
+    <Stack>
       <ModeBar
+        accessibilityLabel="Resolution"
         tabs={f.options.map((o) => o.resolution)}
-        uppercase={false}
         disabled={locked}
         selected={optIndex}
         details={f.options.map((o) => `${o.width}×${o.height}`)}
@@ -361,11 +319,19 @@ function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
           write(control.setFormat({ resolution: next.resolution, fps }));
         }}
       />
+      <MonitorValueDrum
+        accessibilityLabel="Frame rate"
+        disabled={locked}
+        options={fpsList.map((v) => `${v}p`)}
+        index={nearestIndex(fpsList, f.fps)}
+        onChange={(i) => write(control.setFormat({ fps: fpsList[i] }))}
+      />
+      <FieldLabel>Codec{f.bitrate ? ' and bitrate' : ''}</FieldLabel>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <View style={{ flex: 1 }}>
           <ModeBar
+            accessibilityLabel="Codec"
             tabs={['H.264', 'H.265']}
-            uppercase={false}
             disabled={locked}
             selected={f.codec === 'h264' ? 0 : 1}
             onSelect={(i) => write(control.setFormat({ codec: i === 0 ? 'h264' : 'h265' }))}
@@ -374,6 +340,7 @@ function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
         {f.bitrate ? (
           <View style={{ flex: 1.4 }}>
             <ModeBar
+              accessibilityLabel="Bitrate"
               tabs={['Low', 'Normal', 'High']}
               disabled={locked}
               selected={bitrates.indexOf(f.bitrate)}
@@ -382,7 +349,7 @@ function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
           </View>
         ) : null}
       </View>
-    </View>
+    </Stack>
   );
 }
 
@@ -414,21 +381,23 @@ function ModeSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   );
 }
 
-const TITLES: Record<CaptureSheetId, [string, string?]> = {
-  iso: ['ISO', 'Sensor gain'],
-  shutter: ['Shutter', 'Exposure time per frame'],
-  ev: ['EV', 'Exposure compensation'],
-  exposure: ['Exposure', 'Program'],
-  wb: ['White balance'],
-  focus: ['Focus'],
-  aperture: ['Aperture'],
-  audio: ['Audio', 'Camera microphones'],
-  format: ['Recording format', 'Resolution, frame rate and codec'],
-  color: ['Color', 'Picture profile'],
-  mode: ['Mode', 'Shooting mode'],
+/** Sheet titles: short, in the words the strip uses. */
+export const CAPTURE_TITLES: Record<CaptureSheetId, string> = {
+  iso: 'ISO',
+  shutter: 'Shutter',
+  ev: 'Exposure compensation',
+  exposure: 'Exposure',
+  wb: 'White balance',
+  focus: 'Focus',
+  aperture: 'Aperture',
+  audio: 'Audio',
+  format: 'Recording format',
+  color: 'Color',
+  mode: 'Shooting mode',
 };
 
-function SheetBody({ id }: { id: CaptureSheetId }) {
+/** The open capture sheet's controls (the Sheet itself is the live screen's). */
+export function CaptureSheetBody({ id }: { id: CaptureSheetId }) {
   const s = useCamera((st) => st);
   const recording = s.recording.recording;
   const formatLocked = recording && (id === 'format' || id === 'color' || id === 'mode');
@@ -469,29 +438,20 @@ function SheetBody({ id }: { id: CaptureSheetId }) {
       break;
   }
   return (
-    <>
-      {formatLocked ? (
-        <MText size={11} weight="medium" color={colors.digitalCrop} style={{ marginBottom: 6 }}>
-          Stop recording to change this.
-        </MText>
-      ) : null}
+    <Stack>
+      {formatLocked ? <Hint tone="warning">Stop recording to change this.</Hint> : null}
       {body}
-    </>
+    </Stack>
   );
 }
 
-/**
- * `CaptureSheetHost`: the open capture drawer. Camera values hang from a bottom-centre well,
- * format / colour / mode from a top-centre well (`MonitorCapturePopupLayout`).
- */
-export function CaptureSheetHost({ layout }: { layout: FieldMonitorLayout }) {
+/** Retire sheets the strip no longer offers (`CaptureReadoutAdmission`). */
+export function useCaptureSheetAdmission() {
   const sheet = useLiveUi((s) => s.captureSheet);
   const locked = useLiveUi((s) => s.locked);
   const set = useLiveUi((s) => s.set);
   const photo = useCamera((s) => isPhotoMode(s.format.shootingMode));
   const auto = useCamera((s) => s.exposure.mode === 'auto');
-
-  // Retire sheets the strip no longer offers (`CaptureReadoutAdmission`).
   useEffect(() => {
     if (!sheet) return;
     if (locked) set({ captureSheet: null });
@@ -499,43 +459,13 @@ export function CaptureSheetHost({ layout }: { layout: FieldMonitorLayout }) {
     else if (auto && sheet === 'shutter') set({ captureSheet: 'ev' });
     else if (!auto && sheet === 'ev') set({ captureSheet: 'shutter' });
   }, [sheet, locked, photo, auto, set]);
+}
 
-  if (!sheet) return null;
-  const edge = TOP_EDGE_SHEETS.includes(sheet) ? 'top' : 'bottom';
-  const pop = capturePopupLayout(layout.viewport, layout.tablet, layout.safeArea, edge, {
-    bottomBoundary: layout.portrait ? layout.system.y - 4 : layout.viewport.height,
-    topBoundary: layout.portrait ? layout.status.y + layout.status.height + 8 : 0,
-  });
-  const close = () => set({ captureSheet: null });
-  const [title, subtitle] = TITLES[sheet];
-  const placement =
-    edge === 'bottom'
-      ? { bottom: layout.viewport.height - pop.bottom, maxHeight: pop.maximumHeight }
-      : { top: pop.top, maxHeight: pop.maximumHeight };
-
-  return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
-      <Pressable accessibilityLabel="Close drawer" onPress={close} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
-      <PanelSurface
-        style={{
-          position: 'absolute',
-          left: pop.centerX - pop.width / 2,
-          width: pop.width,
-          ...placement,
-          borderTopLeftRadius: pop.topRadius,
-          borderTopRightRadius: pop.topRadius,
-          borderBottomLeftRadius: pop.bottomRadius,
-          borderBottomRightRadius: pop.bottomRadius,
-        }}
-      >
-        <ScrollView
-          bounces={false}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: pop.topPadding, paddingBottom: pop.bottomPadding }}
-        >
-          <Header title={title} subtitle={subtitle} onClose={close} />
-          <SheetBody id={sheet} />
-        </ScrollView>
-      </PanelSurface>
-    </View>
-  );
+function createStyles(colors: ThemeColors) {
+  return {
+    meterRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10 },
+    meterLabel: { width: 12, fontFamily: fonts.semibold, fontSize: 11, color: colors.mutedForeground },
+    meterTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.surfaceStrong, overflow: 'hidden' as const },
+    meterFill: { height: 6, borderRadius: 3 },
+  };
 }

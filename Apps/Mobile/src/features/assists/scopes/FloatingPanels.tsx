@@ -8,6 +8,7 @@ import { MovableScopePanel } from './MovableScopePanel';
 import { HistogramFrame, ParadeLanes, VectorscopeGraticule, WaveformGuides } from './ScopeGraticule';
 import { ScopePlate } from './ScopePlate';
 import ScopeTraces from './ScopeTraces';
+import { histoGutter } from './scopeGeometry';
 
 export interface FloatingPanelsProps {
   context: AssistContext;
@@ -78,7 +79,7 @@ export function FloatingPanels({ context, canvas, clearance, obstacles, effects,
       {on.HISTO ? (
         <MovableScopePanel id="histogram" baseSize={SCOPE_BASE_SIZE.histogram} defaultCenter={DEFAULTS.histogram} onOpenOptions={open('HISTO')} accessibilityLabel="Histogram" {...common}>
           {(s) => (
-            <ScopePlate title="Histo" chip="RGBL" width={s.width} height={s.height}>
+            <ScopePlate title="Histo" chip="RGBL" width={s.width} height={s.height} inset={options.histogram.trafficLights ? histoGutter - 4 : 0}>
               <ScopeTraces kind="histogram" width={s.width} height={s.height} brightness={100} lamps={options.histogram.trafficLights} {...traces} />
               <HistogramFrame width={s.width} height={s.height} lamps={options.histogram.trafficLights} traffic={bundle?.traffic ?? null} />
             </ScopePlate>

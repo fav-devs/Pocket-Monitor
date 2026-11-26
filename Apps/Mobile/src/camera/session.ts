@@ -171,4 +171,19 @@ export interface CameraSession {
   readonly control: CameraController;
   readonly gimbal: GimbalController;
   readonly media: CameraMediaService;
+
+  /**
+   * Optional (additive). The picture view reports presented-frame stats (~1 Hz, e.g. from
+   * `PocketVideoView.onFrameStats`) so the session can show measured fps / frame age and feed
+   * decoder ages to the watchdog. Sessions without a native decoder ignore it.
+   */
+  notePictureStats?(stats: PictureFrameStats): void;
+}
+
+/** Presented-frame stats from the picture view (subset of `VideoFrameStats`). */
+export interface PictureFrameStats {
+  presentedFps: number;
+  lastFrameAgeMs: number;
+  width?: number;
+  height?: number;
 }

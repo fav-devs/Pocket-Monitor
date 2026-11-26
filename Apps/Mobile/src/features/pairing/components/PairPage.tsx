@@ -1,16 +1,26 @@
-import { ChevronLeft, Ellipsis } from 'lucide-react-native';
-import type { ReactNode } from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { AlertCircleIcon, ArrowLeft01Icon, Camera01Icon, HelpCircleIcon, MoreHorizontalIcon } from '@hugeicons/core-free-icons';
+import type { IconSvgElement } from '@hugeicons/react-native';
+import { useState, type ReactNode } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MText, colors, withAlpha } from '@/theme';
-import { PressableScale } from '@/ui';
-import { ActionMenu, type ActionMenuItem } from './ActionMenu';
-import { CameraPageButton } from './CameraPageButton';
+import { ActionSheet } from '@/components/action-sheet';
+import { Button } from '@/components/button';
+import { Icon } from '@/components/icon';
+import { Squircle } from '@/components/squircle';
+import { useScreenSize } from '@/constants/layout';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { ProgressLabel } from './StatusBits';
 
 export interface PairStep {
   title: string;
   subtitle: string;
+}
+
+export interface PairMenuItem {
+  id: string;
+  title: string;
+  icon: IconSvgElement;
+  onPress: () => void;
 }
 
 export interface PairPageProps {
@@ -19,23 +29,30 @@ export interface PairPageProps {
   currentStep: number;
   title: string;
   body: string;
-  target: string;
-  hint: string;
+  /** The camera this page is about; hidden when nothing is chosen yet. */
+  target?: string | null;
+  hint?: string | null;
   progress?: string | null;
   error?: string | null;
+  /** Empty and failure pages lead with an icon well. */
+  hero?: { icon: IconSvgElement; tone?: 'default' | 'destructive' } | null;
   primaryAction?: { title: string; enabled: boolean; onPress: () => void } | null;
   backAction?: { title: string; onPress: () => void } | null;
-  /** Rail back chevron (always offered so the page never traps the operator). */
+  /** Top-left back (always offered so the page never traps the operator). */
   onExit: () => void;
   exitLabel?: string;
-  menuItems: ActionMenuItem[];
+  menuItems: PairMenuItem[];
   onReportProblem: () => void;
   children?: ReactNode;
 }
 
+/** The widest a flow column gets on a tablet. */
+const FLOW_MAX_WIDTH = 560;
+
 /**
- * Rail-and-pane pairing presentation (`PairCameraPage`). The page owns layout only; the screen
- * supplies what the session reports and the actions that drive it.
+ * One step of the pair / connect flow (`PairCameraPage`): a big title and one line, the step's
+ * content, and a large primary button pinned at the bottom with a ghost secondary under it.
+ * Phones in landscape put the title and buttons on the left and the content on the right.
  */
 export function PairPage({
   heading = 'Pair a camera',
@@ -47,253 +64,264 @@ export function PairPage({
   hint,
   progress,
   error,
+  hero,
   primaryAction,
   backAction,
   onExit,
-  exitLabel = 'Your cameras',
+  exitLabel = 'Cameras',
   menuItems,
   onReportProblem,
   children,
 }: PairPageProps) {
-  const { width, height } = useWindowDimensions();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
-  const portrait = height > width;
-  const tablet = Math.min(width, height) >= 600;
+  const { large, landscape } = useScreenSize();
+  const [menuOpen, setMenuOpen] = useState(false);
   const step = Math.min(Math.max(0, currentStep), steps.length - 1);
+  // An empty page (nothing to connect) is a centred empty state; a failure keeps its checklist.
+  const empty = !!hero && !children;
+  const split = landscape && !large && !empty;
 
-  const stepRow = (s: PairStep, index: number) => {
-    const active = index === step;
-    const complete = index < step;
-    return (
-      <View
-        key={s.title}
-        accessible
-        accessibilityLabel={`Step ${index + 1}: ${s.title}, ${complete ? 'complete' : active ? 'current' : 'waiting'}`}
-        style={{
-          flex: portrait ? 1 : undefined,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: portrait ? 'center' : 'flex-start',
-          gap: 9,
-          paddingHorizontal: 9,
-          minHeight: portrait ? 34 : 42,
-          borderRadius: 9,
-          backgroundColor: active ? withAlpha(colors.accent, 0.14) : 'transparent',
-        }}
+  const topBar = (
+    <View style={styles.topBar}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={exitLabel}
+        onPress={onExit}
+        hitSlop={8}
+        style={({ pressed }) => [styles.iconButton, styles.iconButtonStart, pressed && styles.pressed]}
       >
-        <View
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: 10,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: complete ? colors.accent : active ? withAlpha(colors.accent, 0.24) : 'rgba(255,255,255,0.06)',
-          }}
-        >
-          <MText size={9.5} weight="bold" color={complete ? colors.background : active ? colors.accent : colors.faint}>
-            {complete ? '✓' : String(index + 1)}
-          </MText>
-        </View>
-        {!portrait ? (
-          <View style={{ flex: 1, gap: 1 }}>
-            <MText size={12} weight="semibold" numberOfLines={1} color={active ? colors.text : complete ? colors.secondary : colors.faint}>
-              {s.title}
-            </MText>
-            <MText size={8.5} tracking={0.6} numberOfLines={1} color={colors.faint}>
-              {s.subtitle}
-            </MText>
-          </View>
-        ) : null}
-      </View>
-    );
-  };
+        <Icon icon={ArrowLeft01Icon} size={24} color={colors.foreground} />
+      </Pressable>
+      <Text numberOfLines={1} style={styles.heading}>
+        {heading}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Pairing help and diagnostics"
+        onPress={() => setMenuOpen(true)}
+        hitSlop={8}
+        style={({ pressed }) => [styles.iconButton, styles.iconButtonEnd, pressed && styles.pressed]}
+      >
+        <Icon icon={MoreHorizontalIcon} size={22} color={colors.foreground} />
+      </Pressable>
+    </View>
+  );
 
-  const rail = (
+  const stepper = (
     <View
-      style={{
-        width: portrait ? undefined : tablet ? 268 : 210,
-        alignSelf: portrait ? 'stretch' : 'stretch',
-        padding: 11,
-        gap: 10,
-        borderRadius: 12,
-        backgroundColor: colors.surface,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.05)',
-      }}
+      accessible
+      accessibilityLabel={`Step ${step + 1} of ${steps.length}: ${steps[step]?.title ?? ''}`}
+      style={styles.stepper}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-        <PressableScale
-          accessibilityLabel={exitLabel}
-          onPress={onExit}
-          style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -6, marginVertical: -6 }}
+      <View style={styles.stepBars}>
+        {steps.map((s, i) => (
+          <View key={s.title} style={[styles.stepBar, i <= step && styles.stepBarOn]} />
+        ))}
+      </View>
+      <Text style={styles.stepCaption}>{`Step ${step + 1} of ${steps.length} · ${steps[step]?.subtitle ?? ''}`}</Text>
+    </View>
+  );
+
+  const intro = (
+    <View style={[styles.intro, empty && styles.introEmpty]}>
+      {hero ? (
+        <Squircle
+          width={56}
+          height={56}
+          radius={18}
+          color={hero.tone === 'destructive' ? colors.destructiveSoft : colors.surface}
+          style={[styles.hero, empty && styles.heroEmpty]}
         >
-          <View
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 16,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: withAlpha(colors.secondary, 0.12),
-            }}
-          >
-            <ChevronLeft size={15} color={colors.text} strokeWidth={2.2} />
-          </View>
-        </PressableScale>
-        <View style={{ flex: 1, gap: 1 }}>
-          <MText size={8} weight="bold" tracking={1.4} color={colors.accent}>
-            {`STEP ${step + 1} OF ${steps.length}`}
-          </MText>
-          <MText size={13} weight="semibold" numberOfLines={1}>
-            {heading}
-          </MText>
+          <Icon
+            icon={hero.icon}
+            size={26}
+            color={hero.tone === 'destructive' ? colors.destructive : colors.foreground}
+            strokeWidth={1.7}
+          />
+        </Squircle>
+      ) : null}
+      <Text accessibilityRole="header" style={[styles.title, split && styles.titleCompact, empty && styles.titleEmpty]}>
+        {title}
+      </Text>
+      <Text style={[styles.body, empty && styles.bodyEmpty]}>{body}</Text>
+      {target ? (
+        <View style={styles.target}>
+          <Icon icon={Camera01Icon} size={15} color={colors.mutedForeground} />
+          <Text numberOfLines={1} style={styles.targetText}>
+            {target}
+          </Text>
         </View>
-        <ActionMenu
-          items={[...menuItems, { id: 'report', title: 'Report a problem', onPress: onReportProblem }]}
-          accessibilityLabel="Pairing help and diagnostics"
-        >
-          <View style={{ width: 32, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-            <Ellipsis size={16} color={colors.secondary} />
-          </View>
-        </ActionMenu>
-      </View>
-      {portrait ? (
-        <View style={{ flexDirection: 'row', gap: 3 }}>{steps.map(stepRow)}</View>
-      ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 3 }} showsVerticalScrollIndicator={false}>
-          {steps.map(stepRow)}
-        </ScrollView>
-      )}
-      <View
-        style={{
-          paddingHorizontal: 10,
-          paddingVertical: 9,
-          gap: 5,
-          borderRadius: 10,
-          backgroundColor: 'rgba(255,255,255,0.04)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.06)',
-        }}
-      >
-        <MText size={8} weight="bold" tracking={1.3} color={colors.faint}>
-          TARGET
-        </MText>
-        <MText size={10} weight="semibold" color={colors.secondary} numberOfLines={1}>
-          {target}
-        </MText>
-      </View>
-      {!portrait || tablet ? (
-        <PressableScale
-          accessibilityLabel="Report a problem"
-          testID="pair.reportProblem"
-          onPress={onReportProblem}
-          style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <MText size={12} weight="semibold" color={colors.accent}>
-            Report a problem
-          </MText>
-        </PressableScale>
       ) : null}
     </View>
+  );
+
+  const content = (
+    <>
+      {error ? (
+        <View accessibilityRole="alert" style={styles.error}>
+          <Icon icon={AlertCircleIcon} size={20} color={colors.destructive} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+      {children}
+      {progress ? <ProgressLabel title={progress} /> : null}
+    </>
   );
 
   const footer = (
-    <View style={{ gap: 9 }}>
-      {portrait ? (
-        <MText size={9.5} color={colors.faint} align="center">
+    <View style={styles.footer}>
+      {hint ? (
+        <Text numberOfLines={2} style={[styles.hint, split && styles.hintStart]}>
           {hint}
-        </MText>
+        </Text>
       ) : null}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-        {!portrait ? (
-          <MText size={9.5} color={colors.faint} numberOfLines={2} style={{ flex: 1 }}>
-            {hint}
-          </MText>
-        ) : null}
-        {portrait && !tablet && !(backAction && primaryAction) ? (
-          <PressableScale
-            accessibilityLabel="Report a problem"
-            onPress={onReportProblem}
-            style={{ minHeight: 44, justifyContent: 'center', paddingRight: 4, flex: 1 }}
-          >
-            <MText size={12} weight="semibold" color={colors.accent}>
-              Report a problem
-            </MText>
-          </PressableScale>
-        ) : null}
-        {portrait && !tablet && backAction && primaryAction ? <View style={{ flex: 1 }} /> : null}
-        {backAction ? <CameraPageButton title={backAction.title} onPress={backAction.onPress} /> : null}
-        {primaryAction ? (
-          <CameraPageButton
-            title={primaryAction.title}
-            primary
-            disabled={!primaryAction.enabled}
-            onPress={primaryAction.onPress}
-            testID="pair.primary"
-          />
-        ) : null}
-      </View>
+      {primaryAction ? (
+        <Button
+          testID="pair.primary"
+          title={primaryAction.title}
+          size="lg"
+          disabled={!primaryAction.enabled}
+          onPress={primaryAction.onPress}
+        />
+      ) : null}
+      {backAction ? <Button title={backAction.title} variant="ghost" onPress={backAction.onPress} /> : null}
     </View>
   );
 
-  const pane = (
-    <View
-      style={{
-        flex: 1,
-        paddingHorizontal: tablet ? 20 : 15,
-        paddingTop: tablet ? 18 : 14,
-        paddingBottom: tablet ? 14 : 12,
-        gap: 12,
-        borderRadius: 12,
-        backgroundColor: '#161718',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.04)',
-      }}
-    >
-      <View style={{ gap: 7 }}>
-        <MText size={tablet ? 25 : 19} weight="semibold" tracking={-0.2} accessibilityRole="header">
-          {title}
-        </MText>
-        <MText size={12.5} color={colors.muted} style={{ lineHeight: 18 }}>
-          {body}
-        </MText>
-      </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 8, paddingBottom: 4 }} showsVerticalScrollIndicator={false}>
-        {error ? (
-          <View style={{ padding: 12, borderRadius: 11, backgroundColor: withAlpha(colors.recording, 0.12) }}>
-            <MText size={12} color={colors.secondary} style={{ lineHeight: 17 }}>
-              {error}
-            </MText>
-          </View>
-        ) : null}
-        {children}
-        {progress ? (
-          <View style={{ paddingTop: 3 }}>
-            <ProgressLabel title={progress} />
-          </View>
-        ) : null}
-      </ScrollView>
-      {footer}
-    </View>
+  const menu = (
+    <ActionSheet
+      visible={menuOpen}
+      title={heading}
+      onClose={() => setMenuOpen(false)}
+      actions={[
+        ...menuItems.map((item) => ({ label: item.title, icon: item.icon, onPress: item.onPress })),
+        { label: 'Report a problem', icon: HelpCircleIcon, onPress: onReportProblem },
+      ]}
+    />
   );
+
+  const pad = {
+    paddingTop: insets.top + spacing.xs,
+    paddingBottom: Math.max(insets.bottom, spacing.md),
+    paddingLeft: Math.max(insets.left, spacing.md),
+    paddingRight: Math.max(insets.right, spacing.md),
+  };
+
+  if (split) {
+    return (
+      <View style={[styles.root, styles.splitRoot, pad]}>
+        <View style={styles.splitLead}>
+          {topBar}
+          <ScrollView style={styles.flex} contentContainerStyle={styles.splitIntro} showsVerticalScrollIndicator={false}>
+            {hero ? null : stepper}
+            {intro}
+          </ScrollView>
+          {footer}
+        </View>
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={[styles.content, styles.splitContent]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {content}
+        </ScrollView>
+        {menu}
+      </View>
+    );
+  }
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: colors.background,
-        paddingTop: insets.top + 12,
-        paddingBottom: insets.bottom + 12,
-        paddingLeft: insets.left + 14,
-        paddingRight: insets.right + 14,
-        flexDirection: portrait ? 'column' : 'row',
-        alignItems: portrait ? 'stretch' : 'stretch',
-        gap: 10,
-      }}
-    >
-      {rail}
-      {pane}
+    <View style={[styles.root, pad]}>
+      <View style={[styles.column, (large || (empty && landscape)) && styles.columnLarge]}>
+        {topBar}
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={[styles.content, empty && styles.contentEmpty]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {hero ? null : stepper}
+          {intro}
+          {content}
+        </ScrollView>
+        {footer}
+      </View>
+      {menu}
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    root: { flex: 1, backgroundColor: colors.background },
+    flex: { flex: 1 },
+    column: { flex: 1, width: '100%' as const, alignSelf: 'center' as const },
+    columnLarge: { maxWidth: FLOW_MAX_WIDTH },
+    splitRoot: { flexDirection: 'row' as const, gap: spacing.xl },
+    splitLead: { width: '42%' as const, maxWidth: 380 },
+    splitIntro: { gap: spacing.lg, paddingBottom: spacing.md },
+    splitContent: { paddingTop: spacing.sm },
+    topBar: { flexDirection: 'row' as const, alignItems: 'center' as const, minHeight: 48, gap: spacing.sm },
+    iconButton: { width: 44, height: 44, alignItems: 'center' as const, justifyContent: 'center' as const },
+    iconButtonStart: { marginLeft: -10 },
+    iconButtonEnd: { marginRight: -10 },
+    heading: {
+      flex: 1,
+      textAlign: 'center' as const,
+      fontFamily: fonts.semibold,
+      fontSize: 15,
+      color: colors.foreground,
+    },
+    content: { gap: spacing.md, paddingTop: spacing.xs, paddingBottom: spacing.lg },
+    stepper: { gap: 10, paddingTop: spacing.sm, paddingBottom: spacing.sm },
+    stepBars: { flexDirection: 'row' as const, gap: 6 },
+    stepBar: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.surfaceStrong },
+    stepBarOn: { backgroundColor: colors.ink },
+    stepCaption: { fontFamily: fonts.medium, fontSize: 12, color: colors.mutedForeground },
+    intro: { gap: spacing.sm, paddingBottom: spacing.sm },
+    hero: { marginBottom: spacing.sm },
+    heroEmpty: { marginBottom: spacing.xs },
+    introEmpty: { alignItems: 'center' as const },
+    contentEmpty: { flexGrow: 1, justifyContent: 'center' as const, paddingBottom: spacing.xl * 2 },
+    titleEmpty: { fontFamily: fonts.semibold, fontSize: 20, lineHeight: 26, letterSpacing: 0, textAlign: 'center' as const },
+    bodyEmpty: { fontSize: 14, lineHeight: 20, textAlign: 'center' as const, maxWidth: 320 },
+    title: { fontFamily: fonts.bold, fontSize: 30, lineHeight: 36, letterSpacing: -0.8, color: colors.foreground },
+    titleCompact: { fontSize: 26, lineHeight: 31, letterSpacing: -0.6 },
+    body: { fontFamily: fonts.regular, fontSize: 15, lineHeight: 21, color: colors.mutedForeground },
+    target: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      alignSelf: 'flex-start' as const,
+      gap: 6,
+      maxWidth: '100%' as const,
+      marginTop: spacing.xs,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surface,
+    },
+    targetText: { flexShrink: 1, fontFamily: fonts.medium, fontSize: 13, color: colors.foreground },
+    error: {
+      flexDirection: 'row' as const,
+      gap: 12,
+      padding: spacing.md,
+      borderRadius: radius.lg,
+      backgroundColor: colors.destructiveSoft,
+    },
+    errorText: { flex: 1, fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: colors.foreground },
+    footer: { gap: spacing.xs, paddingTop: spacing.sm },
+    hint: {
+      fontFamily: fonts.regular,
+      fontSize: 12,
+      lineHeight: 16,
+      color: colors.mutedForeground,
+      textAlign: 'center' as const,
+      paddingBottom: spacing.xs,
+    },
+    hintStart: { textAlign: 'left' as const },
+    pressed: { opacity: 0.6 },
+  };
 }

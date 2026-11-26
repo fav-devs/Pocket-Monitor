@@ -1,14 +1,16 @@
-import { ChevronsDownUp, Maximize2, Minus, Play, Plus, Square, X } from 'lucide-react-native';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Cancel01Icon, Maximize01Icon, PlayIcon, StopIcon } from '@hugeicons/core-free-icons';
+import { Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import { useCamera, useCameraSession, type MotionWaypoint } from '@/camera';
-import { MText, colors, fonts, radius, withAlpha } from '@/theme';
-import { ModeBar } from '../capture/controls';
+import { Icon } from '@/components/icon';
+import { Squircle } from '@/components/squircle';
+import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { FieldLabel, Hint, ModeBar, StepperRow } from '../capture/controls';
 import { angleLabel } from '../format';
 import { haptics } from '../haptics';
 import type { Rect } from '../layout/fieldMonitorLayout';
 import { useLiveUi } from '../liveUiStore';
-import { PanelSurface } from '../chrome/primitives';
+import { onVideo, textShadow } from '../chrome/primitives';
 
 type Slot = 'a' | 'b' | 'c';
 const SMOOTHNESS = [0, 0.25, 0.5, 0.75, 1];
@@ -30,137 +32,85 @@ function running(status: string) {
 }
 
 function WaypointRow({ slot, point, disabled }: { slot: Slot; point?: MotionWaypoint; disabled: boolean }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const { gimbal } = useCameraSession();
   const set = !!point;
+  const name = slot.toUpperCase();
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 }}>
-      <View
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 14,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: set ? colors.accent : withAlpha('#FFFFFF', 0.08),
-        }}
-      >
-        <MText size={13} weight="bold" color={set ? '#FFFFFF' : colors.muted}>
-          {slot.toUpperCase()}
-        </MText>
-      </View>
-      <MText size={12} mono color={set ? colors.text : colors.muted} style={{ flex: 1 }} numberOfLines={1}>
+    <View style={[styles.waypoint, disabled && styles.dim]}>
+      <Squircle width={36} height={36} radius={12} color={set ? colors.ink : colors.surface}>
+        <Text style={[styles.slot, set && { color: colors.inkForeground }]}>{name}</Text>
+      </Squircle>
+      <Text numberOfLines={1} style={[styles.point, !set && styles.pointUnset]}>
         {pointLabel(point)}
-      </MText>
+      </Text>
       {set ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Clear ${slot.toUpperCase()}`}
+          accessibilityLabel={`Clear ${name}`}
           disabled={disabled}
+          hitSlop={6}
           onPress={() => gimbal.clearWaypoint(slot)}
-          style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.4 : 1 }}
+          style={({ pressed }) => [styles.clear, pressed && styles.pressed]}
         >
-          <X size={15} color={colors.muted} />
+          <Icon icon={Cancel01Icon} size={16} color={colors.mutedForeground} />
         </Pressable>
       ) : null}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${set ? 'Update' : 'Set'} ${slot.toUpperCase()} to the current pose`}
+        accessibilityLabel={`${set ? 'Update' : 'Set'} ${name} to the current pose`}
         disabled={disabled}
+        hitSlop={4}
         onPress={() => {
           haptics.medium();
           gimbal.captureWaypoint(slot).catch(() => {});
         }}
-        style={({ pressed }) => ({
-          minWidth: 64,
-          minHeight: 40,
-          paddingHorizontal: 10,
-          borderRadius: radius.md,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: set ? withAlpha('#FFFFFF', 0.08) : withAlpha(colors.accent, 0.2),
-          borderWidth: 1,
-          borderColor: set ? colors.border : withAlpha(colors.accent, 0.5),
-          opacity: disabled ? 0.4 : pressed ? 0.72 : 1,
-        })}
+        style={({ pressed }) => [styles.setKey, !set && styles.setKeyPrimary, pressed && styles.pressed]}
       >
-        <MText size={11} weight="semibold" tracking={0.6} color={set ? colors.secondary : colors.accent}>
-          {set ? 'RESET' : 'SET'}
-        </MText>
+        <Text style={[styles.setLabel, !set && styles.setLabelPrimary]}>{set ? 'Reset' : 'Set'}</Text>
       </Pressable>
     </View>
   );
 }
 
-function DurationRow({ label, value, onChange, disabled }: { label: string; value: number; onChange: (v: number) => void; disabled: boolean }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44, opacity: disabled ? 0.4 : 1 }}>
-      <MText size={12} weight="medium" color={colors.secondary} style={{ flex: 1 }}>
-        {label}
-      </MText>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${label} shorter`}
-        disabled={disabled || value <= LEG_MIN}
-        onPress={() => onChange(Math.max(LEG_MIN, value - LEG_STEP))}
-        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <Minus size={16} color={colors.secondary} />
-      </Pressable>
-      <MText size={15} weight="semibold" mono style={{ minWidth: 52, textAlign: 'center' }} accessibilityLabel={`${label} ${value} seconds`}>
-        {`${value.toFixed(1)} s`}
-      </MText>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${label} longer`}
-        disabled={disabled || value >= LEG_MAX}
-        onPress={() => onChange(Math.min(LEG_MAX, value + LEG_STEP))}
-        style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <Plus size={16} color={colors.secondary} />
-      </Pressable>
-    </View>
-  );
-}
-
+/** Start (accent) / Stop (dotPink). `compact` is the run pill's over-video version. */
 function RunButton({ compact }: { compact?: boolean }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const { gimbal } = useCameraSession();
   const p = useProgram();
   const busy = running(p.status);
   const ready = !!p.a && !!p.b;
+  const fg = busy ? '#ffffff' : onVideo.dark;
   return (
     <Pressable
       testID="monitor.motion.run"
       accessibilityRole="button"
       accessibilityLabel={busy ? 'Stop' : 'Start'}
+      accessibilityState={{ disabled: !busy && !ready }}
       disabled={!busy && !ready}
       onPress={() => {
         haptics.heavy();
         if (busy) gimbal.stopProgram();
         else gimbal.runProgram().catch(() => {});
       }}
-      style={({ pressed }) => ({
-        minHeight: compact ? 36 : 46,
-        minWidth: compact ? 64 : undefined,
-        flex: compact ? undefined : 1,
-        paddingHorizontal: 12,
-        borderRadius: compact ? 18 : radius.md,
-        flexDirection: 'row',
-        gap: 6,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: busy ? colors.recording : colors.accent,
-        opacity: !busy && !ready ? 0.35 : pressed ? 0.72 : 1,
-      })}
+      style={({ pressed }) => [
+        compact ? styles.runCompact : styles.run,
+        { backgroundColor: busy ? colors.dotPink : colors.accent },
+        !busy && !ready && styles.faint,
+        pressed && styles.pressed,
+      ]}
     >
-      {busy ? <Square size={13} color="#FFFFFF" fill="#FFFFFF" /> : <Play size={13} color="#FFFFFF" fill="#FFFFFF" />}
-      <MText size={13} weight="semibold">
-        {busy ? 'Stop' : 'Start'}
-      </MText>
+      <Icon icon={busy ? StopIcon : PlayIcon} size={compact ? 14 : 18} color={fg} strokeWidth={2} />
+      <Text style={[compact ? styles.runLabelCompact : styles.runLabel, { color: fg }]}>{busy ? 'Stop' : 'Start'}</Text>
     </Pressable>
   );
 }
 
 function Progress() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const p = useProgram();
   const label =
     p.status === 'preparing'
@@ -175,119 +125,93 @@ function Progress() {
               ? 'Set A and B'
               : 'Ready';
   return (
-    <View style={{ gap: 4 }}>
-      <MText size={11} weight="medium" color={p.status === 'failed' ? colors.recording : colors.muted}>
-        {label}
-      </MText>
-      <View style={{ height: 4, borderRadius: 2, backgroundColor: withAlpha('#FFFFFF', 0.1), overflow: 'hidden' }}>
-        <View style={{ width: `${Math.round(p.progress * 100)}%`, height: 4, backgroundColor: colors.accent }} />
+    <View style={styles.progress}>
+      <Text style={[styles.progressLabel, p.status === 'failed' && { color: colors.destructive }]}>{label}</Text>
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${Math.round(p.progress * 100)}%` }]} />
       </View>
     </View>
   );
 }
 
-/** `LiveGimbalMoveEditor`: A/B/C capture, leg durations, smoothness, start/stop. */
-export function MotionControlEditor({ width, maxHeight }: { width: number; maxHeight: number }) {
+/** `LiveGimbalMoveEditor` body: A/B/C capture, leg durations, smoothness, start/stop. */
+export function MotionControlEditor() {
+  const styles = useThemedStyles(createStyles);
   const { gimbal } = useCameraSession();
   const p = useProgram();
-  const set = useLiveUi((s) => s.set);
   const busy = running(p.status);
   const smoothIndex = SMOOTHNESS.reduce((b, v, i) => (Math.abs(v - p.smoothness) < Math.abs(SMOOTHNESS[b] - p.smoothness) ? i : b), 0);
   return (
-    <PanelSurface radius={radius.lg} style={{ width, maxHeight }}>
-      <ScrollView bounces={false} contentContainerStyle={{ padding: 14, gap: 6 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ flex: 1 }}>
-            <MText size={13} weight="semibold" tracking={0.6} uppercase accessibilityRole="header">
-              Motion Control
-            </MText>
-            <MText size={11} color={colors.muted}>
-              Experimental · A → B → C pan and tilt
-            </MText>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Minimize motion control"
-            onPress={() => set({ gimbalPanel: 'runPill' })}
-            style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center' }}
-          >
-            <ChevronsDownUp size={17} color={colors.secondary} />
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close"
-            onPress={() => set({ gimbalPanel: 'none' })}
-            style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -8 }}
-          >
-            <X size={18} color={colors.secondary} />
-          </Pressable>
-        </View>
+    <View style={styles.stack}>
+      <Hint>Experimental · a repeatable A → B → C pan and tilt.</Hint>
+      <View style={styles.waypoints}>
         <WaypointRow slot="a" point={p.a} disabled={busy} />
         <WaypointRow slot="b" point={p.b} disabled={busy} />
         <WaypointRow slot="c" point={p.c} disabled={busy} />
-        <DurationRow
-          label="A → B"
-          value={p.legSeconds[0]}
+      </View>
+      <View>
+        <StepperRow
+          title="A → B"
+          value={`${p.legSeconds[0].toFixed(1)} s`}
+          valueLabel={`A → B ${p.legSeconds[0]} seconds`}
+          minusLabel="A → B shorter"
+          plusLabel="A → B longer"
           disabled={busy}
-          onChange={(v) => gimbal.configureProgram({ legSeconds: [v, p.legSeconds[1]] })}
+          minusDisabled={p.legSeconds[0] <= LEG_MIN}
+          plusDisabled={p.legSeconds[0] >= LEG_MAX}
+          onMinus={() => gimbal.configureProgram({ legSeconds: [Math.max(LEG_MIN, p.legSeconds[0] - LEG_STEP), p.legSeconds[1]] })}
+          onPlus={() => gimbal.configureProgram({ legSeconds: [Math.min(LEG_MAX, p.legSeconds[0] + LEG_STEP), p.legSeconds[1]] })}
         />
-        <DurationRow
-          label="B → C"
-          value={p.legSeconds[1]}
+        <StepperRow
+          title="B → C"
+          value={`${p.legSeconds[1].toFixed(1)} s`}
+          valueLabel={`B → C ${p.legSeconds[1]} seconds`}
+          minusLabel="B → C shorter"
+          plusLabel="B → C longer"
           disabled={busy || !p.c}
-          onChange={(v) => gimbal.configureProgram({ legSeconds: [p.legSeconds[0], v] })}
+          minusDisabled={p.legSeconds[1] <= LEG_MIN}
+          plusDisabled={p.legSeconds[1] >= LEG_MAX}
+          onMinus={() => gimbal.configureProgram({ legSeconds: [p.legSeconds[0], Math.max(LEG_MIN, p.legSeconds[1] - LEG_STEP)] })}
+          onPlus={() => gimbal.configureProgram({ legSeconds: [p.legSeconds[0], Math.min(LEG_MAX, p.legSeconds[1] + LEG_STEP)] })}
         />
-        <View style={{ gap: 6, opacity: p.c ? 1 : 0.4 }}>
-          <View style={{ flexDirection: 'row' }}>
-            <MText size={12} weight="medium" color={colors.secondary} style={{ flex: 1 }}>
-              Smoothness
-            </MText>
-            <MText size={12} mono color={colors.secondary}>
-              {Math.round(p.smoothness * 100)}%
-            </MText>
-          </View>
-          <ModeBar
-            tabs={SMOOTHNESS.map((v) => `${Math.round(v * 100)}`)}
-            uppercase={false}
-            disabled={busy || !p.c}
-            selected={smoothIndex}
-            onSelect={(i) => gimbal.configureProgram({ smoothness: SMOOTHNESS[i] })}
-          />
-        </View>
-        <View style={{ height: 4 }} />
-        <Progress />
-        <View style={{ flexDirection: 'row', marginTop: 6 }}>
-          <RunButton />
-        </View>
-      </ScrollView>
-    </PanelSurface>
+      </View>
+      <View style={[styles.group, !p.c && styles.dim]}>
+        <FieldLabel>Smoothness · {Math.round(p.smoothness * 100)}%</FieldLabel>
+        <ModeBar
+          accessibilityLabel="Smoothness"
+          tabs={SMOOTHNESS.map((v) => `${Math.round(v * 100)}`)}
+          disabled={busy || !p.c}
+          selected={smoothIndex}
+          onSelect={(i) => gimbal.configureProgram({ smoothness: SMOOTHNESS[i] })}
+        />
+      </View>
+      <Progress />
+      <RunButton />
+    </View>
   );
 }
 
-/** `LiveGimbalRunPill`: the minimized editor, start/stop and progress. */
+/** `LiveGimbalRunPill`: the minimized editor over video — points, progress, start/stop. */
 export function MotionRunPill() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const p = useProgram();
   const set = useLiveUi((s) => s.set);
   return (
-    <PanelSurface radius={22} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 4, height: 44 }}>
-      <MText size={12} weight="semibold" mono>
-        {['a', 'b', 'c'].filter((k) => p[k as Slot]).map((k) => k.toUpperCase()).join('→') || 'Motion'}
-      </MText>
-      {running(p.status) ? (
-        <MText size={11} mono color={colors.accent}>
-          {Math.round(p.progress * 100)}%
-        </MText>
-      ) : null}
+    <View style={styles.pill}>
+      <Text style={styles.pillText}>{['a', 'b', 'c'].filter((k) => p[k as Slot]).map((k) => k.toUpperCase()).join(' → ') || 'Motion'}</Text>
+      {running(p.status) ? <Text style={[styles.pillText, { color: colors.accent }]}>{Math.round(p.progress * 100)}%</Text> : null}
       <RunButton compact />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Expand motion control"
+        hitSlop={6}
         onPress={() => set({ gimbalPanel: 'editor' })}
-        style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
+        style={({ pressed }) => [styles.pillExpand, pressed && styles.pressed]}
       >
-        <Maximize2 size={15} color={colors.secondary} />
+        <Icon icon={Maximize01Icon} size={16} color={onVideo.ink} />
       </Pressable>
-    </PanelSurface>
+    </View>
   );
 }
 
@@ -299,6 +223,7 @@ const HFOV_DEG = 80;
  * pose into the picture. A preview, not a tracking box. Smoothness rounds near B.
  */
 export function MotionPathOverlay({ picture }: { picture: Rect }) {
+  const { colors } = useTheme();
   const p = useProgram();
   const yaw = useCamera((s) => Math.round(s.gimbal.yaw * 10) / 10);
   const pitch = useCamera((s) => Math.round(s.gimbal.pitch * 10) / 10);
@@ -332,16 +257,79 @@ export function MotionPathOverlay({ picture }: { picture: Rect }) {
       style={{ position: 'absolute', left: picture.x, top: picture.y, width: picture.width, height: picture.height, overflow: 'hidden' }}
     >
       <Svg width={picture.width} height={picture.height}>
-        {d ? <Path d={d} stroke={colors.accent} strokeWidth={2} strokeDasharray="6 5" fill="none" strokeOpacity={0.9} /> : null}
+        {d ? <Path d={d} stroke={colors.accent} strokeWidth={2} strokeDasharray="6 5" fill="none" strokeOpacity={0.95} /> : null}
         {pts.map((pt) => (
-          <Circle key={`c${pt.k}`} cx={pt.x} cy={pt.y} r={11} fill={withAlpha(colors.accent, 0.85)} stroke="#FFFFFF" strokeWidth={1.5} />
+          <Circle key={`c${pt.k}`} cx={pt.x} cy={pt.y} r={11} fill={colors.accent} stroke={onVideo.ink} strokeWidth={1.5} />
         ))}
         {pts.map((pt) => (
-          <SvgText key={`t${pt.k}`} x={pt.x} y={pt.y + 4} fill="#FFFFFF" fontSize={11} fontFamily={fonts.bold} textAnchor="middle">
+          <SvgText key={`t${pt.k}`} x={pt.x} y={pt.y + 4} fill={onVideo.dark} fontSize={11} fontFamily={fonts.bold} textAnchor="middle">
             {pt.k.toUpperCase()}
           </SvgText>
         ))}
       </Svg>
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    stack: { gap: spacing.md },
+    group: { gap: spacing.sm },
+    waypoints: { gap: spacing.xs },
+    waypoint: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm + 2, minHeight: 44 },
+    slot: { fontFamily: fonts.bold, fontSize: 14, color: colors.foreground },
+    point: { flex: 1, fontFamily: fonts.medium, fontSize: 13, color: colors.foreground, fontVariant: ['tabular-nums' as const] },
+    pointUnset: { color: colors.mutedForeground },
+    clear: { width: 32, height: 36, alignItems: 'center' as const, justifyContent: 'center' as const },
+    setKey: {
+      minWidth: 64,
+      height: 36,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      backgroundColor: colors.surface,
+    },
+    setKeyPrimary: { backgroundColor: colors.ink },
+    setLabel: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
+    setLabelPrimary: { color: colors.inkForeground },
+    run: {
+      minHeight: 50,
+      borderRadius: radius.md,
+      flexDirection: 'row' as const,
+      gap: spacing.sm,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    runLabel: { fontFamily: fonts.semibold, fontSize: 15 },
+    runCompact: {
+      height: 32,
+      paddingHorizontal: 12,
+      borderRadius: 16,
+      flexDirection: 'row' as const,
+      gap: 5,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    runLabelCompact: { fontFamily: fonts.semibold, fontSize: 13 },
+    progress: { gap: 6 },
+    progressLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground },
+    progressTrack: { height: 4, borderRadius: 2, backgroundColor: colors.surfaceStrong, overflow: 'hidden' as const },
+    progressFill: { height: 4, borderRadius: 2, backgroundColor: colors.primary },
+    pill: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 8,
+      height: 44,
+      paddingLeft: 14,
+      paddingRight: 6,
+      borderRadius: 22,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+    },
+    pillText: { fontFamily: fonts.semibold, fontSize: 13, color: onVideo.ink, fontVariant: ['tabular-nums' as const], ...textShadow },
+    pillExpand: { width: 32, height: 32, alignItems: 'center' as const, justifyContent: 'center' as const },
+    dim: { opacity: 0.4 },
+    faint: { opacity: 0.35 },
+    pressed: { opacity: 0.7 },
+  };
 }

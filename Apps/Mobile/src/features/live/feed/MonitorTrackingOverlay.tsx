@@ -1,6 +1,7 @@
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useCamera } from '@/camera';
-import { MText, colors, withAlpha } from '@/theme';
+import { fonts, useTheme } from '@/constants/theme';
+import { onVideo, withAlphaHex } from '../chrome/primitives';
 import type { Rect } from '../layout/fieldMonitorLayout';
 
 /** Corner-bracket box (`MonitorTrackingOverlay` / face box style). */
@@ -23,6 +24,7 @@ function Brackets({ w, h, color, len = 14 }: { w: number; h: number; color: stri
  * dashed, tracking is accent brackets with the subject label, lost is amber.
  */
 export function MonitorTrackingOverlay({ picture }: { picture: Rect }) {
+  const { colors } = useTheme();
   const tracking = useCamera((s) => s.tracking);
   const focus = useCamera((s) => s.focus);
   const box = tracking.status !== 'idle' ? tracking.box : undefined;
@@ -60,22 +62,20 @@ export function MonitorTrackingOverlay({ picture }: { picture: Rect }) {
             height: box.height * picture.height,
             borderWidth: tracking.status === 'searching' ? 1.5 : 0,
             borderStyle: 'dashed',
-            borderColor: colors.text,
-            backgroundColor: tracking.status === 'tracking' ? withAlpha(colors.accent, 0.06) : 'transparent',
+            borderColor: onVideo.ink,
+            backgroundColor: tracking.status === 'tracking' ? withAlphaHex(colors.accent, 0.06) : 'transparent',
           }}
         >
           {tracking.status !== 'searching' ? (
             <Brackets
               w={box.width * picture.width}
               h={box.height * picture.height}
-              color={tracking.status === 'lost' ? colors.digitalCrop : colors.accent}
+              color={tracking.status === 'lost' ? colors.warning : colors.accent}
             />
           ) : null}
           {tracking.status === 'tracking' && tracking.label ? (
-            <View style={{ position: 'absolute', left: 0, top: -20, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: colors.accent }}>
-              <MText size={10} weight="semibold">
-                {tracking.label}
-              </MText>
+            <View style={{ position: 'absolute', left: 0, top: -24, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: colors.accent }}>
+              <Text style={{ fontFamily: fonts.semibold, fontSize: 11, color: onVideo.dark }}>{tracking.label}</Text>
             </View>
           ) : null}
         </View>

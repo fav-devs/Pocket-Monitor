@@ -1,223 +1,97 @@
-import { useRef, useState, type ReactNode } from 'react';
-import { PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-native';
-import { MText, colors, minTouch, radius, spacing, withAlpha } from '@/theme';
-import { PressableScale } from '@/ui';
+import { createContext, useContext, type ReactNode } from 'react';
+import { Platform, Pressable, Switch, Text, View } from 'react-native';
+import type { IconSvgElement } from '@hugeicons/react-native';
+import { Icon } from '@/components/icon';
+import { SheetScrollView } from '@/components/sheet';
+import { TabRow } from '@/components/tab-row';
+import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 
-/** Settings rows for the assist inspectors (`MonitorSettingsInlineRow` & co). */
+/**
+ * Building blocks for the assist option sheets, on the shared design system: a pinned TabRow, a scrolling body of
+ * FieldSections, switch rows, colour swatches and short notes. Themed (the sheets follow light / dark).
+ */
 
-export function MenuSection({ title, children }: { title?: string; children: ReactNode }) {
+/** Rows a host puts at the top of every options body (Settings' live / playback switches). */
+const MenuLeadContext = createContext<ReactNode>(null);
+export const MenuLeadProvider = MenuLeadContext.Provider;
+export function MenuLead() {
+  return <>{useContext(MenuLeadContext)}</>;
+}
+
+/** The scrolling body of an options sheet (the sheet itself is `scroll={false}` so tabs can stay pinned). */
+export function MenuScroll({ children }: { children: ReactNode }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <View style={{ backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md, marginBottom: spacing.md }}>
-      {title ? (
-        <MText size={10} weight="bold" tracking={1.4} color={colors.faint} uppercase style={{ paddingTop: spacing.md }}>
-          {title}
-        </MText>
-      ) : null}
+    <SheetScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <MenuLead />
       {children}
+    </SheetScrollView>
+  );
+}
+
+/** A sheet's sections as words, pinned above the scrolling body. */
+export function MenuTabs<T extends string>({ tabs, selected, onSelect }: { tabs: ReadonlyArray<{ id: T; label: string }>; selected: T; onSelect: (id: T) => void }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.tabs}>
+      <TabRow tabs={tabs} selected={selected} onSelect={onSelect} />
     </View>
   );
 }
 
-export function MenuRow({
-  title,
-  help,
-  stacked,
-  divider = true,
-  children,
-}: {
-  title: string;
-  help?: string;
-  stacked?: boolean;
-  divider?: boolean;
-  children?: ReactNode;
-}) {
+/** The app's switch: primary track, white thumb (also on web, where the default thumb is teal). */
+export function AppSwitch({ value, onChange, label, disabled }: { value: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+  const { colors } = useTheme();
   return (
-    <View style={{ paddingVertical: spacing.md, borderTopWidth: divider ? 1 : 0, borderTopColor: colors.border, gap: spacing.sm }}>
-      <View style={{ flexDirection: stacked ? 'column' : 'row', alignItems: stacked ? 'stretch' : 'center', gap: spacing.sm }}>
-        <MText size={13} weight="medium" style={{ flex: stacked ? undefined : 1 }}>
-          {title}
-        </MText>
-        {children}
-      </View>
-      {help ? (
-        <MText size={11} color={colors.muted}>
-          {help}
-        </MText>
-      ) : null}
-    </View>
-  );
-}
-
-export function MenuHelp({ children }: { children: string }) {
-  return (
-    <MText size={12} color={colors.muted} style={{ paddingVertical: spacing.sm }}>
-      {children}
-    </MText>
-  );
-}
-
-export function Segmented<T extends string | number | boolean>({
-  options,
-  value,
-  onChange,
-  title = (o) => String(o),
-  accessibilityLabel,
-}: {
-  options: readonly T[];
-  value: T;
-  onChange: (v: T) => void;
-  title?: (o: T) => string;
-  accessibilityLabel?: string;
-}) {
-  return (
-    <View accessibilityLabel={accessibilityLabel} style={{ flexDirection: 'row', backgroundColor: colors.raised, borderRadius: radius.sm, padding: 2, gap: 2, flexWrap: 'wrap' }}>
-      {options.map((o) => {
-        const on = o === value;
-        return (
-          <Pressable
-            key={String(o)}
-            accessibilityRole="button"
-            accessibilityState={{ selected: on }}
-            onPress={() => onChange(o)}
-            style={{
-              flexGrow: 1,
-              minHeight: 36,
-              minWidth: 44,
-              paddingHorizontal: 10,
-              borderRadius: radius.sm - 2,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: on ? withAlpha(colors.accent, 0.22) : 'transparent',
-              borderWidth: 1,
-              borderColor: on ? colors.accent : 'transparent',
-            }}
-          >
-            <MText size={12} weight={on ? 'semibold' : 'regular'} color={on ? colors.accent : colors.secondary}>
-              {title(o)}
-            </MText>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-export function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <Pressable
-      accessibilityRole="switch"
+    <Switch
       accessibilityLabel={label}
-      accessibilityState={{ checked: value }}
-      onPress={() => onChange(!value)}
-      hitSlop={8}
-      style={{ width: minTouch, height: 30, justifyContent: 'center' }}
-    >
-      <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: value ? colors.accent : colors.raised, borderWidth: 1, borderColor: colors.borderStrong, padding: 2 }}>
-        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', transform: [{ translateX: value ? 18 : 0 }] }} />
-      </View>
-    </Pressable>
+      value={value}
+      disabled={disabled}
+      onValueChange={onChange}
+      trackColor={{ true: colors.primary, false: colors.surfaceStrong }}
+      thumbColor="#ffffff"
+      {...WEB_THUMB}
+    />
   );
 }
+const WEB_THUMB = (Platform.OS === 'web' ? { activeThumbColor: '#ffffff' } : {}) as object;
 
-export function SwitchRow({ title, help, value, onChange, divider }: { title: string; help?: string; value: boolean; onChange: (v: boolean) => void; divider?: boolean }) {
+/** A labelled on/off row: 15pt title, optional one-line detail, a primary switch. */
+export function SwitchRow({ title, detail, value, onChange, disabled }: { title: string; detail?: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <MenuRow title={title} help={help} divider={divider}>
-      <Toggle value={value} onChange={onChange} label={title} />
-    </MenuRow>
-  );
-}
-
-/** Horizontal slider with a 44pt hit area. Steps to `step`. */
-export function Slider({
-  value,
-  min,
-  max,
-  step = 1,
-  onChange,
-  label,
-  format = (v) => String(Math.round(v)),
-}: {
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  onChange: (v: number) => void;
-  label: string;
-  format?: (v: number) => string;
-}) {
-  const [width, setWidth] = useState(1);
-  const startX = useRef(0);
-  const live = useRef({ width, min, max, step, onChange });
-  live.current = { width, min, max, step, onChange };
-  const setFromX = (x: number) => {
-    const { width: w, min: lo, max: hi, step: st, onChange: cb } = live.current;
-    const t = Math.min(1, Math.max(0, x / Math.max(1, w)));
-    const raw = lo + t * (hi - lo);
-    cb(Math.round(raw / st) * st);
-  };
-  const responder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: (e) => {
-        startX.current = e.nativeEvent.locationX;
-        setFromX(startX.current);
-      },
-      onPanResponderMove: (_e, g) => setFromX(startX.current + g.dx),
-    }),
-  ).current;
-  const t = (value - min) / Math.max(1e-9, max - min);
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 160, flexShrink: 1 }}>
-      <View
-        accessibilityRole="adjustable"
-        accessibilityLabel={label}
-        accessibilityValue={{ min, max, now: value, text: format(value) }}
-        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-        style={{ flex: 1, height: minTouch, justifyContent: 'center' }}
-        {...responder.panHandlers}
-      >
-        <View pointerEvents="none" style={{ height: 4, borderRadius: 2, backgroundColor: colors.raised }}>
-          <View style={{ width: `${Math.min(100, Math.max(0, t * 100))}%`, height: 4, borderRadius: 2, backgroundColor: colors.accent }} />
-        </View>
-        <View
-          pointerEvents="none"
-          style={{ position: 'absolute', left: Math.min(Math.max(0, t), 1) * width - 9, width: 18, height: 18, borderRadius: 9, backgroundColor: '#fff' }}
-        />
+    <View style={[styles.switchRow, disabled && styles.disabled]}>
+      <View style={styles.switchText}>
+        <Text style={styles.switchTitle}>{title}</Text>
+        {detail ? <Text style={styles.detail}>{detail}</Text> : null}
       </View>
-      <MText size={12} mono color={colors.secondary} style={{ width: 44, textAlign: 'right' }}>
-        {format(value)}
-      </MText>
+      <AppSwitch label={title} value={value} disabled={disabled} onChange={onChange} />
     </View>
   );
 }
 
-export function ColorDots<T extends string>({ options, value, onChange, rgb }: { options: readonly T[]; value: T; onChange: (v: T) => void; rgb: (o: T) => [number, number, number] }) {
+/** Colour choice as squircle swatches; the chosen one ringed in the foreground colour (ai-cut's Adjust swatches). */
+export function Swatches<T extends string>({ options, value, onChange, rgb, label }: { options: readonly T[]; value: T; onChange: (v: T) => void; rgb: (o: T) => readonly [number, number, number]; label: string }) {
+  const styles = useThemedStyles(createStyles);
   return (
-    <View style={{ flexDirection: 'row', gap: 4 }}>
+    <View style={styles.swatches} accessibilityRole="radiogroup" accessibilityLabel={label}>
       {options.map((o) => {
         const [r, g, b] = rgb(o);
         const on = o === value;
         return (
           <Pressable
             key={o}
-            accessibilityRole="button"
+            accessibilityRole="radio"
             accessibilityLabel={o}
-            accessibilityState={{ selected: on }}
+            accessibilityState={{ checked: on }}
             onPress={() => onChange(o)}
-            style={{ width: minTouch, height: minTouch, alignItems: 'center', justifyContent: 'center' }}
+            hitSlop={2}
+            style={({ pressed }) => [styles.swatchCell, pressed && styles.pressed]}
           >
-            <View
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 12,
-                backgroundColor: `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`,
-                borderWidth: on ? 2 : 1,
-                borderColor: on ? colors.accent : colors.borderStrong,
-              }}
-            />
+            <View style={[styles.swatchRing, on && styles.swatchRingOn]}>
+              <View style={[styles.swatch, { backgroundColor: `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})` }]} />
+            </View>
+            <Text style={[styles.swatchLabel, on && styles.swatchLabelOn]}>{o}</Text>
           </Pressable>
         );
       })}
@@ -225,29 +99,73 @@ export function ColorDots<T extends string>({ options, value, onChange, rgb }: {
   );
 }
 
-export function TextButton({ label, onPress, tone = 'default', icon }: { label: string; onPress: () => void; tone?: 'default' | 'accent' | 'danger'; icon?: ReactNode }) {
-  const fg = tone === 'accent' ? colors.accent : tone === 'danger' ? colors.recording : colors.secondary;
+/** One short muted line where a label isn't enough. */
+export function Note({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'success' | 'warning' }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const color = tone === 'success' ? colors.success : tone === 'warning' ? colors.warning : colors.mutedForeground;
+  return <Text style={[styles.note, { color }]}>{children}</Text>;
+}
+
+/** A text action in primary (Reset position and size). */
+export function TextAction({ label, onPress, icon, tone = 'primary' }: { label: string; onPress: () => void; icon?: IconSvgElement; tone?: 'primary' | 'destructive' }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const color = tone === 'destructive' ? colors.destructive : colors.primary;
   return (
-    <PressableScale
-      onPress={onPress}
-      accessibilityLabel={label}
-      style={{
-        minHeight: minTouch,
-        paddingHorizontal: spacing.lg,
-        borderRadius: radius.md,
-        backgroundColor: tone === 'accent' ? withAlpha(colors.accent, 0.14) : colors.raised,
-        borderWidth: 1,
-        borderColor: tone === 'accent' ? withAlpha(colors.accent, 0.5) : colors.border,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: spacing.sm,
-      }}
-    >
-      {icon}
-      <MText size={13} weight="semibold" color={fg}>
-        {label}
-      </MText>
-    </PressableScale>
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} hitSlop={6} style={({ pressed }) => [styles.textAction, pressed && styles.pressed]}>
+      {icon ? <Icon icon={icon} size={17} color={color} strokeWidth={1.8} /> : null}
+      <Text style={[styles.textActionLabel, { color }]}>{label}</Text>
+    </Pressable>
   );
+}
+
+/** "Label ........ value" read-out row. */
+export function ValueRow({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.valueRow}>
+      <Text style={styles.valueLabel}>{label}</Text>
+      <Text numberOfLines={1} style={[styles.value, accent && styles.valueAccent]}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    scroll: { flex: 1, minHeight: 0, overflow: 'hidden' as const },
+    // The first FieldSection's hairline sits just above the top edge: the sheet header / tabs already draw one.
+    scrollContent: { paddingHorizontal: spacing.md, marginTop: -1, paddingBottom: spacing.lg, gap: spacing.md },
+    tabs: { paddingHorizontal: spacing.md, paddingBottom: spacing.xs },
+    switchRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.md, minHeight: 44 },
+    switchText: { flex: 1, minWidth: 0, gap: 2 },
+    switchTitle: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
+    detail: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: colors.mutedForeground },
+    disabled: { opacity: 0.45 },
+    pressed: { opacity: 0.65 },
+    swatches: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: spacing.sm },
+    swatchCell: { alignItems: 'center' as const, gap: 4, minWidth: 48 },
+    swatchRing: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      borderWidth: 2.5,
+      borderColor: 'transparent',
+    },
+    swatchRingOn: { borderColor: colors.foreground },
+    swatch: { width: 34, height: 34, borderRadius: 10, borderWidth: 0.5, borderColor: colors.borderStrong },
+    swatchLabel: { fontFamily: fonts.medium, fontSize: 11, color: colors.mutedForeground },
+    swatchLabelOn: { color: colors.foreground },
+    note: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
+    textAction: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, minHeight: 44, alignSelf: 'flex-start' as const },
+    textActionLabel: { fontFamily: fonts.semibold, fontSize: 14 },
+    valueRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const, gap: spacing.md, minHeight: 28 },
+    valueLabel: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground },
+    value: { flexShrink: 1, fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
+    valueAccent: { color: colors.primary },
+  };
 }

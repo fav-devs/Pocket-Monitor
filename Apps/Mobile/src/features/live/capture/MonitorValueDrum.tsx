@@ -1,17 +1,20 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { useMemo, useRef, useState } from 'react';
-import { PanResponder, Pressable, View, type LayoutChangeEvent } from 'react-native';
-import { MText, colors } from '@/theme';
+import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Icon } from '@/components/icon';
+import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { haptics } from '../haptics';
 
 /** Finger travel per detent (`MonitorDrumMetrics`: independent 56-point detent policy). */
 const DETENT = 56;
+const HEIGHT = 64;
 
 function drumMetrics(options: string[]) {
   const length = Math.max(4, ...options.map((o) => o.length));
-  const selectedScale = length > 9 ? 1.4 : length > 6 ? 1.6 : 1.95;
-  const cellWidth = Math.max(84, Math.round(length * 9.1 * selectedScale * 0.8 + 26));
-  return { selectedScale, cellWidth };
+  const selectedSize = length > 9 ? 20 : length > 6 ? 24 : 28;
+  const cellWidth = Math.max(76, Math.round(length * selectedSize * 0.62 + 20));
+  return { selectedSize, cellWidth };
 }
 
 export interface MonitorValueDrumProps {
@@ -23,56 +26,60 @@ export interface MonitorValueDrumProps {
 }
 
 /**
- * `MonitorValueDrum`: a horizontal label drum. Drag snaps one value per 56 pt, tap a label to
- * jump to it, or use the chevrons. The selected value sits centred, larger, in accent.
+ * `MonitorValueDrum`: a horizontal value drum. Drag snaps one value per 56 pt, tap a value to
+ * jump to it, or use the chevrons. The chosen value sits centred and large over a primary tick.
  * Commits on release (the camera sees one SET per gesture, not every detent).
  */
 export function MonitorValueDrum({ options, index, onChange, disabled, accessibilityLabel }: MonitorValueDrumProps) {
-  const { selectedScale, cellWidth } = useMemo(() => drumMetrics(options), [options]);
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const { selectedSize, cellWidth } = useMemo(() => drumMetrics(options), [options]);
   const [width, setWidth] = useState(320);
   const [preview, setPreview] = useState<number | null>(null);
-  const startIndex = useRef(index);
-  const lastDetent = useRef(index);
-  const indexRef = useRef(index);
-  indexRef.current = index;
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const live = useRef({ index, options, onChange, start: index, last: index });
+  live.current.index = index;
+  live.current.options = options;
+  live.current.onChange = onChange;
 
-  const clampIndex = (i: number) => Math.min(optionsRef.current.length - 1, Math.max(0, i));
+  const clampIndex = (i: number) => Math.min(live.current.options.length - 1, Math.max(0, i));
 
-  const responder = useMemo(
+  const pan = useMemo(
     () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_e, g) => !disabled && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderGrant: () => {
-          startIndex.current = indexRef.current;
-          lastDetent.current = indexRef.current;
-        },
-        onPanResponderMove: (_e, g) => {
-          const next = clampIndex(startIndex.current - Math.round(g.dx / DETENT));
-          if (next !== lastDetent.current) {
-            lastDetent.current = next;
+      Gesture.Pan()
+        .runOnJS(true)
+        .enabled(!disabled)
+        .activeOffsetX([-6, 6])
+        .failOffsetY([-12, 12])
+        .onStart(() => {
+          live.current.start = live.current.index;
+          live.current.last = live.current.index;
+        })
+        .onUpdate((e) => {
+          const next = clampIndex(live.current.start - Math.round(e.translationX / DETENT));
+          if (next !== live.current.last) {
+            live.current.last = next;
             haptics.selection();
           }
           setPreview(next);
-        },
-        onPanResponderRelease: () => {
-          const next = lastDetent.current;
-          setPreview(null);
-          if (next !== indexRef.current) onChangeRef.current(next);
-        },
-        onPanResponderTerminate: () => setPreview(null),
-      }),
+        })
+        .onEnd(() => {
+          const next = live.current.last;
+          if (next !== live.current.index) live.current.onChange(next);
+        })
+        .onFinalize(() => setPreview(null)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [disabled],
   );
 
   const shown = preview ?? index;
   const center = width / 2;
   const span = Math.ceil(width / cellWidth / 2) + 1;
+  const step = (d: number) => {
+    const next = clampIndex(index + d);
+    if (next === index) return;
+    haptics.selection();
+    onChange(next);
+  };
 
   return (
     <View
@@ -81,76 +88,77 @@ export function MonitorValueDrum({ options, index, onChange, disabled, accessibi
       accessibilityValue={{ text: options[shown] ?? '' }}
       accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
       onAccessibilityAction={(e) => {
-        if (e.nativeEvent.actionName === 'increment') onChange(clampIndex(index + 1));
-        if (e.nativeEvent.actionName === 'decrement') onChange(clampIndex(index - 1));
+        if (e.nativeEvent.actionName === 'increment') step(1);
+        if (e.nativeEvent.actionName === 'decrement') step(-1);
       }}
-      style={{ flexDirection: 'row', alignItems: 'center', height: 60, opacity: disabled ? 0.4 : 1 }}
+      style={[styles.root, disabled && styles.disabled]}
     >
       <Pressable
         accessibilityLabel="Previous value"
         disabled={disabled || index <= 0}
-        onPress={() => onChange(clampIndex(index - 1))}
-        style={{ width: 32, height: 44, alignItems: 'center', justifyContent: 'center', opacity: index <= 0 ? 0.3 : 1 }}
+        onPress={() => step(-1)}
+        style={[styles.chevron, index <= 0 && styles.faint]}
       >
-        <ChevronLeft size={18} color={colors.muted} />
+        <Icon icon={ArrowLeft01Icon} size={18} color={colors.mutedForeground} strokeWidth={2} />
       </Pressable>
-      <View
-        {...responder.panHandlers}
-        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-        style={{ flex: 1, height: 60, overflow: 'hidden' }}
-      >
-        {options.map((label, i) => {
-          const offset = i - shown;
-          if (Math.abs(offset) > span) return null;
-          const selected = offset === 0;
-          const size = selected ? Math.min(26, 13 * selectedScale) : 13;
-          return (
-            <Pressable
-              key={`${label}-${i}`}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-              disabled={disabled}
-              onPress={() => {
-                if (i !== index) {
-                  haptics.selection();
-                  onChange(i);
-                }
-              }}
-              style={{
-                position: 'absolute',
-                left: center + offset * cellWidth - cellWidth / 2,
-                width: cellWidth,
-                top: 0,
-                bottom: 0,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <MText
-                size={size}
-                weight={selected ? 'semibold' : 'medium'}
-                mono
-                numberOfLines={1}
-                color={selected ? colors.accent : Math.abs(offset) === 1 ? colors.secondary : colors.muted}
+      <GestureDetector gesture={pan}>
+        <View collapsable={false} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)} style={styles.window}>
+          {options.map((label, i) => {
+            const offset = i - shown;
+            if (Math.abs(offset) > span) return null;
+            const selected = offset === 0;
+            return (
+              <Pressable
+                key={`${label}-${i}`}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+                disabled={disabled}
+                onPress={() => {
+                  if (i !== index) {
+                    haptics.selection();
+                    onChange(i);
+                  }
+                }}
+                style={[styles.cell, { left: center + offset * cellWidth - cellWidth / 2, width: cellWidth }]}
               >
-                {label}
-              </MText>
-            </Pressable>
-          );
-        })}
-        <View
-          pointerEvents="none"
-          style={{ position: 'absolute', left: center - 1, bottom: 2, width: 2, height: 6, borderRadius: 1, backgroundColor: colors.accent }}
-        />
-      </View>
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.label,
+                    selected
+                      ? { fontSize: selectedSize, fontFamily: fonts.semibold, color: colors.foreground }
+                      : { opacity: Math.abs(offset) === 1 ? 0.75 : 0.4 },
+                  ]}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+          <View pointerEvents="none" style={[styles.tick, { left: center - 2 }]} />
+        </View>
+      </GestureDetector>
       <Pressable
         accessibilityLabel="Next value"
         disabled={disabled || index >= options.length - 1}
-        onPress={() => onChange(clampIndex(index + 1))}
-        style={{ width: 32, height: 44, alignItems: 'center', justifyContent: 'center', opacity: index >= options.length - 1 ? 0.3 : 1 }}
+        onPress={() => step(1)}
+        style={[styles.chevron, index >= options.length - 1 && styles.faint]}
       >
-        <ChevronRight size={18} color={colors.muted} />
+        <Icon icon={ArrowRight01Icon} size={18} color={colors.mutedForeground} strokeWidth={2} />
       </Pressable>
     </View>
   );
+}
+
+function createStyles(colors: ThemeColors) {
+  return {
+    root: { flexDirection: 'row' as const, alignItems: 'center' as const, height: HEIGHT, borderRadius: 16, backgroundColor: colors.surface },
+    window: { flex: 1, height: HEIGHT, overflow: 'hidden' as const },
+    cell: { position: 'absolute' as const, top: 0, bottom: 0, alignItems: 'center' as const, justifyContent: 'center' as const },
+    label: { fontFamily: fonts.medium, fontSize: 15, color: colors.mutedForeground, fontVariant: ['tabular-nums' as const] },
+    tick: { position: 'absolute' as const, bottom: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: colors.primary },
+    chevron: { width: 40, height: 44, alignItems: 'center' as const, justifyContent: 'center' as const },
+    faint: { opacity: 0.3 },
+    disabled: { opacity: 0.4 },
+  };
 }
