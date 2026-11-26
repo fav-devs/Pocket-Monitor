@@ -60,7 +60,15 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router",
+      [
+        "expo-router",
+        {
+          "asyncRoutes": {
+            "web": false
+          },
+          "sitemap": false
+        }
+      ],
       [
         "expo-font",
         {

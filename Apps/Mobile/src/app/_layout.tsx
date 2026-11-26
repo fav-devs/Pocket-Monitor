@@ -1,9 +1,8 @@
-import {
-  SNPro_400Regular,
-  SNPro_500Medium,
-  SNPro_600SemiBold,
-  SNPro_700Bold,
-} from '@expo-google-fonts/sn-pro';
+// Per-weight imports: the package index would bundle all sixteen faces.
+import { SNPro_400Regular } from '@expo-google-fonts/sn-pro/400Regular';
+import { SNPro_500Medium } from '@expo-google-fonts/sn-pro/500Medium';
+import { SNPro_600SemiBold } from '@expo-google-fonts/sn-pro/600SemiBold';
+import { SNPro_700Bold } from '@expo-google-fonts/sn-pro/700Bold';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { useFonts } from 'expo-font';
 import { Stack, ThemeProvider } from 'expo-router';
