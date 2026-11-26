@@ -233,13 +233,23 @@ describe('NativeCameraSession', () => {
     expect(session.getState().connection.signalBars).toBeGreaterThan(0);
 
     // Encoder pause (status young, video gone): only the watchdog sends the next enable.
+    // Core ladder: enable → (1.5 s, no HEVC) → reopen UDP (one enable rides the new socket).
     video.on = false;
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(enables(cam).length).toBe(2);
-    expect(['recovering', 'live']).toContain(session.getState().connection.phase);
+    const pausedAt = cam.dumlSent.length;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(enables(cam)).toHaveLength(2);
+    expect(cam.dumlSent.indexOf(enables(cam)[1])).toBeGreaterThanOrEqual(pausedAt);
+    expect(session.getState().connection.phase).toBe('recovering');
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(cam.opened.length).toBe(2);
+    expect(cam.opened[1]).toMatchObject({ host: '192.168.2.1', port: 9004 });
+    expect(enables(cam)).toHaveLength(3);
     video.on = true;
     await vi.advanceTimersByTimeAsync(3000);
     expect(session.getState().connection.phase).toBe('live');
+    // Healthy again: no enable loop.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(enables(cam)).toHaveLength(3);
 
     stop();
     await session.disconnect();
