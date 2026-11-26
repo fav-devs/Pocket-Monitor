@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react-native';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Switch, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Platform, Switch, View, type StyleProp, type ViewStyle } from 'react-native';
 import { MText, colors, minTouch, radius, withAlpha } from '@/theme';
 import { PressableScale } from '@/ui';
 
@@ -187,6 +187,7 @@ export function ToggleRow({
         onValueChange={onChange}
         trackColor={{ false: colors.raised, true: colors.accent }}
         thumbColor="#fff"
+        {...(Platform.OS === 'web' ? ({ activeThumbColor: '#fff' } as object) : {})}
         accessibilityLabel={title}
       />
     </PressableScale>
