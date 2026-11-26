@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { OpcGamepad } from '@modules/opc-native/src';
-import type { GamepadState } from '@modules/opc-native/src';
+import { PocketGamepad } from '@modules/pocket-native/src';
+import type { GamepadState } from '@modules/pocket-native/src';
 import type { LiveInputActions } from './actions';
 import { postDrive, releaseDrive } from './gimbalDrive';
 import { applyStickMapping, type StickMapping } from './stickMath';
@@ -130,18 +130,18 @@ export function useGamepadInput(
       };
     }
 
-    if (!OpcGamepad) return;
+    if (!PocketGamepad) return;
     let sub: { remove(): void } | null = null;
     try {
-      OpcGamepad.start();
-      sub = OpcGamepad.addListener('onGamepad', handle);
+      PocketGamepad.start();
+      sub = PocketGamepad.addListener('onGamepad', handle);
     } catch {
       return;
     }
     return () => {
       sub?.remove();
       try {
-        OpcGamepad?.stop();
+        PocketGamepad?.stop();
       } catch {
         // ignore
       }

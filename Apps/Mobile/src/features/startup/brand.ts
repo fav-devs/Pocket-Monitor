@@ -9,8 +9,8 @@ export const appBrand = {
   monogram: 'PM',
   accent: colors.accent,
   glow: colors.accentGlow,
-  supportEmail: 'support@openpocketcine.app',
-  sourceUrl: 'https://github.com/erik-sutton95/OpenPocketCine',
+  supportUrl: 'https://github.com/fav-devs/Pocket-Monitor/issues',
+  sourceUrl: 'https://github.com/fav-devs/Pocket-Monitor',
 } as const;
 
 /** Cold-start launch timing shared by the splash (`MonitorLaunchTiming`). */

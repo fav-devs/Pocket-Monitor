@@ -37,7 +37,7 @@ import {
   type ZebraUnit,
   STANDARD_SAFE_AREAS,
 } from '@/core/media';
-import type { PictureEffects } from '@modules/opc-native/src/types';
+import type { PictureEffects } from '@modules/pocket-native/src/types';
 import { persistStorage } from './storage';
 
 /**

@@ -8,7 +8,7 @@ and the module header says so. `src/core/media/**` (assists) is owned separately
 
 ## Hot path: what native must implement
 
-JS never sits on the per-packet path. `modules/opc-native` (Swift/Kotlin) must implement, using the TS
+JS never sits on the per-packet path. `modules/pocket-native` (Swift/Kotlin) must implement, using the TS
 files as the tested reference: UDP socket + handshake (`transport/datalink.ts`,
 `transport/handshakeAdmission.ts`), the **40 Hz pktType-0x04 ACK pump** with `AckWindows`
 (forward-only cursors), one serialized UDP queue with `DatalinkSequencer` semantics (commands,

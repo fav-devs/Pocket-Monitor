@@ -12,7 +12,7 @@ import {
   type CubeLUT,
   type MonitorTransfer,
 } from '@/core/media';
-import type { DemoScene, PictureEffects } from '@modules/opc-native/src/types';
+import type { DemoScene, PictureEffects } from '@modules/pocket-native/src/types';
 import { BLUR_FS, COPY_FS, EFFECTS_FS, FULLSCREEN_VS, SCENE_FS } from './shaders';
 
 const TRANSFER_ID: Record<MonitorTransfer, number> = { rec709: 0, hdr: 1, dlog: 2, dlog2: 3, dlogm: 4 };

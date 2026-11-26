@@ -10,7 +10,7 @@
  *
  * Per packet the wire is `[8B transport hdr][12B routing hdr][DUML frame]`.
  *
- * ─── HOT PATH: what modules/opc-native MUST implement natively (Swift + Kotlin) ───────────────
+ * ─── HOT PATH: what modules/pocket-native MUST implement natively (Swift + Kotlin) ───────────────
  * JS must never sit on the per-packet path. This file is the tested reference those ports copy:
  *  1. UDP socket to 192.168.2.1:9004 bound to an *ephemeral* local port (see docs/live-session.md).
  *  2. Handshake: `handshakeDatagram` with a fresh random 8-aligned `baseSeq` and random session id,

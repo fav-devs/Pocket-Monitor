@@ -200,7 +200,7 @@ export function cubeVolumeRGBA(lut: CubeLUT): Uint8Array {
 
 export const quantize = (v: number) => Math.round(Math.min(Math.max(v, 0), 1) * 255);
 
-/** Serialize to `.cube` text (for `OpcVideo.loadLut`, which takes text). */
+/** Serialize to `.cube` text (for `PocketVideo.loadLut`, which takes text). */
 export function formatCube(lut: CubeLUT): string {
   const lines: string[] = [];
   if (lut.title) lines.push(`TITLE "${lut.title.replace(/"/g, "'")}"`);

@@ -24,7 +24,7 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
 | `src/core/` | Pure TypeScript port of the protocol core (DUML, commands, status decode, depacketizers, policies). No React, no RN imports. Tested with vitest. |
 | `src/state/` | Persisted zustand stores (preferences, saved cameras, assists, …). |
 | `src/features/<area>/` | Screens and components for one product area. |
-| `modules/opc-native/` | Local Expo module (Expo Modules 2.0 macro API): Swift in `ios/`, Kotlin in `android/`, JS contract in `src/types.ts`, web fallbacks in `*.web.ts(x)`. |
+| `modules/pocket-native/` | Local Expo module (Expo Modules 2.0 macro API): Swift in `ios/`, Kotlin in `android/`, JS contract in `src/types.ts`, web fallbacks in `*.web.ts(x)`. |
 
 ## Architecture rules
 
@@ -42,7 +42,7 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
 - Do not commit camera Wi-Fi passwords, captures, personal data, signing material or unofficial LUTs.
   DJI LUT `.cube` files are not bundled.
 - `ios/` and `android/` at the app root are generated (CNG). Never hand-edit them; configure via
-  `app.json` and config plugins. Native code lives in `modules/opc-native/{ios,android}`.
+  `app.json` and config plugins. Native code lives in `modules/pocket-native/{ios,android}`.
 
 ## Commands
 

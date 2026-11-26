@@ -1,12 +1,12 @@
 import { View } from 'react-native';
-import { OpcScopeView } from '@modules/opc-native/src/OpcVideoView';
+import { PocketScopeView } from '@modules/pocket-native/src/PocketVideoView';
 import { histogramPlotRect, vectorscopeSquare, waveformPlotRect } from './scopeGeometry';
 import type { ScopeTracesProps } from './ScopeTraces.types';
 
 export type { ScopeTracesProps } from './ScopeTraces.types';
 
 /**
- * Native scope traces: the GPU scope fed straight from the decoder (`OpcScopeView`), placed in
+ * Native scope traces: the GPU scope fed straight from the decoder (`PocketScopeView`), placed in
  * the same plot rect the SVG graticule draws around. Scopes measure the camera signal.
  */
 export default function ScopeTraces({ kind, width, height, mode, brightness, zoom, lamps, effects, sessionId, demoScene }: ScopeTracesProps) {
@@ -19,7 +19,7 @@ export default function ScopeTraces({ kind, width, height, mode, brightness, zoo
         : { mode: String(mode ?? 'RGB').toLowerCase() };
   return (
     <View pointerEvents="none" style={{ position: 'absolute', left: plot.x, top: plot.y, width: plot.width, height: plot.height }}>
-      <OpcScopeView
+      <PocketScopeView
         style={{ flex: 1 }}
         sessionId={sessionId}
         demoScene={demoScene}

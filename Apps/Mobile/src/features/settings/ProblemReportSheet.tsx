@@ -174,7 +174,7 @@ export function ProblemReportSheet({ visible, onClose }: { visible: boolean; onC
           ) : null}
         </Section>
         <MText size={10.5} color={colors.muted} style={{ lineHeight: 15 }}>
-          {`This build does not upload reports. Share report opens the share sheet so you can send it to ${appBrand.supportEmail} or attach it to a TestFlight or Play beta report.`}
+          {`This build does not upload reports. Share report opens the share sheet so you can attach it to an issue at ${appBrand.supportUrl}.`}
         </MText>
       </ScrollView>
     </OverlayScreen>

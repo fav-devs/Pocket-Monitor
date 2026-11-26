@@ -22,7 +22,7 @@ import {
 /**
  * The shared small RGBA tap (`LiveFrameSample` / `ScopeAssistBundle`): one ~192×108 sample of
  * the camera signal (never the monitoring LUT) at ~10 Hz, published by whatever draws the
- * picture (web WebGL renderer, native `OpcVideo.sampleFrame` poll, a playback sampler) and
+ * picture (web WebGL renderer, native `PocketVideo.sampleFrame` poll, a playback sampler) and
  * analysed once per tick for every scope and meter.
  */
 export interface FrameSample {

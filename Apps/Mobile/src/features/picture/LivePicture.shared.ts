@@ -2,7 +2,7 @@ import type { LayoutRectangle } from 'react-native';
 import type { VideoSource } from '@/camera';
 import type { ExposureState } from '@/camera/types';
 import { desqueezedAspect, fitRect, rasterAspect } from '@/core/media';
-import type { DemoScene, PictureEffects } from '@modules/opc-native/src/types';
+import type { DemoScene, PictureEffects } from '@modules/pocket-native/src/types';
 
 export interface LivePictureProps {
   source: VideoSource;

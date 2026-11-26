@@ -1,6 +1,6 @@
 /**
  * UI-facing camera model. This is the contract between the screens and whatever drives
- * the camera (the native session built on `src/core` + `modules/opc-native`, the demo
+ * the camera (the native session built on `src/core` + `modules/pocket-native`, the demo
  * session, or a watcher relay).
  *
  * Rules for editing this file:

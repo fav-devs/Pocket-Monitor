@@ -153,7 +153,7 @@ export interface ConnectOptions {
 /**
  * Everything the UI can ask of a camera. Implementations:
  * - `DemoCameraSession` (src/camera/demo) — web preview and offline development.
- * - `NativeCameraSession` (src/camera/native) — real camera via src/core + modules/opc-native.
+ * - `NativeCameraSession` (src/camera/native) — real camera via src/core + modules/pocket-native.
  */
 export interface CameraSession {
   readonly kind: 'demo' | 'native' | 'watcher';

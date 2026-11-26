@@ -32,7 +32,7 @@ Third parties
 • Apple or Google may process permission prompts and OS diagnostics under their own policies.
 • Saving a clip or using the share sheet is something you start. The app you pick then handles that file.
 
-Privacy questions: ${appBrand.supportEmail}.`;
+Privacy questions: ${appBrand.supportUrl}.`;
 
 const terms = `${app} is free software under the Apache License 2.0. You may use, modify, and share it under that license.
 
@@ -65,7 +65,7 @@ React Native, Expo and the other open-source libraries in this app are used unde
 const notice = `OpenPocketCine
 Copyright 2026 Erik Sutton and OpenPocketCine contributors
 
-${app} is the mobile build of OpenPocketCine.
+${app} includes code adapted from OpenPocketCine (Apache License 2.0).
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party software distributed with this product is listed in THIRD-PARTY-NOTICES.md.

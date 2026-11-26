@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { Platform } from 'react-native';
 import { useEffect, useSyncExternalStore } from 'react';
-import { OpcVideo } from '@modules/opc-native/src/native';
+import { PocketVideo } from '@modules/pocket-native/src/native';
 import { BUILT_IN_LOOKS, formatCube, lookCube, validatedImport, type BuiltInLook, type CubeLUT } from '@/core/media';
 import { useAssists, type CustomLutEntry } from '@/state/assists';
 
@@ -172,9 +172,9 @@ export function ensureLut(id: string | null): Promise<CubeLUT | null> {
 }
 
 function registerNative(id: string, cube: CubeLUT, text?: string) {
-  if (!OpcVideo || registeredNative.has(id)) return;
+  if (!PocketVideo || registeredNative.has(id)) return;
   registeredNative.add(id);
-  OpcVideo.loadLut(id, text ?? formatCube(cube)).catch(() => registeredNative.delete(id));
+  PocketVideo.loadLut(id, text ?? formatCube(cube)).catch(() => registeredNative.delete(id));
 }
 
 /** Keep the active LUT loaded and registered. */
@@ -251,10 +251,10 @@ export async function pickAndImportCube(): Promise<ImportResult> {
 export async function deleteCustomLut(id: string) {
   const key = `custom:${id}`;
   cubes.delete(key);
-  if (OpcVideo && registeredNative.has(key)) {
+  if (PocketVideo && registeredNative.has(key)) {
     registeredNative.delete(key);
     try {
-      OpcVideo.unloadLut(key);
+      PocketVideo.unloadLut(key);
     } catch {
       // ignore
     }

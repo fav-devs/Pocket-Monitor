@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
 import { useCamera } from '@/camera';
 import { usePictureEffects } from '@/state/assists';
-import { OpcVideoView } from '@modules/opc-native/src/OpcVideoView';
-import { OpcVideo } from '@modules/opc-native/src/native';
+import { PocketVideoView } from '@modules/pocket-native/src/PocketVideoView';
+import { PocketVideo } from '@modules/pocket-native/src/native';
 import { SAMPLE_HEIGHT, SAMPLE_INTERVAL_MS, SAMPLE_WIDTH, clearFrameSample, publishFrameSample, useSampleDemandValue } from './frameSample';
 import { useEnsureLut } from './lutLibrary';
 import { demoSceneFor, pictureAspect, pictureRect, sameRect, type LivePictureProps } from './LivePicture.shared';
@@ -11,7 +11,7 @@ import { demoSceneFor, pictureAspect, pictureRect, sameRect, type LivePicturePro
 export type { LivePictureProps } from './LivePicture.shared';
 
 /**
- * Native picture: the decoder view with GPU effects (`OpcVideoView`). The native view owns
+ * Native picture: the decoder view with GPU effects (`PocketVideoView`). The native view owns
  * fit / fill and desqueeze; this reports the same rect for overlays and polls a small RGBA
  * sample for the JS meters while any scope or meter is shown.
  */
@@ -35,14 +35,14 @@ export default function LivePicture({ source, resizeMode = 'fit', onPictureRect,
   });
 
   useEffect(() => {
-    if (!wantsSample || !sessionId || !OpcVideo) return;
+    if (!wantsSample || !sessionId || !PocketVideo) return;
     let alive = true;
     let busy = false;
     const timer = setInterval(async () => {
       if (busy) return;
       busy = true;
       try {
-        const s = await OpcVideo!.sampleFrame(sessionId, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+        const s = await PocketVideo!.sampleFrame(sessionId, SAMPLE_WIDTH, SAMPLE_HEIGHT);
         if (alive && s) publishFrameSample({ width: s.width, height: s.height, rgba: s.rgba, context });
       } catch {
         // Decoder not ready yet.
@@ -65,7 +65,7 @@ export default function LivePicture({ source, resizeMode = 'fit', onPictureRect,
   return (
     <View style={{ flex: 1, backgroundColor: '#000', overflow: 'hidden' }} onLayout={onLayout} pointerEvents="none">
       {source.kind !== 'none' ? (
-        <OpcVideoView
+        <PocketVideoView
           style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
           sessionId={sessionId}
           demoScene={scene}

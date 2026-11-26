@@ -6,7 +6,7 @@
  * a native exporter, which this build does not have yet. The delivery UI shows those options,
  * marks them as needing the native exporter, and delivers originals when they cannot run.
  *
- * TODO(native exporter): implement `NativeMediaExporter` in `modules/opc-native`:
+ * TODO(native exporter): implement `NativeMediaExporter` in `modules/pocket-native`:
  *  - iOS: AVAssetReader → CIFilter chain (log → Rec.709/HLG transfer, CIColorCubeWithColorSpace for
  *    the LUT, exposure gain) → AVAssetWriter (HEVC/H.264, keep the source frame rate and audio,
  *    copy metadata when `includeMetadata`). Port `MonitorLogDisplayTransform`,

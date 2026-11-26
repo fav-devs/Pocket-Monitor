@@ -7,7 +7,7 @@ import { MText, colors, radius } from '@/theme';
 import { PressableScale } from '@/ui';
 import LivePicture from '@/features/picture/LivePicture';
 import { ASSIST_TOOLS, useAssists, type AssistTool } from '@/state/assists';
-import type { DemoScene } from '@modules/opc-native/src/types';
+import type { DemoScene } from '@modules/pocket-native/src/types';
 import AssistBar from '../AssistBar';
 import AssistOverlays from '../AssistOverlays';
 

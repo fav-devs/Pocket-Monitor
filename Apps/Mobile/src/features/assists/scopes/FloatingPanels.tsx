@@ -2,7 +2,7 @@ import { useCamera } from '@/camera';
 import { SCOPE_BASE_SIZE, falseColorReference, middleGrayPaperIRE, transferLabel, type Insets, type Point, type Rect, type Size } from '@/core/media';
 import { useScopeBundle } from '@/features/picture/frameSample';
 import { useAssists, useSourceTransfer, type AssistContext, type AssistTool } from '@/state/assists';
-import type { DemoScene, PictureEffects } from '@modules/opc-native/src/types';
+import type { DemoScene, PictureEffects } from '@modules/pocket-native/src/types';
 import { AudioMeter, FALSE_COLOR_LEGEND_SIZE, FalseColorLegend, NDChip, TrafficLightsMeter, useAudioBallistics } from '../overlays/Meters';
 import { MovableScopePanel } from './MovableScopePanel';
 import { HistogramFrame, ParadeLanes, VectorscopeGraticule, WaveformGuides } from './ScopeGraticule';

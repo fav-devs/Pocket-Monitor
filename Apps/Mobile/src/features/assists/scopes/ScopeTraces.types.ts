@@ -1,5 +1,5 @@
 import type { ParadeMode, VectorscopeZoom, WaveformMode } from '@/core/media';
-import type { DemoScene, PictureEffects, ScopeKind } from '@modules/opc-native/src/types';
+import type { DemoScene, PictureEffects, ScopeKind } from '@modules/pocket-native/src/types';
 import type { ScopeBundle } from '@/features/picture/frameSample';
 
 export interface ScopeTracesProps {
