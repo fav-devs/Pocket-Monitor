@@ -64,6 +64,9 @@ enum BleEvent {
         confirmed: bool,
     },
     StationReset,
+    /// The camera would not give its own Wi-Fi name: it is probably already on another
+    /// network, which is where the LAN search can still find it.
+    NoSsid,
     Error(String),
 }
 
@@ -255,7 +258,7 @@ impl ConnectApp {
             let mut browser = match opc_relay::discovery::Browser::start(&info) {
                 Ok(browser) => browser,
                 Err(error) => {
-                    let _ = tx.send(Err(format!("could not look for phones: {error}")));
+                    let _ = tx.send(Err(format!("could not look for shared feeds: {error}")));
                     return;
                 }
             };
@@ -276,7 +279,7 @@ impl ConnectApp {
 
     /// The links under a screen: go on without pairing, or watch a phone instead.
     fn secondary_buttons(&mut self, ui: &mut egui::Ui) -> Option<ConnectOutcome> {
-        if ghost_button(ui, "Watch a phone's shared feed  \u{2192}").clicked() {
+        if ghost_button(ui, "Watch a shared feed  \u{2192}").clicked() {
             self.want_phones = true;
             return None;
         }
@@ -304,18 +307,15 @@ impl ConnectApp {
                 note,
             } => {
                 ui.label(
-                    RichText::new("Watch a phone's shared feed")
+                    RichText::new("Watch a shared feed")
                         .color(TEXT)
                         .font(FontId::proportional(16.0)),
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    RichText::new(
-                        "Join the camera's Wi-Fi on this PC. On the phone: Operator Setup \u{203a} \
-                         Sharing \u{203a} Share this feed.",
-                    )
-                    .color(DIM)
-                    .font(FontId::proportional(13.0)),
+                    RichText::new("Join the same Wi-Fi as the device sharing the feed.")
+                        .color(DIM)
+                        .font(FontId::proportional(13.0)),
                 );
                 ui.add_space(16.0);
                 let mut chosen = None;
@@ -323,7 +323,7 @@ impl ConnectApp {
                     ui.add(egui::Spinner::new().size(24.0).color(ACCENT));
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("Looking for phones\u{2026}")
+                        RichText::new("Looking for shared feeds\u{2026}")
                             .color(DIM)
                             .font(FontId::proportional(13.0)),
                     );
@@ -349,7 +349,7 @@ impl ConnectApp {
                     ui.add(
                         egui::TextEdit::singleline(passcode)
                             .password(true)
-                            .hint_text("if the phone set one")
+                            .hint_text("if the host set one")
                             .desired_width(180.0),
                     );
                 });
@@ -759,6 +759,12 @@ impl eframe::App for ConnectApp {
                         if let std::net::IpAddr::V4(v4) = address.ip() {
                             station.address = Some(v4);
                         }
+                        // Found without knowing who it was: ask it, so next time it is known.
+                        if station.identity.is_empty() {
+                            station.identity =
+                                opc_camera::lan::read_identity(address, Duration::from_secs(6))
+                                    .unwrap_or_default();
+                        }
                         if let Err(error) = station::save(&station) {
                             eprintln!("could not remember the camera's network: {error}");
                         }
@@ -857,6 +863,35 @@ impl eframe::App for ConnectApp {
                             "It hosts its own network again. Pair it when you next want to connect."
                                 .into(),
                     };
+                }
+                BleEvent::NoSsid => {
+                    // Already on a network of the operator's? Look for it there.
+                    let kept = self
+                        .home
+                        .as_ref()
+                        .map(|(ssid, _)| ssid.clone())
+                        .or_else(|| station::load().map(|saved| saved.ssid));
+                    match kept {
+                        Some(ssid) => {
+                            station::note(
+                                "the camera gave no Wi-Fi name; looking for it on the LAN",
+                            );
+                            self.pending_station = Some(SavedStation {
+                                ssid,
+                                identity: Vec::new(),
+                                address: None,
+                                model_id: self.model_id,
+                            });
+                            // No identity to match: the one camera on the network is it.
+                            self.search_for(Vec::new(), None);
+                        }
+                        None => {
+                            self.screen = Screen::Failed(
+                                "The camera did not give its Wi-Fi name. If it is already on                                  your Wi-Fi, put it back on its own first with \"Return the                                  camera to its own Wi-Fi\", or switch it off and on and pair                                  again."
+                                    .into(),
+                            );
+                        }
+                    }
                 }
                 BleEvent::Error(msg) => {
                     self.screen = Screen::Failed(msg);
@@ -1262,9 +1297,7 @@ fn ble_worker(gatt: Option<GattMap>, rx: mpsc::Receiver<BleCmd>, tx: mpsc::Sende
                     thread::sleep(Duration::from_millis(50));
                 }
                 if ssid.is_empty() {
-                    let _ = tx.send(BleEvent::Error(
-                        "Camera did not return a Wi-Fi name.".into(),
-                    ));
+                    let _ = tx.send(BleEvent::NoSsid);
                     let _ = transport.disconnect();
                     continue;
                 }

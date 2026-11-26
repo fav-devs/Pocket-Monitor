@@ -537,3 +537,51 @@ impl Drop for WatcherPolicy {
 // The handle is plain heap state with no thread affinity, and `&mut self` gates every
 // mutating call, so it may move between threads but is never shared without a lock.
 unsafe impl Send for WatcherPolicy {}
+
+#[cfg(opc_core_linked)]
+pub(crate) struct RelayVideo(*mut std::ffi::c_void);
+
+#[cfg(opc_core_linked)]
+impl RelayVideo {
+    pub(crate) fn new() -> Self {
+        // Safety: Swift returns an owned handle, used only by this thread.
+        Self(unsafe { sys::opc_relay_video_create() })
+    }
+
+    pub(crate) fn frame(
+        &self,
+        bytes: &[u8],
+        recording: bool,
+    ) -> Result<(Vec<u8>, bool), RelayError> {
+        let keyframe = std::cell::Cell::new(0);
+        let wire = emit(|out, capacity| {
+            // Safety: the handle, input and keyframe are live throughout the call.
+            unsafe {
+                sys::opc_relay_video_frame(
+                    self.0,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    recording.into(),
+                    keyframe.as_ptr(),
+                    out,
+                    capacity,
+                )
+            }
+        })?;
+        Ok((wire, keyframe.get() != 0))
+    }
+}
+
+#[cfg(opc_core_linked)]
+impl Drop for RelayVideo {
+    fn drop(&mut self) {
+        // Safety: this is the only owner of the handle.
+        unsafe { sys::opc_relay_video_destroy(self.0) }
+    }
+}
+
+#[cfg(opc_core_linked)]
+pub(crate) fn read_only_state() -> Result<Vec<u8>, RelayError> {
+    // Safety: emit supplies a writable buffer of the specified capacity or null.
+    emit(|out, capacity| unsafe { sys::opc_relay_read_only_state(out, capacity) })
+}

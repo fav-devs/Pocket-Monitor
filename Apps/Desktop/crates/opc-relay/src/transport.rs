@@ -73,19 +73,28 @@ impl Transport {
             let endpoint = SocketAddr::new(*address, port);
             match TcpStream::connect_timeout(&endpoint, timeout) {
                 Ok(stream) => {
-                    // Interactive video: never coalesce a frame write behind Nagle.
-                    stream.set_nodelay(true)?;
-                    stream.set_read_timeout(Some(READ_TIMEOUT))?;
-                    return Ok(Self {
-                        stream,
-                        buffer: ReceiveBuffer::new(),
-                        chunk: vec![0; READ_CHUNK],
-                    });
+                    return Self::from_stream(stream);
                 }
                 Err(error) => last = error,
             }
         }
         Err(TransportError::Io(last))
+    }
+
+    pub(crate) fn from_stream(stream: TcpStream) -> Result<Self, TransportError> {
+        stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(READ_TIMEOUT))?;
+        Ok(Self {
+            stream,
+            buffer: ReceiveBuffer::new(),
+            chunk: vec![0; READ_CHUNK],
+        })
+    }
+
+    #[cfg(opc_core_linked)]
+    pub(crate) fn write_wire(&mut self, wire: &[u8]) -> Result<(), TransportError> {
+        self.stream.write_all(wire)?;
+        Ok(())
     }
 
     pub fn peer(&self) -> Option<SocketAddr> {

@@ -119,6 +119,9 @@ struct View {
     camera_id: String,
     /// The viewfinder as a camera for other apps, while the operator has it on.
     vcam: Option<VirtualCamera>,
+    sharing: Option<opc_relay::host::Host>,
+    sharing_recording: bool,
+    active_camera: Option<std::net::SocketAddr>,
     /// When the camera last took a frame, and when its readout was last refreshed.
     last_vcam_at: f64,
     last_vcam_status_at: f64,
@@ -147,12 +150,11 @@ impl View {
                 Intent::Media(action) => {
                     let now = self.now();
                     let camera_id = self.camera_id.clone();
-                    for command in self.media.action(&mut self.shell, action, &camera_id, now) {
-                        self.send(command);
-                    }
+                    self.media_action(action, &camera_id, now);
                 }
                 Intent::Reconnect => self.reconnect(),
                 Intent::Diagnostics => self.write_diagnostics(),
+                Intent::SharePreview(enabled) => self.share_preview(enabled),
                 Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
                 Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
                 Intent::OpenUrl(url) => self.open_url(&url),
@@ -230,6 +232,10 @@ impl View {
 
     /// Tears the datalink down and opens a fresh one, as the Link tab asks.
     fn reconnect(&mut self) {
+        self.active_camera = None;
+        if self.sharing.is_some() {
+            self.stop_sharing("Sharing stopped when the camera reconnected");
+        }
         self.link = match self.phone.clone() {
             Some(target) => Feed::Phone(PhoneLink::open(target)),
             None => {
@@ -351,12 +357,11 @@ impl View {
                 Intent::Send(command) => self.send(command),
                 Intent::Media(action) => {
                     let camera_id = self.camera_id.clone();
-                    for command in self.media.action(&mut self.shell, action, &camera_id, now) {
-                        self.send(command);
-                    }
+                    self.media_action(action, &camera_id, now);
                 }
                 Intent::Reconnect => self.reconnect(),
                 Intent::Diagnostics => self.write_diagnostics(),
+                Intent::SharePreview(enabled) => self.share_preview(enabled),
                 Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
                 Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
                 Intent::OpenUrl(url) => self.open_url(&url),
@@ -418,7 +423,7 @@ impl View {
                 }
                 FromPhone::Joined(info) => {
                     self.shell
-                        .set_link_info(&format!("Phone relay · {}", info.host));
+                        .set_link_info(&format!("Shared feed · {}", info.host));
                     self.shell.set_phone(Some(info));
                     self.shell.set_phase(Phase::Waiting);
                 }
@@ -446,8 +451,55 @@ impl View {
         }
     }
 
+    fn media_action(&mut self, action: opc_monitor::MediaAction, camera_id: &str, now: f64) {
+        let commands = self.media.action(&mut self.shell, action, camera_id, now);
+        if self.media.is_active() && self.sharing.is_some() {
+            self.stop_sharing("Sharing stopped for camera playback");
+        }
+        for command in commands {
+            self.send(command);
+        }
+    }
+
+    fn share_preview(&mut self, enabled: bool) {
+        if !enabled {
+            self.stop_sharing("Off");
+            return;
+        }
+        if self.sharing.is_some() {
+            return;
+        }
+        if self.phone.is_some()
+            || self.media.is_active()
+            || !matches!(self.shell.phase(), Phase::Live)
+            || self.decoder.as_ref().map(Decoder::codec) != Some(Codec::Hevc)
+        {
+            self.stop_sharing("Open a live HEVC camera feed to share it");
+            return;
+        }
+        let Some(camera) = self.active_camera else {
+            self.stop_sharing("Open a live camera feed to share it");
+            return;
+        };
+        match opc_relay::host::Host::start(camera) {
+            Ok(host) => {
+                self.sharing = Some(host);
+                self.shell.set_sharing(true, "On · View only");
+            }
+            Err(error) => self.stop_sharing(&format!("Could not start sharing: {error}")),
+        }
+    }
+
+    fn stop_sharing(&mut self, status: &str) {
+        self.sharing = None;
+        self.shell.set_sharing(false, status);
+    }
+
     /// Takes everything the camera thread has posted.
     fn pump_camera(&mut self) {
+        if let Some(error) = self.sharing.as_ref().and_then(opc_relay::host::Host::error) {
+            self.stop_sharing(&format!("Sharing stopped: {error}"));
+        }
         let events = match &self.link {
             Feed::Camera(link) => link.drain(),
             Feed::Phone(link) => {
@@ -458,7 +510,11 @@ impl View {
         };
         for event in events {
             match event {
-                FromCamera::Opened => {
+                FromCamera::Opened(address) => {
+                    self.active_camera = Some(address);
+                    if self.sharing.is_some() {
+                        self.stop_sharing("Sharing stopped when the camera reconnected");
+                    }
                     self.shell.set_phase(Phase::Waiting);
                     self.placeholder_presented = false;
                 }
@@ -466,6 +522,22 @@ impl View {
                     // The core marks keyframes; the depacketizer hands over whole access
                     // units, so the first NAL type is enough to know one.
                     let keyframe = is_keyframe(&bytes);
+                    if self.sharing.is_some() {
+                        if self.media.is_active() || codec_of(&bytes) == Some(Codec::H264) {
+                            self.stop_sharing("Sharing stopped when the live HEVC feed changed");
+                        } else if self
+                            .sharing
+                            .as_ref()
+                            .is_some_and(|host| !host.offer(&bytes, self.sharing_recording))
+                        {
+                            let error =
+                                self.sharing.as_ref().and_then(opc_relay::host::Host::error);
+                            self.stop_sharing(&error.map_or_else(
+                                || "Sharing stopped because the relay fell behind".into(),
+                                |error| format!("Sharing stopped: {error}"),
+                            ));
+                        }
+                    }
                     dump_unit(&bytes);
                     self.pending.push(Unit { keyframe, bytes });
                 }
@@ -485,6 +557,10 @@ impl View {
                 }
                 FromCamera::Set(outcome) => self.shell.note_set(outcome),
                 FromCamera::Status(status) => {
+                    self.sharing_recording = status.is_recording;
+                    if status.in_playback && self.sharing.is_some() {
+                        self.stop_sharing("Sharing stopped for camera playback");
+                    }
                     self.media.status(status.in_playback);
                     self.shell.set_status(*status);
                     self.placeholder_presented = false;
@@ -501,6 +577,10 @@ impl View {
                     }
                 }
                 FromCamera::Lost(reason) => {
+                    self.active_camera = None;
+                    if self.sharing.is_some() {
+                        self.stop_sharing("Sharing stopped when the camera disconnected");
+                    }
                     self.shell.set_phase(Phase::Failed(reason));
                     self.placeholder_presented = false;
                 }
@@ -1424,6 +1504,9 @@ pub fn run(options: Options) -> Result<(), String> {
         pointer_control: false,
         started: Instant::now(),
         vcam: None,
+        sharing: None,
+        sharing_recording: false,
+        active_camera: None,
         last_vcam_at: f64::NEG_INFINITY,
         last_vcam_status_at: f64::NEG_INFINITY,
         component_job: None,
@@ -1432,7 +1515,7 @@ pub fn run(options: Options) -> Result<(), String> {
     match &options.phone {
         Some(target) => {
             view.shell
-                .set_link_info(&format!("Phone relay · {}", target.name));
+                .set_link_info(&format!("Shared feed · {}", target.name));
             view.shell.set_phone(Some(opc_monitor::sheets::PhoneInfo {
                 host: target.name.clone(),
                 ..Default::default()

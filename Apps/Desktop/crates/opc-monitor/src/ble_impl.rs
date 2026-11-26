@@ -21,18 +21,7 @@ use opc_camera::{BleTransport, Discovered, GattMap};
 type Log = Arc<Mutex<Option<std::fs::File>>>;
 
 pub(crate) fn log_path() -> Option<std::path::PathBuf> {
-    // Writing inside a signed .app invalidates its resource seal and can prevent
-    // macOS from granting the app Bluetooth access.
-    #[cfg(target_os = "macos")]
-    {
-        opc_monitor::logfile::path().map(|path| path.with_file_name("opc-ble.log"))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("opc-ble.log")))
-    }
+    opc_monitor::logfile::path().map(|path| path.with_file_name("opc-ble.log"))
 }
 
 fn open_log() -> Log {

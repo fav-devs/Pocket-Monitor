@@ -90,6 +90,7 @@ pub enum Intent {
     /// Put the platform camera component in, or take it out; the window runs it.
     ComponentInstall,
     ComponentRemove,
+    SharePreview(bool),
     /// Show a page in the operator's browser.
     OpenUrl(String),
     /// Ask the phone hosting the feed for camera control (true), or give it back.
@@ -1488,6 +1489,12 @@ impl Shell {
         }
     }
 
+    pub fn set_sharing(&mut self, active: bool, status: &str) {
+        self.setup.sharing_active = active;
+        self.setup.sharing = status.to_owned();
+        self.chrome_stale = true;
+    }
+
     /// What the virtual camera is doing, from the window, for the Output tab.
     pub fn set_vcam_status(&mut self, line: &str) {
         if self.setup.vcam != line {
@@ -2231,6 +2238,7 @@ impl Shell {
             }
             Pick::ClearCache => vec![Intent::Media(MediaAction::ClearCache)],
             Pick::Diagnostics => vec![Intent::Diagnostics],
+            Pick::SharePreview(enabled) => vec![Intent::SharePreview(enabled)],
             Pick::Vcam(mode) => {
                 self.prefs.vcam = mode.min(2);
                 if self.prefs.vcam == 1

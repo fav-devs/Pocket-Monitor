@@ -195,10 +195,12 @@ func opc_relay_hello_decode(
 ) -> Int32 {
     guard let json, let out, count >= 0 else { return OPC_RELAY_ERR_NULL }
     let data = DesktopFacade.borrow(json, count)
-    guard let hello = try? JSONDecoder().decode(WatcherRelayHello.self, from: data) else {
+    guard let hello = try? JSONDecoder().decode(WatcherRelayHello.self, from: data),
+        let version = Int32(exactly: hello.version)
+    else {
         return OPC_RELAY_ERR_MALFORMED
     }
-    out.pointee.version = Int32(hello.version)
+    out.pointee.version = version
     withUnsafeMutablePointer(to: &out.pointee.host_name) {
         DesktopFacade.writeText(
             hello.hostName, into: UnsafeMutableRawPointer($0),
@@ -278,4 +280,83 @@ func opc_relay_focus_map(
     out.pointee.x = Int32(clamping: point.x)
     out.pointee.y = Int32(clamping: point.y)
     return OPC_RELAY_OK
+}
+
+/// Adapts camera HEVC access units to the existing Sharing frame format.
+final class DesktopRelayVideo {
+    private var parameters: [Int: Data] = [:]
+
+    func frame(_ bytes: [UInt8], recording: Bool) throws -> (Data, Bool)? {
+        let annexB: [UInt8] = [0, 0, 0, 1]
+        var picture = Data()
+        var hasSlice = false
+        var keyframe = false
+        for nal in Hevc.nalUnits(bytes) where nal.count >= 2 {
+            let type = Hevc.nalType(nal[0])
+            switch type {
+            case Hevc.vps, Hevc.sps, Hevc.pps:
+                parameters[type] = Data(nal)
+            case 0...31, 35, 39, 40:
+                hasSlice = hasSlice || Hevc.isVCL(type)
+                keyframe = keyframe || Hevc.isIRAP(type)
+                picture.append(contentsOf: annexB)
+                picture.append(contentsOf: nal)
+            default:
+                break
+            }
+        }
+        guard hasSlice, parameters.count == 3 else { return nil }
+        let sets = keyframe ? [Hevc.vps, Hevc.sps, Hevc.pps].compactMap { parameters[$0] } : nil
+        var video = Data()
+        for set in sets ?? [] {
+            video.append(contentsOf: annexB)
+            video.append(set)
+        }
+        video.append(picture)
+        let metadata = WatcherRelayFrameMetadata(
+            isKeyframe: keyframe, parameterSets: sets, isRecording: recording)
+        let payload = try WatcherRelayFrameBlob.encode(metadata: metadata, hevc: video)
+        guard payload.count <= WatcherRelayProtocol.maximumPayloadBytes else { return nil }
+        return (WatcherRelayFraming.encode(kind: .frame, payload: payload), keyframe)
+    }
+}
+
+@_cdecl("opc_relay_video_create")
+func opc_relay_video_create() -> UnsafeMutableRawPointer {
+    Unmanaged.passRetained(DesktopRelayVideo()).toOpaque()
+}
+
+@_cdecl("opc_relay_video_destroy")
+func opc_relay_video_destroy(_ handle: UnsafeMutableRawPointer) {
+    Unmanaged<DesktopRelayVideo>.fromOpaque(handle).release()
+}
+
+@_cdecl("opc_relay_video_frame")
+func opc_relay_video_frame(
+    _ handle: UnsafeMutableRawPointer, _ input: UnsafePointer<UInt8>, _ count: Int,
+    _ recording: UInt8, _ keyframe: UnsafeMutablePointer<UInt8>,
+    _ out: UnsafeMutablePointer<UInt8>?, _ capacity: Int
+) -> Int64 {
+    guard count >= 0, count <= WatcherRelayProtocol.maximumPayloadBytes else {
+        return Int64(OPC_RELAY_ERR_PAYLOAD_TOO_LARGE)
+    }
+    let video = Unmanaged<DesktopRelayVideo>.fromOpaque(handle).takeUnretainedValue()
+    do {
+        guard let (wire, key) = try video.frame(
+            Array(UnsafeBufferPointer(start: input, count: count)), recording: recording != 0)
+        else { return 0 }
+        keyframe.pointee = key ? 1 : 0
+        return DesktopFacade.emit(wire, into: out, capacity: capacity)
+    } catch {
+        return Int64(OPC_RELAY_ERR_MALFORMED)
+    }
+}
+
+@_cdecl("opc_relay_read_only_state")
+func opc_relay_read_only_state(_ out: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int64 {
+    let state = WatcherRelayState(allowsControlRequests: false)
+    guard let json = try? JSONEncoder().encode(state) else {
+        return Int64(OPC_RELAY_ERR_MALFORMED)
+    }
+    return DesktopFacade.emit(json, into: out, capacity: capacity)
 }
