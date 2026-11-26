@@ -204,7 +204,11 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     } else if (pictureH > h || pictureH > floor - ceiling) {
       pictureY = (h - pictureH) / 2;
     } else {
-      const ideal = (h - pictureH) / 2;
+      // Centred between the status rows and the top of the gimbal cluster, so the cluster sits
+      // under the picture rather than over its corner when there is room.
+      const clusterTop = floor - 12 - stickSide - CLUSTER_GAP - ZOOM_SIZE - 8;
+      const room = clusterTop - ceiling;
+      const ideal = room >= pictureH ? ceiling + (room - pictureH) / 2 : (h - pictureH) / 2;
       pictureY = Math.max(ceiling, Math.min(ideal, floor - pictureH));
     }
     picture = vertical ?? rect((w - pictureW) / 2, pictureY, pictureW, pictureH);

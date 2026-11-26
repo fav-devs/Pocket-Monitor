@@ -9,9 +9,9 @@ const bandTitle: Record<Band, string> = { poor: 'Poor', watch: 'Watch', stable: 
 
 /**
  * The host-resolved link score as a 12-dash scale with the band named (`MonitorLinkHealthScale`). A null score draws
- * the empty scale for "no camera connected". Sits inside a settings group card.
+ * the empty scale with no caption. Sits inside a settings group card.
  */
-export function LinkHealthScale({ caption, score }: { caption: string; score: number | null }) {
+export function LinkHealthScale({ caption, score }: { caption?: string | null; score: number | null }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const band = score === null ? null : linkBandForScore(score);
@@ -22,7 +22,7 @@ export function LinkHealthScale({ caption, score }: { caption: string; score: nu
     return bandColor(i < 4 ? 'poor' : i < 8 ? 'watch' : 'stable');
   };
   return (
-    <View accessible accessibilityLabel={`Link health: ${band ? bandTitle[band] : 'no link'}. ${caption}`} style={styles.card}>
+    <View accessible accessibilityLabel={`Link health: ${band ? bandTitle[band] : 'no link'}${caption ? `. ${caption}` : ''}`} style={styles.card}>
       <View style={styles.head}>
         <Text style={styles.state}>{band ? bandTitle[band] : 'No link'}</Text>
         {band && score !== null ? (
@@ -31,7 +31,7 @@ export function LinkHealthScale({ caption, score }: { caption: string; score: nu
           </View>
         ) : null}
       </View>
-      <Text style={styles.caption}>{caption}</Text>
+      {caption ? <Text style={styles.caption}>{caption}</Text> : null}
       <View style={styles.dashes}>
         {Array.from({ length: 12 }, (_, i) => (
           <View key={i} style={[styles.dash, { backgroundColor: dash(i) }]} />

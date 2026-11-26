@@ -173,7 +173,7 @@ export default function CamerasScreen() {
           Try the demo camera
         </Text>
         <Text numberOfLines={2} style={styles.featureDetail}>
-          {demoLive ? 'Live' : `Simulated ${modelDisplayName(DEMO_CAMERA.model)}`}
+          {demoLive ? 'Live' : 'Simulated'}
         </Text>
       </View>
       <View testID={`cameras.action.${DEMO_CAMERA.id}`} style={styles.featureAction}>
@@ -266,7 +266,7 @@ export default function CamerasScreen() {
                   item={{
                     id: n.id,
                     name: n.name,
-                    detail: n.pairable ? 'Ready to pair' : 'Not in pairing mode yet',
+                    detail: n.pairable ? modelDisplayName(n.model) : 'Not in pairing mode',
                     badge: n.pairable ? { label: 'Pair', dot: colors.primary } : undefined,
                     signalBars: rssiToBars(n.rssi),
                     away: !n.pairable,

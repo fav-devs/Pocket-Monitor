@@ -1,4 +1,4 @@
-import { Minimize01Icon } from '@hugeicons/core-free-icons';
+import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
 import { useRef } from 'react';
 import { Pressable } from 'react-native';
 import { Icon } from '@/components/icon';
@@ -18,7 +18,7 @@ function MinimizeAction() {
   const set = useLiveUi((s) => s.set);
   return (
     <Pressable accessibilityRole="button" accessibilityLabel="Minimize motion control" hitSlop={8} onPress={() => set({ gimbalPanel: 'runPill' })}>
-      <Icon icon={Minimize01Icon} size={20} color={colors.mutedForeground} />
+      <Icon icon={ArrowDown01Icon} size={20} color={colors.mutedForeground} />
     </Pressable>
   );
 }
@@ -89,7 +89,8 @@ export function LiveSheetHost({
       visible={open != null}
       title={title}
       onClose={close}
-      variant="preview"
+      // Docked, the tray fills its column; under the picture it keeps the preview's fixed height.
+      variant={layout.sheet.dock ? 'standard' : 'preview'}
       passthrough
       contentDraggable={false}
       topInset={layout.sheet.dock ? undefined : layout.sheet.topInset}

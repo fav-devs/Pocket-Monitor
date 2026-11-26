@@ -81,7 +81,6 @@ export function LutPicker() {
     } else if (!r.canceled) setMessage(r.error ?? 'Import failed.');
   };
 
-  const autoCurve = TRANSFORMS.find((t) => t.curve === transfer);
   const tiles: Tile[] =
     tab === 'display'
       ? [
@@ -129,14 +128,10 @@ export function LutPicker() {
             <LutTile key={t.key} tile={t} width={tileWidth} previewHeight={previewHeight} styles={styles} colors={colors} />
           ))}
         </View>
-        {tab === 'display' ? (
-          <Note>{transfer === 'rec709' ? 'Auto follows the camera colour. Rec.709 needs no LUT.' : `Auto follows the camera colour: ${autoCurve?.title ?? ''}.`}</Note>
-        ) : null}
-        {!isLogTransfer(transfer) ? <Note>Input exposure is for log curves.</Note> : null}
         {tab === 'custom' ? (
           <>
             {message ? <Note tone={message.startsWith('Imported') ? 'success' : 'warning'}>{message}</Note> : null}
-            <Note>3D .cube files up to 65³. Camera LUTs aren't bundled: import the manufacturer's file for its exact look.</Note>
+            <Note>3D .cube, up to 65³.</Note>
           </>
         ) : null}
       </SheetScrollView>

@@ -50,7 +50,7 @@ export const PairingWizardCopy = {
   /** One line per page; only what the operator has to do. */
   bodies: [
     'Turn the camera on and keep it close.',
-    'First pairing can take up to 90 seconds. Keep this app open.',
+    'Can take 90 seconds. Keep this app open.',
     'Tap Join when the phone asks. Pause any VPN or ad blocker.',
     '',
   ],

@@ -123,7 +123,7 @@ export default function PairScreen() {
     else connectNew(selected, record, password);
   };
 
-  const notReady = 'Not in pairing mode yet';
+  const notReady = 'Not in pairing mode';
   const devices = found.map((cam) => ({
     id: cam.id,
     name: cam.name,

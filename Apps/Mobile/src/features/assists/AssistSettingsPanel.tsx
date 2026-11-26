@@ -70,7 +70,7 @@ export default function AssistSettingsPanel() {
       </SettingsGroup>
       <View style={styles.footer}>
         <SettingsDestructiveButton title="Reset all view assists" icon={Delete02Icon} onPress={reset} />
-        <Text style={styles.note}>Scopes and meters measure the camera signal, never the LUT. On the picture, hold a scope for its options, drag it to move, and pull its corner to resize.</Text>
+        <Text style={styles.note}>Scopes read the camera signal, never the LUT.</Text>
       </View>
       {shown ? <AssistOptionsSheet tool={shown} visible={open != null} onClose={() => setOpen(null)} lead={<ShowIn tool={shown} />} /> : null}
     </View>

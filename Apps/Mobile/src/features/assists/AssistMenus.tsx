@@ -59,7 +59,7 @@ export function AssistMenu({ tool }: { tool: AssistTool }) {
       return (
         <MenuScroll>
           <CrushClipSection />
-          <Note>Stops of tolerance before a channel lamp glows. Shared with the histogram lamps.</Note>
+          <Note>Shared with the histogram.</Note>
         </MenuScroll>
       );
     case 'ND':
@@ -73,7 +73,7 @@ export function AssistMenu({ tool }: { tool: AssistTool }) {
     case 'CROSS':
       return (
         <MenuScroll>
-          <Note>Shows a cross at the centre of the picture.</Note>
+          <Note>No options.</Note>
         </MenuScroll>
       );
     case 'DE-SQ':
@@ -83,13 +83,13 @@ export function AssistMenu({ tool }: { tool: AssistTool }) {
     case 'LEVEL':
       return (
         <MenuScroll>
-          <Note>The camera's roll and tilt from the horizon. Pointing straight down or up, a bubble shows the lens offset.</Note>
+          <Note>No options.</Note>
         </MenuScroll>
       );
     case 'EV':
       return (
         <MenuScroll>
-          <Note>The camera's metered exposure, or the picture's median against middle grey when the camera reports none.</Note>
+          <Note>No options.</Note>
         </MenuScroll>
       );
   }
@@ -104,13 +104,12 @@ function PeakingMenu() {
     <MenuScroll>
       <FieldSection title="Sensitivity">
         <SegmentedControl accessibilityLabel="Sensitivity" options={PEAKING_SENSES.map((v) => ({ value: v, label: v }))} value={o.sense} onChange={(sense) => set('peaking', { sense })} />
-        <Note>Higher catches finer edges but can get noisy.</Note>
       </FieldSection>
       <FieldSection title="Colour">
         <Swatches label="Peaking colour" options={PEAKING_COLORS} value={o.color} onChange={(color) => set('peaking', { color })} rgb={(c) => PEAKING_RGB[c]} />
       </FieldSection>
       <FieldSection title="Picture">
-        <SwitchRow title="Black & white" detail="Monochrome under the peaking." value={o.mono} onChange={(mono) => set('peaking', { mono })} />
+        <SwitchRow title="Black & white" value={o.mono} onChange={(mono) => set('peaking', { mono })} />
       </FieldSection>
     </MenuScroll>
   );
@@ -127,11 +126,6 @@ function FalseColorMenu() {
     <MenuScroll>
       <FieldSection title="Scale">
         <SegmentedControl accessibilityLabel="False color scale" options={FALSE_MODES.map((m) => ({ value: m, label: FALSE_COLOR_MODE_LABEL[m] }))} value={o.mode} onChange={(mode) => set('falseColor', { mode })} />
-        <Note>
-          {o.mode === 'cinestop'
-            ? `Scene stops around 18% grey for ${transferLabel(transfer)}: −2 green, −1 yellow-green, grey, +1 pink (skin), +2 yellow, red at clip.`
-            : 'Video levels on the waveform axis.'}
-        </Note>
       </FieldSection>
       <FieldSection title="Key">
         <FalseColorLegend reference={falseColorReference(o.mode, transfer, clipByte, transferLabel(transfer))} inspector />
@@ -178,7 +172,6 @@ function ZebraMenu() {
         <FieldSection title="Stripes">
           <SwitchRow
             title={high ? 'Show highlight zebra' : 'Show midtone zebra'}
-            detail={high ? 'Warns as bright detail nears clipping, through the log curve.' : 'A reference band for faces or the key subject.'}
             value={enabled}
             onChange={(v) => set('zebra', high ? { highlight: v } : { midtone: v })}
           />
@@ -261,13 +254,12 @@ function HistogramMenu() {
       <FieldSection title="Lamps">
         <SwitchRow
           title="Traffic lights"
-          detail="Edge lamps for crushed and clipped channels, from a third of a stop under clip."
           value={o.trafficLights}
           onChange={(trafficLights) => set('histogram', { trafficLights })}
         />
       </FieldSection>
       <CrushClipSection />
-      <Note>Shared with the traffic-light meter.</Note>
+      <Note>Shared with Traffic lights.</Note>
       <ResetPanel id="histogram" />
     </MenuScroll>
   );
@@ -281,7 +273,6 @@ function VectorscopeMenu() {
     <MenuScroll>
       <FieldSection title="Zoom">
         <SegmentedControl accessibilityLabel="Trace zoom" options={(['1x', '2x', '4x'] as const).map((z) => ({ value: z, label: z }))} value={o.zoom} onChange={(zoom) => set('vectorscope', { zoom })} />
-        <Note>Magnifies low-saturation pictures. Log is measured through its display transform.</Note>
       </FieldSection>
       <FieldSection title="Trace">
         <Slider label="Brightness" value={o.brightness} min={0} max={200} step={5} tone="primary" resetValue={100} format={pct} onChange={brightness} onEnd={brightness} />
@@ -298,9 +289,8 @@ function NDMenu() {
     <MenuScroll>
       <FieldSection title="Units">
         <SegmentedControl accessibilityLabel="ND units" options={(['stops', 'factor', 'density'] as const).map((n) => ({ value: n, label: ND_NOTATION_LABEL[n] }))} value={o.notation} onChange={(notation) => set('nd', { notation })} />
-        <Note>Stops, filter factor (ND16 / ND32 / ND64) or optical density (ND 0.3 = 1 stop).</Note>
       </FieldSection>
-      <Note>Meters the picture against middle grey and suggests a screw-on ND. The app can't set a filter.</Note>
+      <Note>Suggests a screw-on ND. It can't set one.</Note>
     </MenuScroll>
   );
 }
@@ -316,7 +306,6 @@ function AudioMenu() {
       <FieldSection title="Readout">
         <SwitchRow title="Show dB values" value={o.showDB} onChange={(showDB) => set('audio', { showDB })} />
       </FieldSection>
-      <Note>Meters the camera's audio while live view is up.</Note>
     </MenuScroll>
   );
 }
@@ -359,19 +348,19 @@ function GuidesMenu() {
               </ChipRow>
             </FieldSection>
             <FieldSection title="Outside the frame">
-              <SwitchRow title="Mask" detail="Darkens the picture outside the frame lines." value={o.mask} onChange={(mask) => set('guides', { mask })} />
+              <SwitchRow title="Mask" value={o.mask} onChange={(mask) => set('guides', { mask })} />
             </FieldSection>
           </>
         ) : (
           <>
             <FieldSection title="Action safe">
-              <SwitchRow title="Show" detail="Dashed, inside each frame. Room to stabilise or reframe." value={safe.actionSafe} onChange={(actionSafe) => set('guides', { safe: { ...safe, actionSafe } })} />
+              <SwitchRow title="Show" value={safe.actionSafe} onChange={(actionSafe) => set('guides', { safe: { ...safe, actionSafe } })} />
               {safe.actionSafe ? (
                 <Slider label="Size" value={safe.actionPercent} min={50} max={99} tone="primary" resetValue={STANDARD_SAFE_AREAS.actionPercent} format={pct} onChange={action} onEnd={action} />
               ) : null}
             </FieldSection>
             <FieldSection title="Title safe">
-              <SwitchRow title="Show" detail="Dotted, inside each frame, for text and graphics." value={safe.titleSafe} onChange={(titleSafe) => set('guides', { safe: { ...safe, titleSafe } })} />
+              <SwitchRow title="Show" value={safe.titleSafe} onChange={(titleSafe) => set('guides', { safe: { ...safe, titleSafe } })} />
               {safe.titleSafe ? (
                 <Slider label="Size" value={safe.titlePercent} min={50} max={99} tone="primary" resetValue={STANDARD_SAFE_AREAS.titlePercent} format={pct} onChange={title} onEnd={title} />
               ) : null}
@@ -423,7 +412,7 @@ function DesqueezeMenu() {
           value={o.direction}
           onChange={(direction) => set('desqueeze', { direction })}
         />
-        <Note>Horizontal widens the picture; Vertical corrects a rotated adapter. Recordings and scopes stay unchanged.</Note>
+        <Note>Recordings and scopes are unchanged.</Note>
       </FieldSection>
     </MenuScroll>
   );
@@ -436,11 +425,11 @@ function MirrorMenu() {
     <MenuScroll>
       <FieldSection title="Flip">
         <View>
-          <SwitchRow title="Horizontal" detail="For a camera pointed back at you." value={o.horizontal} onChange={(horizontal) => set('mirror', { horizontal })} />
-          <SwitchRow title="Vertical" detail="For an underslung mount. Both turn it 180°." value={o.vertical} onChange={(vertical) => set('mirror', { vertical })} />
+          <SwitchRow title="Horizontal" value={o.horizontal} onChange={(horizontal) => set('mirror', { horizontal })} />
+          <SwitchRow title="Vertical" value={o.vertical} onChange={(vertical) => set('mirror', { vertical })} />
         </View>
       </FieldSection>
-      <Note>The recording and the scopes are never mirrored.</Note>
+      <Note>Recordings and scopes are never mirrored.</Note>
     </MenuScroll>
   );
 }

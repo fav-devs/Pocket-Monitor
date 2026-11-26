@@ -9,15 +9,14 @@ export function BrandMark({ size = 72 }: { size?: number }) {
   return <AppLogo size={size} />;
 }
 
-/** The app's name as the launch splash sets it, with an optional subtitle. */
-export function BrandWordmark({ fontSize = 30, subtitle }: { fontSize?: number; subtitle?: string }) {
+/** The app's name as the launch splash sets it. */
+export function BrandWordmark({ fontSize = 30 }: { fontSize?: number }) {
   const styles = useThemedStyles(createStyles);
   return (
     <View style={{ gap: Math.round(fontSize * 0.12) }}>
       <Text style={[styles.wordmark, { fontSize, lineHeight: Math.round(fontSize * 1.2), letterSpacing: -fontSize * 0.025 }]}>
         {appBrand.name}
       </Text>
-      {subtitle ? <Text style={[styles.subtitle, { fontSize: Math.max(12, Math.round(fontSize * 0.45)) }]}>{subtitle}</Text> : null}
     </View>
   );
 }
@@ -112,6 +111,5 @@ function createStyles(colors: ThemeColors) {
       paddingBottom: spacing.lg,
     },
     wordmark: { fontFamily: fonts.bold, color: colors.foreground },
-    subtitle: { fontFamily: fonts.medium, color: colors.mutedForeground },
   };
 }

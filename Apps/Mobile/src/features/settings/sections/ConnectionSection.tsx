@@ -36,7 +36,7 @@ export function ConnectionSection() {
   const score = linkHealthScore(connection);
   const caption =
     score === null
-      ? 'No camera connected'
+      ? null
       : `${connection.videoFps} fps · ${(connection.videoKbps / 1000).toFixed(1)} Mbit/s · ${Math.round(connection.lastFrameAgeMs)} ms frame age`;
   const ssid = identity?.ssid && live ? identity.ssid : null;
   const stream = live && connection.streamWidth

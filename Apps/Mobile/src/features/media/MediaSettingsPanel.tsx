@@ -26,7 +26,7 @@ import {
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useCameraSession } from '@/camera';
 import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';

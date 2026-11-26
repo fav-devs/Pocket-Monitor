@@ -149,7 +149,7 @@ function createStyles(colors: ThemeColors) {
     caption: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.2, color: colors.mutedForeground },
     ruler: { height: 52, justifyContent: 'flex-start' as const, paddingTop: 14, marginHorizontal: THUMB / 2 },
     track: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceStrong, overflow: 'hidden' as const },
-    digital: { position: 'absolute' as const, right: 0, top: 0, bottom: 0, opacity: 0.35 },
+    digital: { position: 'absolute' as const, right: 0, top: 0, bottom: 0, opacity: 0.22 },
     fill: { height: 6, borderRadius: 3, backgroundColor: colors.ink },
     stop: { position: 'absolute' as const, top: 24, width: 28, alignItems: 'center' as const },
     stopTick: { width: 1.5, height: 6, borderRadius: 1, backgroundColor: colors.borderStrong },

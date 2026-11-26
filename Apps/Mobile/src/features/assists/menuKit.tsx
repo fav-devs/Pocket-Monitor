@@ -56,14 +56,13 @@ export function AppSwitch({ value, onChange, label, disabled }: { value: boolean
 }
 const WEB_THUMB = (Platform.OS === 'web' ? { activeThumbColor: '#ffffff' } : {}) as object;
 
-/** A labelled on/off row: 15pt title, optional one-line detail, a primary switch. */
-export function SwitchRow({ title, detail, value, onChange, disabled }: { title: string; detail?: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+/** A labelled on/off row: 15pt title and a primary switch. */
+export function SwitchRow({ title, value, onChange, disabled }: { title: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   const styles = useThemedStyles(createStyles);
   return (
     <View style={[styles.switchRow, disabled && styles.disabled]}>
       <View style={styles.switchText}>
         <Text style={styles.switchTitle}>{title}</Text>
-        {detail ? <Text style={styles.detail}>{detail}</Text> : null}
       </View>
       <AppSwitch label={title} value={value} disabled={disabled} onChange={onChange} />
     </View>
@@ -142,7 +141,6 @@ function createStyles(colors: ThemeColors) {
     switchRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.md, minHeight: 44 },
     switchText: { flex: 1, minWidth: 0, gap: 2 },
     switchTitle: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
-    detail: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: colors.mutedForeground },
     disabled: { opacity: 0.45 },
     pressed: { opacity: 0.65 },
     swatches: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: spacing.sm },
