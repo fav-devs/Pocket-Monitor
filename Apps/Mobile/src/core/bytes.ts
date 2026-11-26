@@ -85,7 +85,6 @@ export function utf8Encode(s: string): Uint8Array {
     else {
       out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
     }
-    cp = 0;
   }
   return Uint8Array.from(out);
 }
