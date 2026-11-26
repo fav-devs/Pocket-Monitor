@@ -122,7 +122,8 @@ final class OpcVideoRenderer {
       enc.setRenderPipelineState(pipeline)
       uniforms.v.withUnsafeBytes { enc.setFragmentBytes($0.baseAddress!, length: $0.count, index: 0) }
       enc.setFragmentTexture(signal, index: 0)
-      enc.setFragmentTexture(blur, index: 1)
+      // Only the mask pass reads the blur; never bind a pass's own attachment.
+      if target === mask { enc.setFragmentTexture(blur, index: 1) }
       enc.setFragmentSamplerState(metal.linearSampler, index: 0)
       enc.setFragmentSamplerState(metal.nearestSampler, index: 1)
       enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
