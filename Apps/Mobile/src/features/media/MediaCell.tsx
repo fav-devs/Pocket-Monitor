@@ -103,61 +103,59 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
 
   if (p.layout === 'list') {
     return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={a11y}
-        accessibilityState={{ selected }}
-        onPress={press}
-        onLongPress={() => !selecting && p.onBeginSelection(entry.id)}
-        delayLongPress={400}
-        style={({ pressed }) => ({
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          paddingHorizontal: 8,
-          paddingVertical: 8,
-          minHeight: 59,
-          opacity: pressed ? 0.8 : 1,
-        })}
-      >
-        {selecting ? <SelectMark selected={selected} title={item.fileName} onPress={() => p.onSelect(entry.id)} /> : null}
-        <View style={{ width: p.tablet ? 96 : 76, height: p.tablet ? 54 : 43, borderRadius: 6, overflow: 'hidden', backgroundColor: colors.raised }}>
-          <Thumbnail uri={item.thumbnailUrl} />
-          {p.transferCaption ? <TransferDim caption={p.transferCaption.split(' · ')[0]} /> : null}
-          {duration ? (
-            <View style={{ position: 'absolute', right: 2, bottom: 2 }}>
-              <ArtTag text={duration} />
-            </View>
-          ) : null}
-        </View>
-        <View style={{ flex: 1, gap: 3, minWidth: 0 }}>
-          <MText size={11.5} weight="semibold" numberOfLines={1}>
-            {item.fileName}
-          </MText>
-          {p.transferCaption && p.transferCaption.includes('·') ? (
-            <MText size={9.5} weight="semibold" color={colors.accent} mono numberOfLines={1}>
-              {p.transferCaption}
-            </MText>
-          ) : (
-            <MText size={9.5} color={colors.faint} numberOfLines={1}>
-              {[cardDetail(item), burst ? `${burst} frames` : null].filter(Boolean).join(' · ')}
-            </MText>
-          )}
-        </View>
-        {p.tablet ? (
-          <>
-            <MText size={10.5} color={colors.secondary} style={{ width: 90 }} numberOfLines={1}>
-              {formatLabel(item)}
-            </MText>
-            <MText size={9} weight="bold" color={colors.secondary} style={{ width: 64 }} numberOfLines={1}>
-              {colorModeLabel(item.colorMode) ?? ''}
-            </MText>
-            <ArtTag text={state.text} color={state.color} tracking={0.4} />
-          </>
+      <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 59 }}>
+        {selecting ? (
+          <View style={{ paddingLeft: 4 }}>
+            <SelectMark selected={selected} title={item.fileName} onPress={() => p.onSelect(entry.id)} />
+          </View>
         ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={a11y}
+          accessibilityState={{ selected }}
+          onPress={press}
+          onLongPress={() => !selecting && p.onBeginSelection(entry.id)}
+          delayLongPress={400}
+          style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: selecting ? 2 : 8, paddingVertical: 8, opacity: pressed ? 0.8 : 1 })}
+        >
+          <View style={{ width: p.tablet ? 96 : 76, height: p.tablet ? 54 : 43, borderRadius: 6, overflow: 'hidden', backgroundColor: colors.raised }}>
+            <Thumbnail uri={item.thumbnailUrl} />
+            {p.transferCaption ? <TransferDim caption={p.transferCaption.split(' · ')[0]} /> : null}
+            {duration ? (
+              <View style={{ position: 'absolute', right: 2, bottom: 2 }}>
+                <ArtTag text={duration} />
+              </View>
+            ) : null}
+          </View>
+          <View style={{ flex: 1, gap: 3, minWidth: 0 }}>
+            <MText size={11.5} weight="semibold" numberOfLines={1}>
+              {item.fileName}
+            </MText>
+            {p.transferCaption && p.transferCaption.includes('·') ? (
+              <MText size={9.5} weight="semibold" color={colors.accent} mono numberOfLines={1}>
+                {p.transferCaption}
+              </MText>
+            ) : (
+              <MText size={9.5} color={colors.faint} numberOfLines={1}>
+                {[cardDetail(item), burst ? `${burst} frames` : null].filter(Boolean).join(' · ')}
+              </MText>
+            )}
+          </View>
+          {p.tablet ? (
+            <>
+              <MText size={10.5} color={colors.secondary} style={{ width: 90 }} numberOfLines={1}>
+                {formatLabel(item)}
+              </MText>
+              <MText size={9} weight="bold" color={colors.secondary} style={{ width: 64 }} numberOfLines={1}>
+                {colorModeLabel(item.colorMode) ?? ''}
+              </MText>
+              <ArtTag text={state.text} color={state.color} tracking={0.4} />
+            </>
+          ) : null}
+        </Pressable>
         <FavoriteButton favorite={favorite} onPress={() => p.onFavorite(entry.id)} />
         {selected ? <SelectedOverlay radius={0} /> : null}
-      </Pressable>
+      </View>
     );
   }
 
@@ -184,10 +182,8 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
             </View>
           ) : null}
           {p.transferCaption ? <TransferDim caption={p.transferCaption} /> : null}
-          <View style={{ position: 'absolute', left: selecting ? 2 : 6, top: selecting ? 2 : 6 }}>
-            {selecting ? (
-              <SelectMark selected={selected} title={item.fileName} onPress={() => p.onSelect(entry.id)} />
-            ) : burst ? (
+          <View pointerEvents="none" style={{ position: 'absolute', left: 6, top: 6 }}>
+            {selecting ? null : burst ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.66)', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 3 }}>
                 <Layers size={9} color={colors.text} strokeWidth={2.2} />
                 <MText size={8.5} weight="bold">
@@ -195,9 +191,6 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
                 </MText>
               </View>
             ) : null}
-          </View>
-          <View style={{ position: 'absolute', right: 2, top: 2 }}>
-            <FavoriteButton favorite={favorite} onPress={() => p.onFavorite(entry.id)} />
           </View>
           <View pointerEvents="none" style={{ position: 'absolute', left: 6, bottom: 6 }}>
             <ArtTag text={state.text} color={state.color} tracking={0.4} />
@@ -222,6 +215,14 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
           </MText>
         </View>
       </Pressable>
+      {selecting ? (
+        <View style={{ position: 'absolute', left: 2, top: 2 }}>
+          <SelectMark selected={selected} title={item.fileName} onPress={() => p.onSelect(entry.id)} />
+        </View>
+      ) : null}
+      <View style={{ position: 'absolute', right: 2, top: 2 }}>
+        <FavoriteButton favorite={favorite} onPress={() => p.onFavorite(entry.id)} />
+      </View>
       {selected ? <SelectedOverlay radius={11} /> : null}
     </View>
   );

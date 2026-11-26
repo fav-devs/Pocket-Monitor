@@ -140,7 +140,9 @@ const bundles: Record<'live' | 'playback', ScopeBundle | null> = { live: null, p
 export function analyse(sample: FrameSample, transfer: MonitorTransfer, clipByte: number, crushClip: CrushClipCompensation): ScopeBundle {
   const prev = bundles[sample.context];
   if (prev && prev.revision === sample.revision && prev.transfer === transfer && prev.clipByte === clipByte) return prev;
-  const samples = sampleRGBA(sample.rgba, sample.width, sample.height, transfer, 2);
+  // Stride 1 on the 192×108 tap: ~20k points, the density the upstream 200-wide stride-2 tap
+  // reaches with GPU point sprites.
+  const samples = sampleRGBA(sample.rgba, sample.width, sample.height, transfer, 1);
   const axis = scopeLevelAxis(transfer, clipByte);
   const sameAxis = prev && prev.transfer === transfer && prev.clipByte === clipByte;
   const vector = vectorPoints(samples, transfer);

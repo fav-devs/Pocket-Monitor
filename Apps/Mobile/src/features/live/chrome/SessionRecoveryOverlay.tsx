@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 import { useCamera } from '@/camera';
 import { MText, colors, radius } from '@/theme';
-import { GlassSurface } from '@/ui';
+import { PanelSurface } from './primitives';
 
 /** The first retry stays quiet this long so a quick reconnect never flashes the card. */
 const GRACE_MS = 1200;
@@ -102,7 +102,7 @@ export function SessionRecoveryOverlay({
   return (
     <View style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
       <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.34)' }} />
-      <GlassSurface strong radius={radius.lg} style={{ width: '90%', maxWidth: 460, paddingHorizontal: 18, paddingVertical: 16, gap: 12 }}>
+      <PanelSurface radius={radius.lg} style={{ width: '90%', maxWidth: 460, paddingHorizontal: 18, paddingVertical: 16, gap: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <View style={{ width: 26, alignItems: 'center' }}>
             {spinning ? <ActivityIndicator size="small" color={colors.accent} /> : <Unplug size={20} color={colors.accent} />}
@@ -131,7 +131,7 @@ export function SessionRecoveryOverlay({
             <Action title="Cameras" icon={ChevronLeft} onPress={onExit} />
           </View>
         ) : null}
-      </GlassSurface>
+      </PanelSurface>
     </View>
   );
 }

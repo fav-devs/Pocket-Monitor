@@ -158,7 +158,7 @@ final class OpcDatalinkSession: @unchecked Sendable {
 
   /// Sockets created before 192.168.2.x exists bind to the old Wi-Fi and then RST (first-connect
   /// black feed). Wait for DHCP on the SoftAP; station hosts only need some address on their /24.
-  private func waitForPath(isSoftAP: Bool, deadline: UInt64, done: @escaping (Bool) -> Void) {
+  private func waitForPath(isSoftAP: Bool, deadline: UInt64, done: @escaping @Sendable (Bool) -> Void) {
     if closed { return done(false) }
     let address: OpcNetworkInterfaces.Address? =
       isSoftAP ? OpcNetworkInterfaces.cameraAddress() : OpcNetworkInterfaces.address(sameSubnetAs: options.host)
@@ -175,17 +175,16 @@ final class OpcDatalinkSession: @unchecked Sendable {
 
   /// `requiredInterfaceType = .wifi` alone scopes the flow to the default Wi-Fi; resolve the
   /// interface that owns the camera address and pin it.
-  private func resolveInterface(done: @escaping () -> Void) {
+  private func resolveInterface(done: @escaping @Sendable () -> Void) {
     guard let ip = cameraLocalIPv4,
       let name = OpcNetworkInterfaces.ipv4Addresses().first(where: { $0.ipv4 == ip })?.name
     else { return done() }
     let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
-    var finished = false
-    let finish: (NWInterface?) -> Void = { iface in
-      guard !finished else { return }
-      finished = true
+    let once = OpcOnce()
+    let finish: @Sendable (NWInterface?) -> Void = { [weak self] iface in
+      guard once.claim() else { return }
       monitor.cancel()
-      self.cameraInterface = iface
+      self?.cameraInterface = iface
       done()
     }
     monitor.pathUpdateHandler = { path in
@@ -229,12 +228,11 @@ final class OpcDatalinkSession: @unchecked Sendable {
   }
 
   /// Starts `c` on `q`; `done` fires once with nil on `.ready`.
-  private func start(_ c: NWConnection, timeout: TimeInterval, done: @escaping (Error?) -> Void) {
-    var finished = false
-    var denied = false
-    let finish: (Error?) -> Void = { error in
-      guard !finished else { return }
-      finished = true
+  private func start(_ c: NWConnection, timeout: TimeInterval, done: @escaping @Sendable (Error?) -> Void) {
+    let once = OpcOnce()
+    let denied = OpcOnce()
+    let finish: @Sendable (Error?) -> Void = { error in
+      guard once.claim() else { return }
       done(error)
     }
     c.stateUpdateHandler = { [weak self, weak c] state in
@@ -243,20 +241,20 @@ final class OpcDatalinkSession: @unchecked Sendable {
       case .failed(let e): finish(e)
       case .cancelled: finish(OpenError.closed)
       case .waiting(let e):
-        if self?.isLocalNetworkDenied(e, path: c?.currentPath) == true { denied = true }
+        if self?.isLocalNetworkDenied(e, path: c?.currentPath) == true { _ = denied.claim() }
       default: break
       }
     }
     c.start(queue: q)
     q.asyncAfter(deadline: .now() + timeout) { [weak self] in
-      let isDenied = denied || (self?.isLocalNetworkDenied(nil, path: c.currentPath) ?? false)
+      let isDenied = denied.isClaimed || (self?.isLocalNetworkDenied(nil, path: c.currentPath) ?? false)
       finish(isDenied ? OpenError.localNetworkDenied : OpenError.notReady("timeout"))
     }
   }
 
   /// TCP 7001 "poke" (SetPairingPIN bytes built by JS). Mimo keeps it open for the session; the
   /// camera pushes 0x21/0x06 there ~3 Hz, so it is drained. Best effort: UDP proceeds on failure.
-  private func openPoke(attempt: Int, done: @escaping () -> Void) {
+  private func openPoke(attempt: Int, done: @escaping @Sendable () -> Void) {
     guard !closed, let port = options.tcpPokePort, let bytes = options.tcpPokeBytes, !bytes.isEmpty,
       let nwPort = NWEndpoint.Port(rawValue: port)
     else { return done() }
@@ -272,7 +270,7 @@ final class OpcDatalinkSession: @unchecked Sendable {
         self.log.info("datalink: TCP poke attempt \(attempt) failed: \(error.localizedDescription, privacy: .public)")
         tcp.cancel()
         self.poke = nil
-        if case OpenError.localNetworkDenied = error { return done() }
+        if case .localNetworkDenied? = error as? OpenError { return done() }
         guard attempt < 3 else { return done() }
         self.q.asyncAfter(deadline: .now() + .milliseconds(350)) { self.openPoke(attempt: attempt + 1, done: done) }
         return
@@ -291,7 +289,7 @@ final class OpcDatalinkSession: @unchecked Sendable {
     }
   }
 
-  private func openUDP(modes: [BindMode], lastError: Error?, done: @escaping (Error?) -> Void) {
+  private func openUDP(modes: [BindMode], lastError: Error?, done: @escaping @Sendable (Error?) -> Void) {
     guard !closed else { return done(OpenError.closed) }
     guard let mode = modes.first else { return done(lastError ?? OpenError.notReady("no bind mode")) }
     guard let port = NWEndpoint.Port(rawValue: options.port) else {
@@ -304,8 +302,8 @@ final class OpcDatalinkSession: @unchecked Sendable {
       if let error {
         c.cancel()
         self.log.info("datalink: UDP \(mode.label, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-        if case OpenError.localNetworkDenied = error { return done(error) }
-        if case OpenError.closed = error { return done(error) }
+        if case .localNetworkDenied? = error as? OpenError { return done(error) }
+        if case .closed? = error as? OpenError { return done(error) }
         return self.openUDP(modes: Array(modes.dropFirst()), lastError: error, done: done)
       }
       guard !self.closed else {
@@ -604,5 +602,27 @@ final class OpcDatalinkSession: @unchecked Sendable {
   private func forceState(_ next: String, error: String?) {
     state = next
     delegate?.datalinkSession(self, didChangeState: next, error: error)
+  }
+}
+
+/// A thread-safe one-shot latch for callbacks that may fire more than once (state handler vs.
+/// timeout). Avoids captured `var`s inside `@Sendable` Network / Dispatch closures.
+final class OpcOnce: @unchecked Sendable {
+  private let lock = NSLock()
+  private var claimed = false
+
+  /// True for the first caller only.
+  func claim() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if claimed { return false }
+    claimed = true
+    return true
+  }
+
+  var isClaimed: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return claimed
   }
 }

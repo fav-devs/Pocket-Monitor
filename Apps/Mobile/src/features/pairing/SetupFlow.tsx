@@ -13,7 +13,9 @@ export function SetupChooser({
   selected,
   added,
   onSelect,
+  showTitle = true,
 }: {
+  showTitle?: boolean;
   detail: string;
   selected: SetupKind | null;
   /** Network already saved for a kind ("Added · Studio"). */
@@ -24,16 +26,18 @@ export function SetupChooser({
   const horizontal = width > height && width >= 640;
   return (
     <View style={{ gap: 12 }}>
-      <View style={{ gap: 4 }}>
-        <MText size={18} weight="semibold">
-          {SetupChooserText.title}
-        </MText>
-        {detail ? (
-          <MText size={13} color={colors.muted}>
-            {detail}
+      {showTitle ? (
+        <View style={{ gap: 4 }}>
+          <MText size={18} weight="semibold">
+            {SetupChooserText.title}
           </MText>
-        ) : null}
-      </View>
+          {detail ? (
+            <MText size={13} color={colors.muted}>
+              {detail}
+            </MText>
+          ) : null}
+        </View>
+      ) : null}
       <View style={{ flexDirection: horizontal ? 'row' : 'column', gap: 12, alignItems: horizontal ? 'stretch' : undefined }}>
         {setupOrder.map((kind) => {
           const copy = SetupChooserCopy[kind];

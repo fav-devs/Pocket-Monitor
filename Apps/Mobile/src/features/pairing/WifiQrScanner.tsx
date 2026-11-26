@@ -29,7 +29,9 @@ export function WifiQrScanner({
   const insets = useSafeAreaInsets();
   const done = useRef(false);
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => (done.current = false)}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => {
+        done.current = false;
+      }}>
       <View style={{ flex: 1, backgroundColor: colors.canvas }}>
         {permission?.granted ? (
           <CameraView

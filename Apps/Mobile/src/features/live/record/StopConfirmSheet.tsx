@@ -1,9 +1,9 @@
 import { Pressable, View } from 'react-native';
 import { useCamera } from '@/camera';
 import { MText, colors, radius, withAlpha } from '@/theme';
-import { GlassSurface } from '@/ui';
 import { elapsedLabel } from '../format';
 import { useLiveUi } from '../liveUiStore';
+import { PanelSurface } from '../chrome/primitives';
 
 /** Optional stop-recording confirmation (Settings → Recording → Confirm stop). */
 export function StopConfirmSheet({ onStop }: { onStop: () => void }) {
@@ -16,7 +16,7 @@ export function StopConfirmSheet({ onStop }: { onStop: () => void }) {
   return (
     <View style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
       <Pressable accessibilityLabel="Cancel" onPress={cancel} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: colors.scrim }} />
-      <GlassSurface strong radius={radius.lg} style={{ width: 300, padding: 18, gap: 12 }}>
+      <PanelSurface radius={radius.lg} style={{ width: 300, padding: 18, gap: 12 }}>
         <View accessibilityRole="header">
           <MText size={16} weight="semibold">
             Stop recording?
@@ -61,7 +61,7 @@ export function StopConfirmSheet({ onStop }: { onStop: () => void }) {
             </MText>
           </Pressable>
         </View>
-      </GlassSurface>
+      </PanelSurface>
     </View>
   );
 }

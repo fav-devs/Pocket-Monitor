@@ -36,8 +36,15 @@ export interface OpcBluetoothNativeModule {
   requestPermissions(): Promise<boolean>;
   startScan(serviceUuids: string[] | null): void;
   stopScan(): void;
-  /** Connects, discovers services, and enables notify on `notifyCharacteristics`. */
-  connect(id: string, options: { service: string; writeCharacteristic: string; notifyCharacteristics: string[] }): Promise<void>;
+  /**
+   * Connects, discovers services, and enables notify on `notifyCharacteristics`.
+   * `armPairing` (default true): once every CCCD settled, native writes the DJI app-pairing arm
+   * `[01 00]` with response to `notifyCharacteristics[0]` (fff4) and resolves after it lands.
+   */
+  connect(
+    id: string,
+    options: { service: string; writeCharacteristic: string; notifyCharacteristics: string[]; armPairing?: boolean },
+  ): Promise<void>;
   disconnect(id: string): Promise<void>;
   write(id: string, bytes: Uint8Array, withResponse: boolean): Promise<void>;
   /** Event names: 'onPowerState', 'onAdvert', 'onConnection', 'onNotify'. */
@@ -78,6 +85,12 @@ export interface DatalinkOpenOptions {
   localPort: number;
   /** ACK pump rate; protocol requires 40 Hz independent of UI. */
   ackHz: number;
+  /**
+   * Optional TCP "poke" opened before UDP and kept for the session (Mimo keeps 7001 open; the
+   * camera pushes 0x21/0x06 there). `bytes` is the SetPairingPIN DUML frame built by src/core.
+   * Best effort: a failed poke does not fail `open`.
+   */
+  tcpPoke?: { port: number; bytes: Uint8Array } | null;
 }
 
 export interface DatalinkStats {

@@ -3,7 +3,6 @@ import { useEffect, type ReactNode } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useCamera, useCameraSession, type CameraState } from '@/camera';
 import { MText, colors, withAlpha } from '@/theme';
-import { GlassSurface } from '@/ui';
 import { usePreferences } from '@/state/preferences';
 import {
   COLOR_LABEL,
@@ -19,6 +18,7 @@ import { capturePopupLayout, type FieldMonitorLayout } from '../layout/fieldMoni
 import { TOP_EDGE_SHEETS, useLiveUi, type CaptureSheetId } from '../liveUiStore';
 import { ChoiceChips, FieldLabel, ModeBar, StepButton, ToggleRow } from './controls';
 import { MonitorValueDrum } from './MonitorValueDrum';
+import { PanelSurface } from '../chrome/primitives';
 
 const nearestIndex = (options: number[], value: number | null | undefined) => {
   if (value == null || options.length === 0) return 0;
@@ -516,9 +516,7 @@ export function CaptureSheetHost({ layout }: { layout: FieldMonitorLayout }) {
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}>
       <Pressable accessibilityLabel="Close drawer" onPress={close} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
-      <GlassSurface
-        strong
-        intensity={40}
+      <PanelSurface
         style={{
           position: 'absolute',
           left: pop.centerX - pop.width / 2,
@@ -537,7 +535,7 @@ export function CaptureSheetHost({ layout }: { layout: FieldMonitorLayout }) {
           <Header title={title} subtitle={subtitle} onClose={close} />
           <SheetBody id={sheet} />
         </ScrollView>
-      </GlassSurface>
+      </PanelSurface>
     </View>
   );
 }

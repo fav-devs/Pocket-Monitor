@@ -167,3 +167,49 @@ export function parseWifiQr(data: string): WifiQr | null {
   if (!fields.S) return null;
   return { ssid: fields.S, password: fields.P ?? '', security: fields.T ?? 'WPA', hidden: fields.H === 'true' };
 }
+
+/** Operator label for a phase (`ConnectionPhase.label`). */
+export function connectionPhaseLabel(phase: ConnectionPhase): string {
+  switch (phase) {
+    case 'idle':
+      return 'Idle';
+    case 'scanning':
+      return 'Scanning for camera…';
+    case 'bluetooth':
+      return 'Connecting (Bluetooth)…';
+    case 'authorizing':
+      return 'Approve on the camera screen';
+    case 'wifi-handoff':
+      return 'Reading Wi-Fi credentials…';
+    case 'joining-wifi':
+      return 'Joining camera Wi-Fi…';
+    case 'datalink':
+      return 'Opening datalink…';
+    case 'live-start':
+      return 'Starting live view…';
+    case 'live':
+      return 'Connected';
+    case 'recovering':
+      return 'Reconnecting…';
+    case 'failed':
+      return 'Failed';
+    case 'disconnected':
+      return 'Disconnected';
+  }
+}
+
+/** 0…100 delivery score for the link health scale; null when there is no live picture. */
+export function linkHealthScore(c: ConnectionState): number | null {
+  if (c.phase !== 'live' && c.phase !== 'recovering') return null;
+  if (c.phase === 'recovering') return 20;
+  const fps = Math.min(1, c.videoFps / 30);
+  const agePenalty = Math.max(0, (c.lastFrameAgeMs - 120) / 25);
+  let score = Math.round(100 * fps - agePenalty);
+  if (c.linkBand === 'poor') score = Math.min(score, 45);
+  else if (c.linkBand === 'watch') score = Math.min(score, 75);
+  return Math.max(0, Math.min(100, score));
+}
+
+export function linkBandForScore(score: number): 'poor' | 'watch' | 'stable' {
+  return score < 50 ? 'poor' : score < 80 ? 'watch' : 'stable';
+}

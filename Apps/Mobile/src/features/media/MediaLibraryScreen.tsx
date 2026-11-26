@@ -12,6 +12,7 @@ import {
   ListChecks,
   Menu,
   RefreshCw,
+  Settings2,
   Share as ShareIcon,
   Star,
   Trash2,
@@ -259,6 +260,7 @@ export default function MediaLibraryScreen() {
         <MediaChip icon={ListChecks} label={lib.selecting ? 'Exit selection' : 'Select'} text={lib.selecting ? 'Done' : 'Select'} active={lib.selecting} onPress={() => (lib.selecting ? lib.endSelection() : lib.beginSelection())} />
         <MediaChip icon={CloudUpload} label="Deliveries" text={deliveryCount ? `Queue ${deliveryCount}` : 'Queue'} active={deliveryCount > 0} onPress={() => setDeliveryPanel(true)} />
         <MediaChip icon={RefreshCw} label="Refresh" onPress={refresh} disabled={!sourceAvailable || lib.refreshing || lib.status === 'loading'} />
+        <MediaChip icon={Settings2} label="Media settings" onPress={() => router.push('/media/settings')} />
       </ScrollView>
     </View>
   );

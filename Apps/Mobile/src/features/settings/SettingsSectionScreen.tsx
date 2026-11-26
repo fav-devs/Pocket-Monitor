@@ -1,11 +1,8 @@
-import { View } from 'react-native';
-import { MText, colors } from '@/theme';
+import { useLocalSearchParams } from 'expo-router';
+import SettingsScreen from './SettingsScreen';
 
-/** Placeholder — replaced by the feature implementation. */
+/** `/settings/<section>`: Operator Setup opened on one section (e.g. `/settings/assists`). */
 export default function SettingsSectionScreen() {
-  return (
-    <View style={{ flex: 1, backgroundColor: colors.canvas, alignItems: 'center', justifyContent: 'center' }}>
-      <MText size={16} weight="semibold">SettingsSectionScreen</MText>
-    </View>
-  );
+  const { section } = useLocalSearchParams<{ section?: string }>();
+  return <SettingsScreen initialSection={typeof section === 'string' ? section : undefined} />;
 }

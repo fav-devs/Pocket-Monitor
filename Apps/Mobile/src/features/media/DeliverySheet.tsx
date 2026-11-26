@@ -69,8 +69,9 @@ export function DeliverySheet({ items, onClose, initialDestination }: { items: C
   const prefs = useMediaPreferences();
   const account = useFrameioAccount();
   const enqueue = useDelivery((s) => s.enqueue);
-  const setPanelOpen = useDelivery((s) => s.setPanelOpen);
-  const [destination, setDestination] = useState<DeliveryDestination | null>(initialDestination ?? null);
+  const [destination, setDestination] = useState<DeliveryDestination | null>(
+    initialDestination ?? (useMediaPreferences.getState().postExportAction === 'save-to-photos' ? 'photos' : null),
+  );
 
   useEffect(() => {
     void account.refresh(demo);
@@ -84,7 +85,7 @@ export function DeliverySheet({ items, onClose, initialDestination }: { items: C
   const anyLog = items.some((i) => i.kind === 'video' && isLogColor(i.colorMode));
   const anyVideo = items.some((i) => i.kind === 'video');
   const exporter = mediaExporter.available;
-  const frameioReady = demo || account.status !== 'not-configured';
+  const frameioReady = demo || (prefs.frameioEnabled && account.status !== 'not-configured');
   const project: FrameioProject | undefined = useMemo(
     () => account.projects?.find((p) => p.id === prefs.frameioProjectId) ?? undefined,
     [account.projects, prefs.frameioProjectId],
@@ -102,7 +103,6 @@ export function DeliverySheet({ items, onClose, initialDestination }: { items: C
   const begin = () => {
     if (!destination) return;
     enqueue(session.media, { destination, items, options, project, demo });
-    setPanelOpen(true);
     onClose();
   };
 

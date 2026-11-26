@@ -115,7 +115,7 @@ export const SCOPE_TOOLS: AssistTool[] = ['WAVE', 'PARADE', 'HISTO', 'VECTOR', '
 export type AssistContext = 'live' | 'playback';
 
 /** Movable floating panels. */
-export type ScopePanelId = 'waveform' | 'parade' | 'histogram' | 'vectorscope' | 'trafficLights' | 'ndMeter' | 'audio';
+export type ScopePanelId = 'waveform' | 'parade' | 'histogram' | 'vectorscope' | 'trafficLights' | 'ndMeter' | 'audio' | 'falseColorLegend';
 
 export interface PanelPlacement {
   center?: StoredCenter;
@@ -168,6 +168,9 @@ export interface AssistOptions {
   mirror: { horizontal: boolean; vertical: boolean };
 }
 
+/** Option groups that are objects (patched with `setOption`). */
+export type OptionGroup = Exclude<keyof AssistOptions, 'crushClip'>;
+
 export const defaultAssistOptions: AssistOptions = {
   lut: { selection: 'auto', intensity: 1, exposureStops: 0, custom: [] },
   peaking: { color: 'Red', sense: 'Med', mono: false },
@@ -205,6 +208,7 @@ const emptyPanels = (): Record<ScopePanelId, PanelSlots> => ({
   trafficLights: { landscape: {}, portrait: {} },
   ndMeter: { landscape: {}, portrait: {} },
   audio: { landscape: {}, portrait: {} },
+  falseColorLegend: { landscape: {}, portrait: {} },
 });
 
 interface PersistedAssists {
@@ -224,7 +228,7 @@ interface AssistStore extends PersistedAssists {
   isOn: (tool: AssistTool, context?: AssistContext) => boolean;
   toggle: (tool: AssistTool, context?: AssistContext) => void;
   setOn: (tool: AssistTool, on: boolean, context?: AssistContext) => void;
-  setOption: <K extends keyof AssistOptions>(key: K, patch: Partial<AssistOptions[K]>) => void;
+  setOption: <K extends OptionGroup>(key: K, patch: Partial<AssistOptions[K]>) => void;
   setCrushClip: (value: CrushClipCompensation) => void;
   setPanel: (id: ScopePanelId, slot: 'landscape' | 'portrait', patch: PanelPlacement) => void;
   resetPanels: () => void;
@@ -258,7 +262,7 @@ export const useAssists = create<AssistStore>()(
         const key = context === 'live' ? 'on' : 'playbackOn';
         set((s) => ({ [key]: { ...s[key], [tool]: on } }) as Partial<AssistStore>);
       },
-      setOption: (key, patch) => set((s) => ({ options: { ...s.options, [key]: { ...s.options[key], ...patch } } })),
+      setOption: (key, patch) => set((s) => ({ options: { ...s.options, [key]: { ...(s.options[key] as object), ...patch } } })),
       setCrushClip: (value) => set((s) => ({ options: { ...s.options, crushClip: value } })),
       setPanel: (id, slot, patch) =>
         set((s) => ({ panels: { ...s.panels, [id]: { ...s.panels[id], [slot]: { ...s.panels[id][slot], ...patch } } } })),

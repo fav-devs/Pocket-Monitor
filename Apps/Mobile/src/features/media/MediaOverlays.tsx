@@ -49,7 +49,7 @@ export function OverlayCard({
           maxWidth,
           maxHeight: height - insets.top - insets.bottom - 24,
           borderRadius: radius.lg,
-          backgroundColor: colors.glassStrong,
+          backgroundColor: colors.surface,
           borderWidth: 1,
           borderColor: colors.borderStrong,
           overflow: 'hidden',

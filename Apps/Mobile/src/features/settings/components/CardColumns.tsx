@@ -3,10 +3,15 @@ import { View } from 'react-native';
 
 export const minimumColumnWidth = 275;
 
+/** Wrap a card to span both columns. */
+export function FullWidth({ children }: { children: ReactNode }) {
+  return <>{children}</>;
+}
+
 /**
  * Settings cards in one column, or two once there is room (`MonitorCardColumns`). Cards are dealt
- * to the shorter column by measured height so two columns do not leave holes. A child with the
- * prop `fullWidth` spans both columns and starts a new band.
+ * to the shorter column by measured height so two columns do not leave holes. A `FullWidth` child
+ * spans both columns and starts a new band.
  */
 export function CardColumns({ width, children, spacing = 10 }: { width: number; children: ReactNode; spacing?: number }) {
   const items = Children.toArray(children).filter(isValidElement) as ReactElement<{ fullWidth?: boolean }>[];
@@ -25,7 +30,7 @@ export function CardColumns({ width, children, spacing = 10 }: { width: number; 
     colH = [0, 0];
   };
   for (const item of items) {
-    if (item.props.fullWidth) {
+    if (item.type === FullWidth || item.props.fullWidth) {
       flush();
       bands.push({ full: item, cols: [] });
       continue;

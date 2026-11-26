@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import { View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { colors, radius, withAlpha } from '@/theme';
-import { PressableScale } from '@/ui';
+import { GlassSurface, PressableScale } from '@/ui';
 import type { Rect } from '../layout/fieldMonitorLayout';
 
 /** `monitorReadoutShadow`: readouts stay legible on a bright picture. */
@@ -101,5 +101,26 @@ export function Capsule({ children, style }: { children: ReactNode; style?: Styl
     >
       {children}
     </View>
+  );
+}
+
+/**
+ * Floating live panel: the shared glass material plus a dark under-layer so drawer copy stays
+ * legible over a bright, busy picture (web blur is lighter than iOS material).
+ */
+export function PanelSurface({
+  children,
+  style,
+  radius: r = radius.lg,
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  radius?: number;
+}) {
+  return (
+    <GlassSurface strong intensity={40} radius={r} style={style}>
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(12,13,14,0.6)' }} />
+      {children}
+    </GlassSurface>
   );
 }

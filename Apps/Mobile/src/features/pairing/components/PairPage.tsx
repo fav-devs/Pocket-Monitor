@@ -149,7 +149,10 @@ export function PairPage({
             {heading}
           </MText>
         </View>
-        <ActionMenu items={menuItems} accessibilityLabel="Pairing help and diagnostics">
+        <ActionMenu
+          items={[...menuItems, { id: 'report', title: 'Report a problem', onPress: onReportProblem }]}
+          accessibilityLabel="Pairing help and diagnostics"
+        >
           <View style={{ width: 32, height: 44, alignItems: 'center', justifyContent: 'center' }}>
             <Ellipsis size={16} color={colors.secondary} />
           </View>
@@ -208,7 +211,7 @@ export function PairPage({
             {hint}
           </MText>
         ) : null}
-        {portrait && !tablet ? (
+        {portrait && !tablet && !(backAction && primaryAction) ? (
           <PressableScale
             accessibilityLabel="Report a problem"
             onPress={onReportProblem}
@@ -219,6 +222,7 @@ export function PairPage({
             </MText>
           </PressableScale>
         ) : null}
+        {portrait && !tablet && backAction && primaryAction ? <View style={{ flex: 1 }} /> : null}
         {backAction ? <CameraPageButton title={backAction.title} onPress={backAction.onPress} /> : null}
         {primaryAction ? (
           <CameraPageButton

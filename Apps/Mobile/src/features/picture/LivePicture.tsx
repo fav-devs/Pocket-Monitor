@@ -1,14 +1,78 @@
-import { View, type LayoutRectangle } from 'react-native';
-import type { VideoSource } from '@/camera';
+import { useEffect, useRef, useState } from 'react';
+import { View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
+import { useCamera } from '@/camera';
+import { usePictureEffects } from '@/state/assists';
+import { OpcVideoView } from '@modules/opc-native/src/OpcVideoView';
+import { OpcVideo } from '@modules/opc-native/src/native';
+import { SAMPLE_HEIGHT, SAMPLE_INTERVAL_MS, SAMPLE_WIDTH, clearFrameSample, publishFrameSample, useSampleDemandValue } from './frameSample';
+import { useEnsureLut } from './lutLibrary';
+import { demoSceneFor, pictureAspect, pictureRect, sameRect, type LivePictureProps } from './LivePicture.shared';
 
-export interface LivePictureProps {
-  source: VideoSource;
-  resizeMode?: 'fit' | 'fill';
-  /** Reports where the picture is drawn inside this view (for overlays and touch mapping). */
-  onPictureRect?: (rect: LayoutRectangle) => void;
-}
+export type { LivePictureProps } from './LivePicture.shared';
 
-/** Stub — the picture feature replaces this (native decoder view / WebGL demo renderer + effects). */
-export default function LivePicture(_props: LivePictureProps) {
-  return <View style={{ flex: 1, backgroundColor: '#000' }} />;
+/**
+ * Native picture: the decoder view with GPU effects (`OpcVideoView`). The native view owns
+ * fit / fill and desqueeze; this reports the same rect for overlays and polls a small RGBA
+ * sample for the JS meters while any scope or meter is shown.
+ */
+export default function LivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene }: LivePictureProps) {
+  const derived = usePictureEffects(context);
+  const effects = override ?? derived;
+  const streamW = useCamera((s) => s.connection.streamWidth);
+  const streamH = useCamera((s) => s.connection.streamHeight);
+  useEnsureLut(effects.lutId);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const lastRect = useRef<LayoutRectangle | null>(null);
+  const rect = pictureRect(size, pictureAspect(effects, streamW, streamH), resizeMode);
+  const sessionId = source.kind === 'native' || source.kind === 'relay' ? source.sessionId : null;
+  const scene = demoSceneFor(source, demoScene);
+  const wantsSample = useSampleDemandValue();
+
+  useEffect(() => {
+    if (size.width <= 0 || sameRect(lastRect.current, rect)) return;
+    lastRect.current = rect;
+    onPictureRect?.(rect);
+  });
+
+  useEffect(() => {
+    if (!wantsSample || !sessionId || !OpcVideo) return;
+    let alive = true;
+    let busy = false;
+    const timer = setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const s = await OpcVideo!.sampleFrame(sessionId, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+        if (alive && s) publishFrameSample({ width: s.width, height: s.height, rgba: s.rgba, context });
+      } catch {
+        // Decoder not ready yet.
+      } finally {
+        busy = false;
+      }
+    }, SAMPLE_INTERVAL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      clearFrameSample(context);
+    };
+  }, [wantsSample, sessionId, context]);
+
+  const onLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    if (width !== size.width || height !== size.height) setSize({ width, height });
+  };
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000', overflow: 'hidden' }} onLayout={onLayout} pointerEvents="none">
+      {source.kind !== 'none' ? (
+        <OpcVideoView
+          style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
+          sessionId={sessionId}
+          demoScene={scene}
+          effects={effects}
+          resizeMode={resizeMode}
+        />
+      ) : null}
+    </View>
+  );
 }

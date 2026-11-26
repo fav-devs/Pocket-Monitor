@@ -5,6 +5,7 @@
  */
 import { concat, putU16le, utf8Encode } from '../bytes';
 import { type DumlFrame, packString } from '../duml/frame';
+import { type CameraModel, isPocket3, usesCapturedLiveEnable } from '../status/cameraModel';
 
 function fr(receiver: number, set: number, id: number, payload: ArrayLike<number>, seq: number): DumlFrame {
   return { sender: 2, receiver, seq: seq & 0xffff, flags: 0x40, cmdSet: set, cmdId: id, payload: Uint8Array.from(payload) };
@@ -93,5 +94,21 @@ export const LivestreamCommands = {
       `{"rtmpAddress":"${escaped}","codec":"${codec}","EnhancedRTMP":${codec === 'HEVC'},` +
       `"supportStopLive":false,"watermark":0,"orientation":"landscape"}`
     );
+  },
+};
+
+/** Which bodies Multiview lists and previews (and which tolerate a missing role getter). */
+export const MulticamSupport = {
+  appears(m: CameraModel): boolean {
+    return !m.isDrone && (m.name.toLowerCase().includes('osmo') || m.family !== 'other');
+  },
+  hasPreview(m: CameraModel): boolean {
+    if (!MulticamSupport.appears(m) || !usesCapturedLiveEnable(m)) return false;
+    const n = m.name.toLowerCase().replace(/ /g, '');
+    return isPocket3(m) || n.includes('pocket4') || m.family === 'nano';
+  },
+  /** Pocket 3 and Nano answer the role getter with `e0`. */
+  acceptsMissingRoleQuery(m: CameraModel, reply: ArrayLike<number>): boolean {
+    return (m.family === 'nano' || isPocket3(m)) && reply.length === 1 && reply[0] === 0xe0;
   },
 };

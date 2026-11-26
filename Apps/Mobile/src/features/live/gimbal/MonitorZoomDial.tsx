@@ -3,11 +3,11 @@ import { useMemo, useRef, useState } from 'react';
 import { PanResponder, Pressable, View } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
 import { MText, colors, radius, withAlpha } from '@/theme';
-import { GlassSurface } from '@/ui';
 import { isDigitalZoom, zoomCaption, zoomLabel } from '../format';
 import { haptics } from '../haptics';
 import { ZOOM_RAMP_CHOICES, rampLabel, useZoomPresets } from '../liveUiStore';
 import { cancelZoomRamp, rampZoom, unitToZoom, zoomToUnit } from './zoom';
+import { PanelSurface } from '../chrome/primitives';
 
 /** `MonitorZoomRulerChrome`: drag along the log-scale ruler for continuous zoom. */
 function ZoomRuler() {
@@ -106,7 +106,7 @@ export function MonitorZoomDial({ width, onClose }: { width: number; onClose: ()
   const rampIndex = ZOOM_RAMP_CHOICES.indexOf(rampSeconds);
 
   return (
-    <GlassSurface strong radius={radius.lg} style={{ width, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 12, gap: 6 }}>
+    <PanelSurface radius={radius.lg} style={{ width, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 12, gap: 6 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         <View style={{ flex: 1 }}>
           <MText size={10} weight="bold" tracking={1.4} color={digital ? colors.digitalCrop : colors.faint}>
@@ -185,6 +185,6 @@ export function MonitorZoomDial({ width, onClose }: { width: number; onClose: ()
           <Plus size={16} color={colors.secondary} />
         </Pressable>
       </View>
-    </GlassSurface>
+    </PanelSurface>
   );
 }

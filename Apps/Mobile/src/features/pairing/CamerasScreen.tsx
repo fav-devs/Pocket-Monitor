@@ -136,15 +136,20 @@ export default function CamerasScreen() {
     </View>
   );
 
-  const grid = (cards: React.ReactNode[]) => (
-    <View style={{ flexDirection: tablet ? 'row' : 'column', flexWrap: 'wrap', gap: 8 }}>
-      {cards.map((card, i) => (
-        <View key={i} style={tablet ? { width: '49.4%' } : undefined}>
-          {card}
-        </View>
-      ))}
-    </View>
-  );
+  // Two columns on tablets and wide landscape phones, one otherwise.
+  const twoColumns = tablet || width >= 700;
+  const grid = (cards: React.ReactNode[]) =>
+    twoColumns ? (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {cards.map((card, i) => (
+          <View key={i} style={{ flexBasis: '45%', flexGrow: 1, maxWidth: cards.length === 1 ? '50%' : undefined }}>
+            {card}
+          </View>
+        ))}
+      </View>
+    ) : (
+      <View style={{ gap: 8 }}>{cards}</View>
+    );
 
   const demoLive = liveId === DEMO_CAMERA.id;
   const demoCard: CameraCardItem = {

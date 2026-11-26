@@ -52,8 +52,6 @@ export interface OperatorPreferences {
   remoteShutter?: boolean;
   /** Rotate the feed with the phone. */
   autoRotateFeed?: boolean;
-  /** Camera exposure meter at the picture's left edge in DISP 1. */
-  showEvMeter?: boolean;
 }
 
 export const defaultPreferences: OperatorPreferences = {
@@ -86,7 +84,6 @@ export const defaultPreferences: OperatorPreferences = {
   gamepadStick: 'left',
   remoteShutter: false,
   autoRotateFeed: true,
-  showEvMeter: true,
 };
 
 interface PreferencesStore extends OperatorPreferences {

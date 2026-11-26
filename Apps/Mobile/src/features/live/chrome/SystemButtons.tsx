@@ -18,7 +18,9 @@ export function LiveLockButton({ size }: { size: number }) {
       size={size}
       onPress={() => {
         haptics.medium();
-        set({ locked: !locked, captureSheet: null, gimbalPanel: 'none', zoomDialOpen: false });
+        // The Motion Control run pill stays: Stop must remain reachable while locked.
+        const panel = useLiveUi.getState().gimbalPanel;
+        set({ locked: !locked, captureSheet: null, gimbalPanel: panel === 'runPill' ? 'runPill' : 'none', zoomDialOpen: false });
       }}
     />
   );

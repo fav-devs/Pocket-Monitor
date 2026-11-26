@@ -3,12 +3,12 @@ import { Pressable, ScrollView, View } from 'react-native';
 import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import { useCamera, useCameraSession, type MotionWaypoint } from '@/camera';
 import { MText, colors, fonts, radius, withAlpha } from '@/theme';
-import { GlassSurface } from '@/ui';
 import { ModeBar } from '../capture/controls';
 import { angleLabel } from '../format';
 import { haptics } from '../haptics';
 import type { Rect } from '../layout/fieldMonitorLayout';
 import { useLiveUi } from '../liveUiStore';
+import { PanelSurface } from '../chrome/primitives';
 
 type Slot = 'a' | 'b' | 'c';
 const SMOOTHNESS = [0, 0.25, 0.5, 0.75, 1];
@@ -194,7 +194,7 @@ export function MotionControlEditor({ width, maxHeight }: { width: number; maxHe
   const busy = running(p.status);
   const smoothIndex = SMOOTHNESS.reduce((b, v, i) => (Math.abs(v - p.smoothness) < Math.abs(SMOOTHNESS[b] - p.smoothness) ? i : b), 0);
   return (
-    <GlassSurface strong radius={radius.lg} style={{ width, maxHeight }}>
+    <PanelSurface radius={radius.lg} style={{ width, maxHeight }}>
       <ScrollView bounces={false} contentContainerStyle={{ padding: 14, gap: 6 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
@@ -260,7 +260,7 @@ export function MotionControlEditor({ width, maxHeight }: { width: number; maxHe
           <RunButton />
         </View>
       </ScrollView>
-    </GlassSurface>
+    </PanelSurface>
   );
 }
 
@@ -269,7 +269,7 @@ export function MotionRunPill() {
   const p = useProgram();
   const set = useLiveUi((s) => s.set);
   return (
-    <GlassSurface strong radius={22} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 4, height: 44 }}>
+    <PanelSurface radius={22} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 4, height: 44 }}>
       <MText size={12} weight="semibold" mono>
         {['a', 'b', 'c'].filter((k) => p[k as Slot]).map((k) => k.toUpperCase()).join('→') || 'Motion'}
       </MText>
@@ -287,7 +287,7 @@ export function MotionRunPill() {
       >
         <Maximize2 size={15} color={colors.secondary} />
       </Pressable>
-    </GlassSurface>
+    </PanelSurface>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { Modal, Pressable, View, useWindowDimensions } from 'react-native';
 import { MText, colors } from '@/theme';
 import { PressableScale } from '@/ui';
@@ -31,11 +31,11 @@ export function ActionMenu({
   onPrimary?: () => void;
   width?: number;
 }) {
-  const anchor = useRef<View>(null);
+  const anchor = useRef<ComponentRef<typeof View>>(null);
   const [frame, setFrame] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const window = useWindowDimensions();
   const open = () => {
-    anchor.current?.measureInWindow((x, y, w, h) => setFrame({ x, y, w, h }));
+    anchor.current?.measureInWindow((x: number, y: number, w: number, h: number) => setFrame({ x, y, w, h }));
   };
   const close = () => setFrame(null);
   const left = frame ? Math.max(8, Math.min(window.width - width - 8, frame.x + frame.w - width)) : 0;

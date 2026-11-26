@@ -96,3 +96,7 @@ export function diagnosticsFileName(prefix = 'diagnostics'): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   return `PocketMonitor-${prefix}-${stamp}.txt`;
 }
+
+export function clearConnectionEvents() {
+  journal.splice(0, journal.length);
+}

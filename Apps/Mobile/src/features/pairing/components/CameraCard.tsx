@@ -49,6 +49,7 @@ export function CameraCard({
     <View
       testID={`cameras.card.${item.id}`}
       style={{
+        minWidth: 0,
         gap: 11,
         paddingHorizontal: 14,
         paddingVertical: 13,
@@ -76,7 +77,7 @@ export function CameraCard({
           disabled={disabled}
           accessibilityLabel={`${item.actionTitle} ${item.name}`}
           onPress={onActivate}
-          style={{ flex: 1, minHeight: 44, justifyContent: 'center', gap: 3 }}
+          style={{ flex: 1, minWidth: 0, minHeight: 44, justifyContent: 'center', gap: 3 }}
         >
           <MText size={14.5} weight="semibold" numberOfLines={1}>
             {item.name}
@@ -205,7 +206,7 @@ export function CameraCard({
           size={9.5}
           color={item.available === false ? colors.faint : colors.muted}
           numberOfLines={2}
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
         >
           {item.status}
         </MText>

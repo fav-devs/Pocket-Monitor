@@ -15,7 +15,7 @@ import { DestinationIcon } from './DeliverySheet';
 import { ProgressTrack } from './MediaChips';
 import { ActionButton, CardHeader, CardScroll, OverlayCard } from './MediaOverlays';
 
-function BatchRow({ batch, onCancel }: { batch: DeliveryBatch; onCancel: () => void }) {
+export function BatchRow({ batch, onCancel }: { batch: DeliveryBatch; onCancel: () => void }) {
   const live = batch.status === 'running' || batch.status === 'queued';
   const tone = batch.status === 'failed' ? colors.recording : batch.status === 'done' ? colors.linkStable : colors.text;
   const preparing = batch.status === 'running' && batch.clipFraction <= 0;

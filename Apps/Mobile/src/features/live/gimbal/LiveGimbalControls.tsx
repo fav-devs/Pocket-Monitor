@@ -1,14 +1,13 @@
-import { Crosshair, FlipHorizontal2, Lock, Move3d, RotateCcw, Ruler, X } from 'lucide-react-native';
+import { Crosshair, FlipHorizontal2, Lock, Minus, Move3d, Plus, RotateCcw, Ruler, X } from 'lucide-react-native';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useCamera, useCameraSession, type GimbalSpeed } from '@/camera';
 import { MText, colors, radius, withAlpha } from '@/theme';
-import { GlassSurface } from '@/ui';
 import { usePreferences } from '@/state/preferences';
 import { FieldLabel, ModeBar, ToggleRow } from '../capture/controls';
 import { GIMBAL_MODE_LABEL, GIMBAL_SPEED_LABEL, angleLabel } from '../format';
 import { haptics } from '../haptics';
 import { ZOOM_RAMP_CHOICES, rampLabel, useLiveUi, useZoomPresets } from '../liveUiStore';
-import { readoutShadow } from '../chrome/primitives';
+import { PanelSurface, readoutShadow } from '../chrome/primitives';
 
 /** `LiveGimbalButton`: zoom-sized crosshair leading of the zoom chip; toggles the sheet. */
 export function LiveGimbalButton({ size, disabled }: { size: number; disabled?: boolean }) {
@@ -94,7 +93,7 @@ export function LiveGimbalSheet({
   const setCount = [program.a, program.b, program.c].filter(Boolean).length;
 
   return (
-    <GlassSurface strong radius={radius.lg} style={{ width, maxHeight }}>
+    <PanelSurface radius={radius.lg} style={{ width, maxHeight }}>
       <ScrollView bounces={false} contentContainerStyle={{ padding: 14, gap: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
@@ -169,15 +168,27 @@ export function LiveGimbalSheet({
               Zoom preset travel time
             </MText>
           </View>
-          <ModeBar
-            tabs={['−', rampLabel(rampSeconds), '+']}
-            uppercase={false}
-            selected={1}
-            onSelect={(i) => {
-              if (i === 0) setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)]);
-              if (i === 2) setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)]);
-            }}
-          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Shorter ramp"
+            disabled={rampIndex <= 0}
+            onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
+            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: rampIndex <= 0 ? 0.35 : 1 }}
+          >
+            <Minus size={16} color={colors.secondary} />
+          </Pressable>
+          <MText size={13} weight="semibold" mono style={{ minWidth: 44, textAlign: 'center' }}>
+            {rampLabel(rampSeconds)}
+          </MText>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Longer ramp"
+            disabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
+            onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
+            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Plus size={16} color={colors.secondary} />
+          </Pressable>
         </View>
 
         <Pressable
@@ -209,7 +220,7 @@ export function LiveGimbalSheet({
           </View>
         </Pressable>
       </ScrollView>
-    </GlassSurface>
+    </PanelSurface>
   );
 }
 
