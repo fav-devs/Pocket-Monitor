@@ -4,6 +4,9 @@ import { lutList, lutLoad, lutSelect, type DesktopLutList } from '@/camera/deskt
 import { formatCube } from '@/core/media';
 import { ensureLut } from '@/features/picture/lutLibrary';
 import { useAssists, type CustomLutEntry, type LutSelection } from '@/state/assists';
+import { isDesktopFileLut, mergeFolder } from './lutFolder';
+
+export { isDesktopFileLut, mergeFolder } from './lutFolder';
 
 /**
  * The LUT picker's desktop backend. On the desktop the cubes live in Rust (`luts.rs`):
@@ -15,17 +18,6 @@ import { useAssists, type CustomLutEntry, type LutSelection } from '@/state/assi
  *   `lut_load` the first time the picture uses them;
  * - the pick is also remembered natively (`lut_select`).
  */
-
-export const isDesktopFileLut = (id: string) => id.startsWith('file:');
-
-/** Merges the drop folder's files into the custom list without touching the selection. */
-export function mergeFolder(custom: CustomLutEntry[], list: DesktopLutList, now = Date.now()): CustomLutEntry[] {
-  const files = new Map(list.files.map((f) => [f.id, f.name]));
-  const kept = custom.filter((c) => !isDesktopFileLut(c.id) || files.has(c.id));
-  const have = new Set(kept.map((c) => c.id));
-  const added = list.files.filter((f) => !have.has(f.id)).map((f) => ({ id: f.id, name: f.name, size: 0, addedAt: now }));
-  return [...kept, ...added];
-}
 
 async function syncFolder(): Promise<DesktopLutList | null> {
   let list: DesktopLutList;

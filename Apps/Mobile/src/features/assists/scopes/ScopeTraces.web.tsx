@@ -10,7 +10,7 @@ import {
 import type { ScopeTracesProps } from './ScopeTraces.types';
 import { TRACE, TRAIL_DECAY, histogramPlotRect, laneX, plotX, plotY, vectorscopeSquare, waveformPlotRect, type PlotRect } from './scopeGeometry';
 import { DesktopScopeTraces } from '@/features/picture/desktop/DesktopScopeTraces';
-import { desktopFrameOf } from '@/features/picture/desktop/scopes';
+import { desktopFrameOf } from '@/features/picture/desktop/scopeBundle';
 
 export type { ScopeTracesProps } from './ScopeTraces.types';
 

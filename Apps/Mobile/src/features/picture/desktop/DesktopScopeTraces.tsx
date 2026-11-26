@@ -3,7 +3,7 @@ import { scopeIntensity, traceTint } from '@/core/media';
 import type { DesktopScopeFrame } from '@/camera/desktop/picture';
 import type { ScopeTracesProps } from '@/features/assists/scopes/ScopeTraces.types';
 import { TRACE, TRAIL_DECAY, laneX, plotY, vectorscopeSquare, waveformPlotRect, type PlotRect } from '@/features/assists/scopes/scopeGeometry';
-import { desktopFrameOf } from './scopes';
+import { desktopFrameOf } from './scopeBundle';
 
 type Rgba = readonly [number, number, number, number];
 

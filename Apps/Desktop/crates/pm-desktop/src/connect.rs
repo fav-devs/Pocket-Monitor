@@ -729,6 +729,12 @@ impl BleService {
         .map_err(|error| error.to_string())?
     }
 
+    pub fn forget_held(&self) {
+        if let Ok(mut held) = self.held.lock() {
+            *held = None;
+        }
+    }
+
     pub fn take_held(&self, ssid: Option<&str>) -> Option<Credentials> {
         let held = self.held.lock().ok()?.clone()?;
         match ssid {
@@ -1107,6 +1113,8 @@ pub fn open(app: &AppHandle, target: OpenTarget) -> Result<Opened, String> {
                 .ok_or("Pair the camera first.")?;
             step(app, "joining-wifi", format!("Joining {}…", held.ssid));
             join_camera_wifi(&held.ssid, &held.password)?;
+            // Windows holds the password in its profile now; the backend lets go of it.
+            app.state::<BleService>().forget_held();
             let model = model.or(held.model_id);
             homewifi::save_softap(&SavedCamera {
                 ssid: held.ssid.clone(),
@@ -1235,7 +1243,7 @@ pub async fn wifi_join_camera(
     model: Option<i32>,
 ) -> Result<(), String> {
     let held = app.state::<BleService>().take_held(ssid.as_deref());
-    blocking(move || {
+    let joined = blocking(move || {
         let (ssid, password, held_model) = match (ssid, password) {
             (Some(ssid), Some(password)) => (ssid, password, None),
             _ => {
@@ -1249,7 +1257,11 @@ pub async fn wifi_join_camera(
             model_id: model.or(held_model),
         })
     })
-    .await
+    .await;
+    if joined.is_ok() {
+        app.state::<BleService>().forget_held();
+    }
+    joined
 }
 
 /// Joins the remembered camera's own Wi-Fi through its saved profile (12 s fast path).

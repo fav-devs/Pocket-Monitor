@@ -986,9 +986,10 @@ path.
 For live UI edits, run `npx expo start --web --port 8081` in `Apps\Mobile` and launch with
 `cargo tauri dev --config '{"build":{"devUrl":"http://localhost:8081"}}'`.
 
-Logs go to `opc-monitor.log` beside the executable, in the old line formats. That file
-gets the `link:` lines and `view: pace:`/`slow:`, plus new lines: `link: stick tx …`,
-`input: rest: …`, `view: picture: …` and `pm-desktop: …`.
+Logs go to `pocket-monitor.log`, in the old line formats: beside the executable for a
+developer build or the portable ZIP, under `%LOCALAPPDATA%\OpenPocketCine\logs\` for an
+installed copy (D3, §5.9). That file gets the `link:` lines and `view: pace:`/`slow:`, plus
+new lines: `link: stick tx …`, `input: rest: …`, `view: picture: …` and `pm-desktop: …`.
 
 ### 5.6 First prototype checks on Windows (Spike 1/2 of §3.8)
 
@@ -1161,3 +1162,118 @@ through gilrs (WGI) including unplug while held, the 40 ms late rule in `link: s
 move readouts under load, tap focus and drag to track on a Pocket 3 with `0x02/0x89` pushes,
 the D-Log2 hop on a Pocket 3, the countdown, presets 1–6 across the pan gap, and the webcam
 reader under DirectShow with the virtual camera installed (it must not pick it).
+
+### 5.9 Phase 2: connection, pairing, home network, launch, settings, diagnostics, installer (§1.A–§1.D, §1.X–§1.Z)
+
+None of this has run on Windows or met a camera. It type-checks (`cargo check`, `clippy`, a
+Windows-target check of the Win32 FFI in `pm_controller::platform` and the WebView2 probe),
+the pure parts are tested in `pm-controller`, and the web parts are type-checked, unit-tested
+and looked at in a browser with a stand-in for Tauri.
+
+**Where it lives.**
+
+| Piece | Files |
+| --- | --- |
+| Command line, launch plan, `USAGE`/`KEYS` | `pm-controller/src/launch.rs` (pure, tested); `pm-desktop/src/launch.rs` (console, single instance, window state, WebView2 check) |
+| BLE scan and pairing, SoftAP join, launch chain | `pm-desktop/src/connect.rs` (btleplug transport ported from `ble_impl.rs`, the pairing exchange from `connect.rs`, the `netsh`/`ipconfig` joins from `main.rs`) |
+| Station provisioning, LAN search | `pm-desktop/src/station.rs` (ported from `opc-monitor/src/station.rs`) |
+| Remembered cameras | `pm-controller/src/homewifi.rs` (all three files: `SavedCamera`, `LanCamera`, `SavedStation`, paths, address parsing, tested); `pm-desktop/src/known.rs` |
+| Settings | `pm-controller/src/{prefs,appsettings}.rs` (JSON over IPC, the web seed, tested); `pm-desktop/src/prefs.rs` |
+| Diagnostics and log | `pm-controller/src/platform.rs` (data and log folders, rotation, console, dialogs, tested); `pm-desktop/src/diagnostics.rs` |
+| Web | `Apps/Mobile/src/camera/desktop/connect.ts` (+ `connect.test.ts`); `src/features/pairing/desktop/{DesktopHome.tsx,DesktopPairExtras.tsx,desktopSync.ts}`; `src/features/settings/desktop/DesktopSettings.tsx`; small hooks in `CamerasScreen`, `PairScreen`, `SettingsSectionScreen`, `DesktopCameraSession` |
+| Installer and release | `installer/PocketMonitor.iss`, `build-tauri-release.ps1`, `build-tauri-installer.ps1`, `build-tauri-release-assets.ps1` (the old `OpenPocketCine.iss` and `build-*.ps1` are untouched and still build `opc-monitor`) |
+
+**IPC added.** `launch_args`, `keyboard_shortcuts`, event `launch://args` (a second launch);
+`ble_scan_start`/`ble_scan_stop` (event `ble://adverts`, `ble://state`), `ble_pair`, `ble_cancel`
+(event `pair://step`); `wifi_join_camera`, `wifi_join_saved`; `camera_open {target: auto | address |
+lan | station | softap | paired | direct}`; `station_join`, `station_reset`, `station_find`,
+`station_current_ssid` (event `station://step`); `known_cameras`, `forget_camera`, `probe_camera`,
+`camera_address_check`; `prefs_get`/`prefs_set`, `app_settings_get`/`app_settings_set`,
+`prefs_web_seed`/`prefs_web_seeded`; `diagnostics_paths`, `diagnostics_write`, `log_tail`,
+`open_folder {logs | data | luts}`. Every blocking one is `async` and runs on the blocking pool;
+Bluetooth runs on one `pm-ble` thread that owns the adapter.
+
+**Rows done.**
+
+- **A1** home screen: the saved-camera grid shows the PC's remembered cameras (`desktop-lan`,
+  `desktop-station`, `desktop-softap`, mirrored from the old files on every visit), an *Online*
+  badge from a 900 ms TCP 7001 probe every 3 s, *Forget* (deletes the file), *Connect by address*
+  (`That isn't an address. Try something like 10.0.0.213.`), pairing, the demo and the watcher.
+  **A2** Settings → Operator → Desktop: webcam gestures, open camera at launch, the key list.
+  **A3** `camera_open {kind: auto}` keeps the old order exactly — LAN camera (1.5 s TCP 7001),
+  saved station (LAN search), saved SoftAP profile (12 s), then the web goes to pairing — with
+  the same `wifi:`/`station:` log lines; *Open camera at launch* and `view` use it. **A6**
+  window size, position and maximised are restored (`pocket-monitor-window-v1.txt`) on a
+  monitor that still exists. **A12** a start failure is a dialog. **Single instance**: a
+  second launch (a shortcut while the app runs) hands its arguments over loopback and exits;
+  the window comes forward and the web follows the new route (`PM_MULTI_INSTANCE=1` turns it off).
+- **B1–B8** every old flag and command (`view [--camera] [--model] [--look|--lut] [--still]`,
+  `view --phone … --phone-at … --passcode`, `watch [NAME]`, `demo`, `home`, `setup`/`--setup`,
+  `headless scan|pair|station`, `keys`, `version`, `--help`, unknown command, `--gestures`,
+  `OPC_GESTURES`, `OPC_PHONE_PASSCODE`, `OPC_WIFI_PASSWORD`, `PM_CAMERA`); `--model` takes
+  decimal or `0x` hex; a LAN `--camera` is remembered; the passcode never goes to the web.
+  `KEYS` is the §1.R superset. **D2 fixed**: `keys`, `version`, `--help` and errors attach to
+  the parent console (`AttachConsole` + `CONOUT$`), or show a dialog when started from Explorer.
+- **C1–C5** scan in ≥ 3 s windows; pairing with the old deadlines and 120 ms write pacing;
+  *Already on camera Wi-Fi* on the find page; the SoftAP join writes a manual `user=current`
+  profile to a temp file deleted at once, then polls `ipconfig` every 500 ms (`CREATE_NO_WINDOW`
+  throughout); the saved profile reconnects in 12 s. **The password no longer leaves the
+  backend**: `ble_pair` returns the SSID only and `camera_open {kind: paired}` joins.
+  **Security fix**: the old `opc-ble.log` held every BLE frame as hex, including the camera's
+  Wi-Fi password (`0x07/0x0E`) and the home network's (`0x07/0x47`). The port logs command ids
+  and lengths only, into the main log (`ble:` lines).
+- **D-1…D-5** *Put the camera on my Wi-Fi* (station setup in the pair wizard; the SSID is
+  prefilled from `netsh`) runs the core's `Provisioning`, then the LAN search, then remembers
+  the station; *Return to camera Wi-Fi* on the setup page; Settings → Connection → This PC
+  shows the home-network camera and searches for it. D-6 (media host) is in §5.7.
+- **X1–X3, X5–X7** read and written in place in `%LOCALAPPDATA%\OpenPocketCine`, so the two
+  builds share them while both exist. **Migration**: on the first run on a PC the old
+  viewfinder used, `prefs_web_seed` turns `desktop-prefs.txt` into patches for the web's
+  `pm.preferences.v1` and `pm.assists.v1` (stick sensitivity, shutter angle, gamepad, every
+  assist toggle, zebra/peaking/false colour/guides/grid/scope options, the cube as `look:`);
+  the web applies them once after its stores hydrate and the backend writes
+  `pocket-monitor-web-seeded-v1.txt`. Tested in `prefs::tests`. X4 (presets) is §5.8's.
+- **Y1, D3 fixed**: `pocket-monitor.log` goes beside the exe only when the folder is writable and
+  not an install (no `unins000.exe`, not under Program Files); otherwise
+  `%LOCALAPPDATA%\OpenPocketCine\logs\`. The previous run's log is kept as
+  `pocket-monitor.previous.log` instead of being truncated. The shared `link:` logger uses the
+  same rule, so an installed old build now keeps its `link:` lines too (under
+  `logs\opc-monitor.log`). **Y2** Settings → Support → This PC: write a report
+  (`diagnostics-<unix>.txt` in the data folder: version, camera state, the web's report, the
+  log tail), open the log, settings and LUT folders.
+- **Z1–Z4** `build-tauri-release.ps1` (LGPL gate, Swift debug facade, web export, release build,
+  staging in `target\pm-release` as `pocket-monitor.exe`, plus `ffmpeg.exe` for gestures, D8);
+  `build-tauri-installer.ps1` + `PocketMonitor.iss`: the **same AppId and folder** as the old
+  installer (upgrade in place, `opc-monitor.exe` removed), `regserver` for the vcam DLL, the
+  Microsoft-signed WebView2 Evergreen bootstrapper run only when the runtime is missing,
+  `CloseApplications`, settings kept on uninstall; `build-tauri-release-assets.ps1`: portable
+  ZIP, installer, FFmpeg sources, `SHA256SUMS.txt` in `dist\tauri`. **Portable WebView2 story**:
+  the exe checks the runtime's registry keys before the window and, when missing, explains in a
+  dialog and opens Microsoft's download page; a Fixed Version runtime unpacked in `WebView2\`
+  beside the exe is used instead (`-FixedWebView2` puts one in the ZIP).
+
+**Left to do.**
+
+- macOS and Linux Wi-Fi joins are not implemented (as before): the operator joins by hand and
+  uses *Already on camera Wi-Fi*. The macOS current-SSID prefill is empty.
+- Desktop-only prefs without a web row yet: `ramp`, `countdownSeconds`, `timecode`, the DISP
+  parts, `fov`, `gimbalSpeed`. `prefs_get`/`prefs_set` serve them; the rows belong to the input
+  and display settings, and a change applies at the next launch (the backend reads prefs at start).
+- The seed maps a drop-folder cube (`file:<name>`) to `auto` and reports it as `lutFile`; the
+  web LUT store has no drop-folder entry to point at yet (§5.3).
+- Window sizes per route (A6, optional) are not applied; the window keeps one size.
+- *Pair again* after a failed saved-profile join is the pair wizard, reached from the connect
+  screen's failure, not an automatic jump as in the old app.
+- The old app's egui *Info* screen after *Return to camera Wi-Fi* is a row note now.
+
+**Verify on Windows.** `pocket-monitor keys`, `version`, `--help` and a bad command from
+`cmd` and PowerShell (text in the terminal, exit codes 0/0/0/2) and from a shortcut (a dialog);
+a second launch from the Start menu while the app is open (window comes forward, no second
+process); window position across restarts and with a monitor unplugged; first pair over
+Bluetooth to SoftAP, the `netsh` profile, the 12 s reconnect at the next launch; station setup
+on a 2.4 GHz network, the LAN search, the next launch finding it; *Return to camera Wi-Fi*;
+*Connect by address* and the *Online* badge; `pocket-monitor.log` beside a portable copy and in
+`%LOCALAPPDATA%\OpenPocketCine\logs` for an installed one; no password in any log
+(`findstr /i` the SSID's password); the installer over an existing `opc-monitor` install (one
+entry in Apps & features, shortcuts open the new app, the virtual camera still registered,
+settings and media cache kept), on a PC without WebView2, and the portable ZIP there.

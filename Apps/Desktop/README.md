@@ -16,6 +16,15 @@ Inno Setup 6) that also registers the virtual camera.
 `SHA256SUMS.txt`, ready for a GitHub Release. Public assets require a shared LGPL
 FFmpeg build; the release script rejects GPL and nonfree FFmpeg configurations.
 
+The Tauri app (`pm-desktop`, installed as `pocket-monitor.exe`) has its own scripts beside
+these: `build-tauri-debug.ps1`, `build-tauri-release.ps1` (stages `target\pm-release`),
+`build-tauri-installer.ps1` (`installer\PocketMonitor.iss`: the same AppId, so it upgrades an
+`opc-monitor` install in place, and it installs the WebView2 runtime when missing) and
+`build-tauri-release-assets.ps1` (installer, portable ZIP and `SHA256SUMS.txt` in `dist\tauri`).
+Its log is `pocket-monitor.log`: beside a portable or developer copy, in
+`%LOCALAPPDATA%\OpenPocketCine\logs` for an installed one. `pocket-monitor --help` lists the
+command line. See [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5.9.
+
 ## Quick start
 
 Needs a Swift toolchain, FFmpeg development libraries, a Vulkan loader, and a GLSL
