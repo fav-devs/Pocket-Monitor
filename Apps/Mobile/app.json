@@ -1,0 +1,88 @@
+{
+  "expo": {
+    "name": "Pocket Monitor",
+    "slug": "pocket-monitor",
+    "scheme": "pocketmonitor",
+    "version": "0.1.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#08090A",
+    "ios": {
+      "bundleIdentifier": "com.favdevs.pocketmonitor",
+      "supportsTablet": true,
+      "requireFullScreen": false,
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Pocket Monitor uses Bluetooth to find and pair with your Osmo camera.",
+        "NSLocalNetworkUsageDescription": "Pocket Monitor talks to your camera over its Wi-Fi to show the live picture.",
+        "NSBonjourServices": ["_opc-mon._tcp"],
+        "NSCameraUsageDescription": "Scan a camera Wi-Fi QR code.",
+        "NSPhotoLibraryAddUsageDescription": "Save clips and stills from your camera to Photos.",
+        "NSLocationWhenInUseUsageDescription": "iOS needs location access to read the camera Wi-Fi network name.",
+        "UIBackgroundModes": ["bluetooth-central"],
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "com.apple.developer.networking.HotspotConfiguration": true,
+        "com.apple.developer.networking.wifi-info": true
+      }
+    },
+    "android": {
+      "package": "com.favdevs.pocketmonitor",
+      "adaptiveIcon": {
+        "backgroundColor": "#08090A",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_STATE",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CHANGE_NETWORK_STATE",
+        "android.permission.NEARBY_WIFI_DEVICES",
+        "android.permission.INTERNET",
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "output": "single",
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Sora-Regular.ttf",
+            "./assets/fonts/Sora-Medium.ttf",
+            "./assets/fonts/Sora-SemiBold.ttf",
+            "./assets/fonts/Sora-Bold.ttf"
+          ]
+        }
+      ],
+      [
+        "expo-splash-screen",
+        { "image": "./assets/splash-icon.png", "imageWidth": 120, "backgroundColor": "#08090A" }
+      ],
+      [
+        "expo-build-properties",
+        { "ios": { "deploymentTarget": "17.0" }, "android": { "minSdkVersion": 29 } }
+      ],
+      ["expo-screen-orientation", { "initialOrientation": "DEFAULT" }],
+      ["expo-camera", { "cameraPermission": "Scan a camera Wi-Fi QR code." }],
+      ["expo-media-library", { "savePhotosPermission": "Save clips and stills from your camera to Photos.", "isAccessMediaLocationEnabled": false }],
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-video",
+      "expo-image",
+      "expo-localization"
+    ],
+    "experiments": { "typedRoutes": false }
+  }
+}
