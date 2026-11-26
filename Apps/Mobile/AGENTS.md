@@ -18,8 +18,8 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
 | Path | What lives there |
 | --- | --- |
 | `src/app/` | Expo Router routes only. Each file re-exports a screen from `src/features`. |
-| `src/theme/` | Tokens (`colors`, `radius`, `spacing`, `fonts`, `motion`) and `MText`. |
-| `src/ui/` | Shared primitives (`PressableScale`, `IconButton`, `SectionHeader`, `GlassSurface`, …). |
+| `src/constants/` | Theme (`useTheme`, `useThemedStyles`, `fonts`, `spacing`, `radius`) and layout helpers, verbatim from Sondr (`fav-devs/ai-cut`). |
+| `src/components/` | Shared components from Sondr (Button, Chip, Sheet, SegmentedControl, settings kit, …) plus app-wide ones (`app-logo`). |
 | `src/camera/` | UI-facing camera contract (`types.ts`, `session.ts`), `CameraProvider` hooks, demo session. |
 | `src/core/` | Pure TypeScript port of the protocol core (DUML, commands, status decode, depacketizers, policies). No React, no RN imports. Tested with vitest. |
 | `src/state/` | Persisted zustand stores (preferences, saved cameras, assists, …). |
@@ -37,7 +37,7 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
 - `0x09/0xa8` enables live view once at connect; repeats belong only to the watchdog.
 - The UDP ACK pump runs natively at 40 Hz, independent of JS and UI work.
 - Web always runs `DemoCameraSession`. Every screen must render and be usable on web.
-- Use `MText` for text, tokens for colours, `lucide-react-native` for icons, Sora fonts.
+- UI follows the `pocket-ui` skill (`/.claude/skills/pocket-ui/SKILL.md`): Sondr design system, SN Pro, Hugeicons, light/dark, labels not explanations.
 - Every interactive control has at least a 44pt touch target.
 - Do not commit camera Wi-Fi passwords, captures, personal data, signing material or unofficial LUTs.
   DJI LUT `.cube` files are not bundled.

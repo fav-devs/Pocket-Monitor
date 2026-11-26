@@ -54,10 +54,6 @@ SN Pro typeface
 Copyright 2024 The SN Pro Project Authors (https://github.com/supernotes/sn-pro), bundled through @expo-google-fonts/sn-pro
 Licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org). The font may be used, studied, modified and redistributed freely as long as it is not sold by itself. Modified versions may not use the Reserved Font Names.
 
-Sora typeface
-Copyright 2019 The Sora Project Authors (https://github.com/sora-xor/sora-font)
-Licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org). The font may be used, studied, modified and redistributed freely as long as it is not sold by itself. Modified versions may not use the Reserved Font Names.
-
 Hugeicons free icons
 Copyright Hugeicons (https://hugeicons.com), from @hugeicons/core-free-icons, drawn with @hugeicons/react-native (Copyright 2025 Hugeicons)
 Licensed under the MIT License. Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
@@ -74,9 +70,8 @@ ${app} includes code adapted from OpenPocketCine (Apache License 2.0).
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party software distributed with this product is listed in THIRD-PARTY-NOTICES.md.
 
-Bundled UI typefaces (SIL Open Font License 1.1):
+Bundled UI typeface (SIL Open Font License 1.1):
 - SN Pro, Copyright 2024 The SN Pro Project Authors (https://github.com/supernotes/sn-pro)
-- Sora, Copyright 2019 The Sora Project Authors (https://github.com/sora-xor/sora-font)
 
 Bundled UI icons from Hugeicons (MIT):
 - Hugeicons free icons, Copyright Hugeicons (https://hugeicons.com)

@@ -65,10 +65,10 @@
         "expo-font",
         {
           "fonts": [
-            "./assets/fonts/Sora-Regular.ttf",
-            "./assets/fonts/Sora-Medium.ttf",
-            "./assets/fonts/Sora-SemiBold.ttf",
-            "./assets/fonts/Sora-Bold.ttf"
+            "./node_modules/@expo-google-fonts/sn-pro/400Regular/SNPro_400Regular.ttf",
+            "./node_modules/@expo-google-fonts/sn-pro/500Medium/SNPro_500Medium.ttf",
+            "./node_modules/@expo-google-fonts/sn-pro/600SemiBold/SNPro_600SemiBold.ttf",
+            "./node_modules/@expo-google-fonts/sn-pro/700Bold/SNPro_700Bold.ttf"
           ]
         }
       ],

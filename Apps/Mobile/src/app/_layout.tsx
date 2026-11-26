@@ -34,11 +34,6 @@ function RootLayoutInner() {
     SNPro_500Medium,
     SNPro_600SemiBold,
     SNPro_700Bold,
-    // Legacy face kept until every screen has moved to the SN Pro design system.
-    'Sora-Regular': require('../../assets/fonts/Sora-Regular.ttf'),
-    'Sora-Medium': require('../../assets/fonts/Sora-Medium.ttf'),
-    'Sora-SemiBold': require('../../assets/fonts/Sora-SemiBold.ttf'),
-    'Sora-Bold': require('../../assets/fonts/Sora-Bold.ttf'),
   });
 
   useEffect(() => {
