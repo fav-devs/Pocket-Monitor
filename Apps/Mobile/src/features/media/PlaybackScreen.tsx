@@ -388,7 +388,7 @@ export default function PlaybackScreen() {
               ) : null}
             </View>
             {isVideo && engine.kind === 'simulated' && prefs.playbackAudioMeters ? (
-              <View style={styles.meters}>
+              <View style={[styles.meters, { right: sideInset + 16 }]}>
                 <PlaybackMeters left={meterL} right={meterR} />
               </View>
             ) : null}
@@ -552,7 +552,7 @@ function createStyles(colors: ThemeColors) {
     sourceRow: { flexDirection: 'row' as const, gap: 6, marginTop: 10, marginLeft: 56 },
     sourcePill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.45)' },
     sourceText: { fontFamily: fonts.medium, fontSize: 11, color: '#ffffff' },
-    meters: { position: 'absolute' as const, left: 72, bottom: -40 },
+    meters: { position: 'absolute' as const, bottom: -40 },
     bottom: { position: 'absolute' as const, left: 0, right: 0, bottom: 0, paddingTop: 28, alignItems: 'center' as const },
     bottomColumn: { width: '100%' as const, maxWidth: 760, gap: 4 },
     filmstrip: { gap: 6, paddingVertical: 4 },
