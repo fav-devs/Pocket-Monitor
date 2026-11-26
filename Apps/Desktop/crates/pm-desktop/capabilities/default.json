@@ -47,6 +47,7 @@
     "allow-lut-load",
     "allow-lut-select",
     "allow-lut-unload",
+    "allow-lut-auto",
     "allow-scopes-configure",
     "allow-still-capture",
     "allow-window-fullscreen",

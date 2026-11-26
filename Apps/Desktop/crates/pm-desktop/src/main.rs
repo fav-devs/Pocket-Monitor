@@ -275,6 +275,7 @@ fn main() {
             luts::lut_load,
             luts::lut_select,
             luts::lut_unload,
+            luts::lut_auto,
             scopes::scopes_configure,
             stills::still_capture,
             window_fullscreen,

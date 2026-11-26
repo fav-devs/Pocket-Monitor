@@ -437,7 +437,15 @@ impl Render {
         }
     }
 
+    /// A cube that cannot load is not painted: the picture says so rather than keep
+    /// showing the previous look under the new one's name.
     fn lut_failure(&mut self, app: &AppHandle, source: LutSource, error: String) {
+        if self.lut_loaded != LutSource::Off {
+            if let Err(clear) = self.renderer.set_lut(None) {
+                report(app, format!("could not clear the cube: {clear}"));
+            }
+            self.lut_loaded = LutSource::Off;
+        }
         let failure = Some((source, error.clone()));
         if self.lut_failed != failure {
             report(app, format!("could not load the cube: {error}"));

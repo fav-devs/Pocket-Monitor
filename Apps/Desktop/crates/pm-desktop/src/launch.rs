@@ -70,9 +70,30 @@ pub fn from_command_line() -> LaunchArgs {
                     crate::connect::remember_command_line_camera(camera, launch.model);
                 }
             }
+            // `--lut FILE`: validate the cube and copy it into the LUT folder, then hand the web
+            // its folder id so the picker and the picture select it like any other file.
+            if let Some(path) = launch.lut.take() {
+                match import_command_line_lut(&path) {
+                    Ok(id) => launch.lut = Some(id),
+                    Err(message) => {
+                        log_line("lut", format_args!("--lut {path}: {message}"));
+                        platform::message_box(cli::PRODUCT, &format!("{path}: {message}"), true);
+                    }
+                }
+            }
             launch
         }
     }
+}
+
+fn import_command_line_lut(path: &str) -> Result<String, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    crate::luts::parse(&text)?;
+    let folder = pm_controller::luts::custom_folder();
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let file = pm_controller::luts::import_name(path, |candidate| folder.join(candidate).exists());
+    std::fs::write(folder.join(&file), text).map_err(|error| error.to_string())?;
+    Ok(format!("file:{file}"))
 }
 
 /// The `args:` line of the old log, written once this process owns the log.

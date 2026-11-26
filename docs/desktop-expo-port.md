@@ -1340,8 +1340,15 @@ by the core's name rules, the folder path, the remembered pick), `lut_load {name
 the file is written into the drop folder as `<name>.cube`, ` (2)` rather than overwriting),
 `lut_select {id}` (`desktop-lut-v1.txt` beside the folder), `lut_unload {id}`. The picker's
 Custom tab lists the folder's files (id `file:<name>`, no delete button: they are the
-operator's files), Import writes into the folder, and the folder path is shown. `--look` /
-`--lut` on the command line and Auto LUT on playback (P2) are the launch and player owners'.
+operator's files), Import writes into the folder, and the folder path is shown.
+**Auto LUT on playback (P2):** with the picker on Auto in the player, `lut_auto {colorMode,
+model, announce}` asks the core for the official cube's name for the clip's colour (the player
+reads it from the original's `moov` tail) and looks for it in the drop folder; when it is
+there it replaces the generated display transform, and either way the notice says so ("Auto
+LUT · official cube for the clip" / "Auto LUT · add <file> to the LUT folder"). A proxy with no
+original falls back to the live colour mode, as before. **TODO (launch owner):** `--look NAME`
+/ `--lut FILE` on the command line (B1) should pre-select `look:<NAME>` / import the file
+through `lut_load` and `lut_select` it.
 
 **Stills (F4, D11).** `still_capture` renders the graded frame at the (desqueezed) source
 raster on the still targets and writes `PocketMonitor-YYYYMMDD-HHMMSS.png` (UTC) into

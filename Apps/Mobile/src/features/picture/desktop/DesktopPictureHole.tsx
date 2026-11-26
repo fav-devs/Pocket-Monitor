@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
 import { useCamera } from '@/camera';
 import { invoke, listen } from '@/camera/desktop/tauri';
-import { usePictureEffects } from '@/state/assists';
+import { useAssists, usePictureEffects } from '@/state/assists';
 import { pictureAspect, pictureRect, sameRect, type LivePictureProps } from '../LivePicture.shared';
 import { punchThrough, type DesktopFit } from './hole';
-import { ensureDesktopLut, useDesktopSplit } from './luts';
+import { ensureDesktopLut, useDesktopAutoLut, useDesktopSplit } from './luts';
 
 /**
  * The live picture inside the desktop app. The picture itself is Vulkan, presented by the Rust
@@ -17,7 +17,13 @@ import { ensureDesktopLut, useDesktopSplit } from './luts';
  */
 export function DesktopPictureHole({ resizeMode = 'fit', onPictureRect, effects: override, context = 'live' }: LivePictureProps) {
   const derived = usePictureEffects(context);
-  const effects = override ?? derived;
+  const base = override ?? derived;
+  // Auto LUT on playback (P2): the official cube for the clip's colour, when it is in the
+  // desktop's LUT folder, in place of the generated display transform.
+  const autoPick = useAssists((s) => context === 'playback' && s.playbackOn.LUT && s.options.lut.selection === 'auto');
+  const model = useCamera((s) => s.identity?.model ?? null);
+  const autoLut = useDesktopAutoLut(autoPick && base.lutId == null ? (base.signal ?? base.sourceColor) : null, model);
+  const effects = autoLut ? { ...base, lutId: autoLut } : base;
   const streamW = useCamera((s) => s.connection.streamWidth);
   const streamH = useCamera((s) => s.connection.streamHeight);
   const ref = useRef<ComponentRef<typeof View> | null>(null);

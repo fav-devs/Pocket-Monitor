@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { isTauri } from '@/camera/desktop/tauri';
+import { invoke } from '@/camera/desktop/tauri';
 import { lutList, lutLoad, lutSelect, type DesktopLutList } from '@/camera/desktop/picture';
 import { formatCube } from '@/core/media';
 import { ensureLut } from '@/features/picture/lutLibrary';
@@ -145,4 +146,27 @@ export function useDesktopLuts(): DesktopLuts | null {
     split: current,
     setSplit: setDesktopSplit,
   };
+}
+
+/**
+ * Auto LUT on playback: asks Rust for the official cube for `signal` on this body and returns
+ * its `lutId` when it is in the drop folder (null otherwise, and for Rec.709). Rust says which
+ * it found, or which file to add, as a notice.
+ */
+export function useDesktopAutoLut(signal: string | null, model: string | null): string | null {
+  const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    setId(null);
+    if (!signal || signal === 'rec709' || !isTauri()) return;
+    let live = true;
+    invoke<{ id: string | null; present: boolean }>('lut_auto', { colorMode: signal, model, announce: true })
+      .then((r) => {
+        if (live) setId(r.present ? r.id : null);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [signal, model]);
+  return id;
 }

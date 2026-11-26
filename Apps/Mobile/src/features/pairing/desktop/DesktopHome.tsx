@@ -9,6 +9,7 @@
  *
  * Everything here is inert outside the Tauri app.
  */
+import { useAssists, type LutSelection } from '@/state/assists';
 import { Link04Icon } from '@hugeicons/core-free-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -62,6 +63,7 @@ function useLaunchRouting() {
   /** `fresh`: this process's own command line (the backend already linked `--camera`). */
   const follow = useCallback(
     async (args: DesktopLaunchArgs, fresh: boolean) => {
+      applyLaunchLook(args);
       switch (args.route) {
         case 'setup':
           router.push('/pair');
@@ -117,6 +119,22 @@ function useLaunchRouting() {
     }
     return stop;
   }, [follow]);
+}
+
+/**
+ * `--look NAME` / `--lut FILE` (B4): the monitoring look starts on, as in the old viewfinder.
+ * Rust has already copied a `--lut` cube into the LUT folder and passes its `file:` id.
+ */
+function applyLaunchLook(args: DesktopLaunchArgs) {
+  const selection: LutSelection | null = args.look
+    ? (`look:${args.look}` as LutSelection)
+    : args.lut?.startsWith('file:')
+      ? (`custom:${args.lut}` as LutSelection)
+      : null;
+  if (!selection) return;
+  const assists = useAssists.getState();
+  assists.setOption('lut', { selection });
+  assists.setOn('LUT', true);
 }
 
 /**

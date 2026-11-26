@@ -47,6 +47,7 @@ const APP_COMMANDS: &[&str] = &[
     "lut_load",
     "lut_select",
     "lut_unload",
+    "lut_auto",
     "scopes_configure",
     "still_capture",
     "window_fullscreen",

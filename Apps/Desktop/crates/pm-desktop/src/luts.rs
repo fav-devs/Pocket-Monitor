@@ -174,6 +174,13 @@ impl LutStore {
         }
     }
 
+    /// Forgets every failure, so a file fixed or dropped in since is read again.
+    pub fn clear_failures(&self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.failed.clear();
+        }
+    }
+
     /// Keeps only the cubes still in use, so a session of imports does not pile up
     /// lattices (a 65³ is 4.4 MB of floats).
     pub fn retain(&self, keep: &[LutSource]) {
@@ -304,8 +311,13 @@ async fn blocking<T: Send + 'static>(
         .map_err(|error| error.to_string())
 }
 
+/// The picker's list. Listing also forgets earlier failures, so a cube fixed or dropped into
+/// the folder since loads on its next use.
 #[tauri::command]
-pub async fn lut_list() -> Result<LutList, String> {
+pub async fn lut_list(app: AppHandle) -> Result<LutList, String> {
+    let hub = app.state::<Arc<PictureHub>>();
+    hub.luts.clear_failures();
+    hub.lut_ready();
     blocking(list).await
 }
 
@@ -348,4 +360,76 @@ pub fn lut_unload(hub: tauri::State<'_, Arc<PictureHub>>, id: String) {
         hub.luts.forget(&source);
         hub.lut_ready();
     }
+}
+
+/// `lut_auto`'s answer: the official DJI cube's file name for a clip's colour on this body
+/// (from the core), and whether it is in the drop folder.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoLut {
+    pub file: Option<String>,
+    /// The `lutId` to use when it is present (`file:<name>`, as the folder spells it).
+    pub id: Option<String>,
+    pub present: bool,
+}
+
+/// The core's model id for a mobile `CameraModelId`.
+fn model_id(name: Option<&str>) -> i32 {
+    match name {
+        Some("osmo-pocket-3") => 0x20,
+        Some("osmo-pocket-4") => 0x21,
+        Some("osmo-pocket-4-pro") => 0x22,
+        Some("osmo-nano") => 0x19,
+        _ => 0,
+    }
+}
+
+/// Auto LUT on playback (P2): the original's colour (the player reads it from the `moov`
+/// tail) → the official cube's name → the drop folder. The desktop ships no DJI cubes; when
+/// the file is missing the notice names the one to drop in. `announce` sends the old
+/// viewfinder's notice on `camera://event`.
+#[tauri::command]
+pub async fn lut_auto(
+    app: AppHandle,
+    color_mode: String,
+    model: Option<String>,
+    announce: Option<bool>,
+) -> Result<AutoLut, String> {
+    let answer = blocking(move || {
+        let name = match color_mode.as_str() {
+            "rec709" => "normal",
+            other => other,
+        };
+        let Some(code) = pm_controller::state::color_mode_code(name) else {
+            return AutoLut::default();
+        };
+        let Some(file) = luts::auto_lut_file(code, model_id(model.as_deref())) else {
+            return AutoLut::default();
+        };
+        let wanted = file.to_lowercase();
+        let found = luts::list_custom(&ensure_folder())
+            .into_iter()
+            .find(|candidate| candidate.to_lowercase() == wanted);
+        AutoLut {
+            id: found.as_ref().map(|found| format!("file:{found}")),
+            present: found.is_some(),
+            file: Some(file),
+        }
+    })
+    .await?;
+    if announce == Some(true) {
+        if let Some(file) = answer.file.as_deref() {
+            let message = if answer.present {
+                "Auto LUT · official cube for the clip".to_string()
+            } else {
+                format!("Auto LUT · add {file} to the LUT folder")
+            };
+            let _ = tauri::Emitter::emit(
+                &app,
+                "camera://event",
+                serde_json::json!({ "type": "notice", "message": message, "tone": "info" }),
+            );
+        }
+    }
+    Ok(answer)
 }
