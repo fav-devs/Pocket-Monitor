@@ -145,8 +145,8 @@ export function LutPicker() {
           <MenuTabs
             tabs={[
               { id: 'off', label: 'Full' },
-              { id: 'across', label: 'Split ⬒' },
-              { id: 'down', label: 'Split ◨' },
+              { id: 'across', label: 'Top half' },
+              { id: 'down', label: 'Right half' },
             ]}
             selected={desktop.split}
             onSelect={desktop.setSplit}
