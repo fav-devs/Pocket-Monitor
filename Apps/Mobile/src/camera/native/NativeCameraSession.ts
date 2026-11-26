@@ -214,6 +214,8 @@ export class NativeCameraSession implements CameraSession {
   private motion: { token: number; timers: Timer[]; interval: ReturnType<typeof setInterval> | null; resolve: () => void } | null = null;
   private motionToken = 0;
   private wasRecording = false;
+  /** First reported record state seeds `wasRecording` without an event (camera may already be rolling). */
+  private recordingSeen = false;
 
   // ── media ──
   private browsing = false;
@@ -281,6 +283,12 @@ export class NativeCameraSession implements CameraSession {
       return { ...next, connection: { ...next.connection, ...chip } };
     });
     const recording = this.state.recording.recording;
+    if (!this.reducer.status.recordingReported) return;
+    if (!this.recordingSeen) {
+      this.recordingSeen = true;
+      this.wasRecording = recording;
+      return;
+    }
     if (recording !== this.wasRecording) {
       this.wasRecording = recording;
       this.emit({ type: recording ? 'recording-started' : 'recording-stopped' });
@@ -1282,6 +1290,8 @@ export class NativeCameraSession implements CameraSession {
     this.repairing = false;
     this.browsing = false;
     this.mediaChunks = null;
+    this.recordingSeen = false;
+    this.wasRecording = false;
     this.stateWaiters.forEach((w) => w());
     this.stateWaiters.clear();
     this.bleExchange.close('session closed');

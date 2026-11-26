@@ -49,22 +49,24 @@ export function BatchRow({ batch, onCancel, last }: { batch: DeliveryBatch; onCa
         <DestinationWell destination={batch.destination} busy={preparing} tone={tone} />
         <View style={styles.rowText}>
           <Text
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.8}
+            numberOfLines={2}
             style={[styles.rowTitle, batch.status === 'failed' && { color: colors.destructive }, batch.status === 'cancelled' && { color: colors.mutedForeground }]}
           >
             {batchStatusLine(batch)}
           </Text>
-          <Text numberOfLines={1} style={styles.rowMeta}>
+          <Text numberOfLines={2} style={styles.rowMeta}>
             {destinationTitle(batch.destination)}
             {batch.project ? ` · ${batch.project.name}` : ''} · {batchCaption(batch)}
           </Text>
         </View>
-        {batch.status === 'running' ? <Text style={styles.percent}>{percent}%</Text> : null}
         {live ? <TextAction title="Cancel" label="Cancel delivery" tone="muted" onPress={onCancel} /> : null}
       </View>
-      {batch.status === 'running' ? <ProgressBar fraction={batchFraction(batch)} style={styles.bar} /> : null}
+      {batch.status === 'running' ? (
+        <View style={styles.barRow}>
+          <ProgressBar fraction={batchFraction(batch)} style={styles.flex} />
+          <Text style={styles.percent}>{percent}%</Text>
+        </View>
+      ) : null}
       {batch.status === 'running' && batch.filename ? (
         <Text numberOfLines={1} style={styles.file}>
           {batch.filename}
@@ -163,8 +165,8 @@ function createStyles(colors: ThemeColors) {
     rowText: { flex: 1, minWidth: 0, gap: 3 },
     rowTitle: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
     rowMeta: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedForeground, fontVariant: ['tabular-nums' as const] },
-    percent: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, fontVariant: ['tabular-nums' as const] },
-    bar: { marginLeft: 48 },
+    percent: { minWidth: 36, textAlign: 'right' as const, fontFamily: fonts.semibold, fontSize: 12, color: colors.foreground, fontVariant: ['tabular-nums' as const] },
+    barRow: { marginLeft: 48, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10 },
     file: { marginLeft: 48, fontFamily: fonts.regular, fontSize: 12, color: colors.mutedForeground },
     note: { marginLeft: 48, fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: colors.warning },
     footer: { flexDirection: 'row' as const, gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.md },

@@ -1,10 +1,9 @@
 import { Unlink01Icon, Wifi01Icon, WifiDisconnected01Icon } from '@hugeicons/core-free-icons';
 import { useRouter } from 'expo-router';
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
-import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
-import { SettingsGroup, SettingsRow } from '@/components/settings-ui';
+import { SettingsDestructiveButton, SettingsGroup, SettingsRow } from '@/components/settings-ui';
 import { Squircle } from '@/components/squircle';
 import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { connectionPhaseLabel } from '@/features/pairing/presentation';
@@ -55,17 +54,12 @@ export default function SettingsScreen() {
               {live && cameraName ? `${cameraName} · ${connectionPhaseLabel(phase)}` : connectionPhaseLabel(phase)}
             </Text>
           </View>
-          {live ? (
-            <Button
-              testID="monitor.system.disconnect"
-              variant="secondary"
-              destructive
-              icon={Unlink01Icon}
-              title="Disconnect"
-              onPress={disconnect}
-            />
-          ) : null}
         </View>
+        {live ? (
+          <View testID="monitor.system.disconnect" style={styles.disconnect}>
+            <SettingsDestructiveButton title="Disconnect" icon={Unlink01Icon} onPress={disconnect} />
+          </View>
+        ) : null}
       </SettingsGroup>
       {settingsGroups.map((group) => (
         <SettingsGroup key={group.label} label={group.label}>
@@ -100,6 +94,7 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: spacing.md,
       paddingVertical: 14,
     },
+    disconnect: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
     statusText: { flex: 1, minWidth: 0, gap: 2 },
     statusTitle: { fontFamily: fonts.semibold, fontSize: 16, letterSpacing: -0.2, color: colors.foreground },
     statusMeta: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground },

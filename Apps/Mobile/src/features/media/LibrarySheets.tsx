@@ -61,7 +61,7 @@ export function FilterSheet({
       }
     >
       {nothing ? <Text style={styles.muted}>Nothing in this tab to filter by.</Text> : null}
-      <View style={styles.sections}>
+      <View style={[styles.sections, styles.firstUnderHeader]}>
         <Choices title="Resolution" choices={options.resolutions} active={filters.resolutions} onToggle={(v) => onChange({ ...filters, resolutions: toggle(filters.resolutions, v) })} />
         <Choices title="Frame rate" choices={options.frameRates} active={filters.frameRates} onToggle={(v) => onChange({ ...filters, frameRates: toggle(filters.frameRates, v) })} />
         <Choices<ColorMode> title="Color" choices={options.colors} active={filters.colors} onToggle={(v) => onChange({ ...filters, colors: toggle(filters.colors, v) })} />
@@ -130,6 +130,8 @@ function createStyles(colors: ThemeColors) {
     footer: { flexDirection: 'row' as const, gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.md },
     flex: { flex: 1 },
     sections: { gap: spacing.md, paddingBottom: spacing.sm },
+    // The first section's hairline would double the sheet header's: tuck it under it.
+    firstUnderHeader: { marginTop: -(spacing.sm + 1) },
     muted: { fontFamily: fonts.regular, fontSize: 14, color: colors.mutedForeground },
     sortOption: {
       flexDirection: 'row' as const,

@@ -207,6 +207,7 @@ export function DeliverySheet({
                       <Text style={[styles.controlTitle, !exporter && styles.dim]}>Format</Text>
                       {exporter ? null : <Tag text={NATIVE} />}
                     </View>
+                    <View style={!exporter && styles.dim} pointerEvents={exporter ? 'auto' : 'none'}>
                     <SegmentedControl<MediaShareFormat>
                       accessibilityLabel="Format"
                       value={options.format}
@@ -217,6 +218,7 @@ export function DeliverySheet({
                         { value: 'hevc', label: 'HEVC' },
                       ]}
                     />
+                    </View>
                   </View>
                 </>
               ) : null}

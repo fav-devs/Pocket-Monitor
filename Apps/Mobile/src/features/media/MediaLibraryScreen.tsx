@@ -235,6 +235,11 @@ export default function MediaLibraryScreen() {
         <Text accessibilityRole="header" accessibilityLiveRegion="polite" numberOfLines={1} style={[styles.title, lib.selecting && styles.selectionTitle]}>
           {lib.selecting ? `${lib.selected.length} selected` : 'Media'}
         </Text>
+        {wide ? (
+          <Text numberOfLines={1} style={styles.sublineInline}>
+            {subline}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.headerRight}>
         {lib.selecting ? (
@@ -284,7 +289,7 @@ export default function MediaLibraryScreen() {
   );
 
   const categoryRow = (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll} contentContainerStyle={styles.categories}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll} contentContainerStyle={[styles.categories, wide && styles.categoriesWide]}>
       {categories.map((c) => (
         <CategoryPill key={c} title={categoryTitles[c]} count={model.counts[c]} selected={lib.category === c} onPress={() => lib.setCategory(c)} />
       ))}
@@ -315,9 +320,11 @@ export default function MediaLibraryScreen() {
       <View style={[styles.header, { paddingTop: insets.top + (landscape && !large ? 6 : spacing.sm), paddingLeft: pad, paddingRight: pad }]}>
         <View style={styles.headerColumn}>
           {titleRow}
-          <Text numberOfLines={1} style={styles.subline}>
-            {subline}
-          </Text>
+          {wide ? null : (
+            <Text numberOfLines={1} style={styles.subline}>
+              {subline}
+            </Text>
+          )}
           {notices}
           {wide ? (
             <View style={styles.wideControls}>
@@ -437,9 +444,10 @@ function createStyles(colors: ThemeColors) {
     selectionTitle: { fontSize: 20, letterSpacing: -0.3 },
     headerRight: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 14 },
     subline: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, marginTop: 2, marginBottom: spacing.sm + 4 },
+    sublineInline: { flexShrink: 1, fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, marginLeft: spacing.sm, marginTop: 6 },
     notice: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8, marginBottom: spacing.sm },
     noticeText: { flex: 1, fontFamily: fonts.medium, fontSize: 13 },
-    wideControls: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.md },
+    wideControls: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.md, marginTop: 4 },
     searchRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: spacing.sm },
     searchRowWide: { width: 400, flexShrink: 1 },
     searchField: {
@@ -477,6 +485,7 @@ function createStyles(colors: ThemeColors) {
     squareBadgeText: { fontFamily: fonts.semibold, fontSize: 10, color: '#ffffff' },
     categoryScroll: { flexGrow: 1, flexShrink: 1 },
     categories: { gap: spacing.sm, paddingTop: spacing.sm + 2, paddingBottom: 2 },
+    categoriesWide: { paddingTop: 0 },
     pill: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,

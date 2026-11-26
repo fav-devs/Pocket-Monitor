@@ -284,7 +284,8 @@ export default function PlaybackScreen() {
     </View>
   );
 
-  const shareButton = portrait ? (
+  const roomy = width >= 600;
+  const shareButton = portrait && !roomy ? (
     <Pressable accessibilityRole="button" accessibilityLabel="Share clip" onPress={() => setSharing(true)} hitSlop={6} style={({ pressed }) => [styles.shareSquare, pressed && { opacity: 0.75 }]}>
       <Glyph icon={Share08Icon} size={21} color="#111111" strokeWidth={1.8} />
     </Pressable>
@@ -446,7 +447,7 @@ export default function PlaybackScreen() {
                   {portrait ? (
                     <>
                       {transport}
-                      <View style={styles.tools}>{[tool.assists, tool.conform, tool.sound, tool.loop, tool.rate, tool.remove, tool.hide]}</View>
+                      <View style={[styles.tools, roomy && styles.toolsRoomy]}>{[tool.assists, tool.conform, tool.sound, tool.loop, tool.rate, tool.remove, tool.hide]}</View>
                     </>
                   ) : (
                     <View style={styles.landscapeRow}>
@@ -563,6 +564,7 @@ function createStyles(colors: ThemeColors) {
     clockMuted: { fontFamily: fonts.medium, fontSize: 13, color: 'rgba(255,255,255,0.65)', fontVariant: ['tabular-nums' as const] },
     transport: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 6 },
     tools: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, paddingTop: 6 },
+    toolsRoomy: { justifyContent: 'center' as const, gap: 20 },
     photoTools: { justifyContent: 'flex-end' as const, gap: 12 },
     landscapeRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8 },
     toolGroup: { flex: 1, flexDirection: 'row' as const, gap: 6 },

@@ -49,16 +49,16 @@ export function ConnectionSection() {
       <Group label="Link health" note={SettingsCopy.linkHealthHelp}>
         <LinkHealthScale caption={caption} score={score} />
       </Group>
-      <Group label="Connection" note={SettingsCopy.currentTransport}>
+      <Group label="Connection" note={`${SettingsCopy.currentTransport} ${live ? SettingsCopy.networkHelp : ''}`.trim()}>
         <ValueRow icon={Link04Icon} title="Transport" value={transportLabel(connection.transport, live)} />
         <ValueRow
           icon={Activity01Icon}
           title="Phase"
-          subtitle={SettingsCopy.phaseHelp}
+          subtitle="BLE → Wi-Fi → datalink handshake"
           value={connectionPhaseLabel(connection.phase)}
           last={!live}
         />
-        {ssid ? <ValueRow icon={Wifi01Icon} title="Camera Wi-Fi" subtitle={SettingsCopy.networkHelp} value={ssid} /> : null}
+        {ssid ? <ValueRow icon={Wifi01Icon} title="Camera Wi-Fi" subtitle="Password kept in secure storage" value={ssid} /> : null}
         {stream ? <ValueRow icon={Video01Icon} title="Live stream" value={stream} /> : null}
         {live ? <ValueRow icon={SignalFull02Icon} title="Signal" value={`${connection.signalBars} of 4`} last /> : null}
       </Group>
