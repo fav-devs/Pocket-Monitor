@@ -60,8 +60,11 @@ discovery.
 | `opc-camera` | Camera commands, the DUML datalink, the ACK pump, pairing, and the watchdog |
 | `opc-render` | The Vulkan feed pipeline, the swapchain, the cube upload, the chrome composite, and PNG stills |
 | `opc-ui` | The viewfinder's chrome: a bitmap font, a CPU canvas, the key map, the format ladder, the tracking arithmetic |
-| `opc-monitor` | The viewfinder |
+| `opc-monitor` | The viewfinder (winit + Slint chrome), the operator build until the Tauri app passes its gates |
 | `opc-watcher` | The command-line shell and the second-screen window |
+| `pm-controller` | The viewfinder's decisions without a window: camera link thread, decode policy, gimbal stream, assists, prefs, zoom, moves, presets, and the mobile `CameraState`/command/effects vocabulary |
+| `pm-surface` | The native picture surface under the web view (child `HWND` / `NSView`) |
+| `pm-desktop` | The Tauri 2 app: the Expo web build of `Apps/Mobile` over the native Vulkan picture. Phase 1, not yet run on hardware: [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5 |
 
 No relay decision is made in Rust, and no `.cube` is parsed here. Framing, payload
 limits, join rules, the retry ladder, the delivery-delay guard, every JSON shape, and

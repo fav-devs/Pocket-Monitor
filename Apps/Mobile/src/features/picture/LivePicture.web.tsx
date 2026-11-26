@@ -7,11 +7,23 @@ import { SAMPLE_INTERVAL_MS, clearFrameSample, hasSampleDemand, publishFrameSamp
 import { getLut, useEnsureLut, useLutVersion } from './lutLibrary';
 import { demoExposureGain, demoSceneFor, pictureAspect, pictureRect, sameRect, type LivePictureProps } from './LivePicture.shared';
 import { WebPictureRenderer } from './web/WebPictureRenderer';
+import { isTauri } from '@/camera/desktop/tauri';
+import { DesktopPictureHole } from './desktop/DesktopPictureHole';
 
 export type { LivePictureProps } from './LivePicture.shared';
 
-/** Web picture: WebGL2 demo camera + the monitor effects shader. */
-export default function LivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene }: LivePictureProps) {
+/**
+ * Web picture. Inside the desktop app with the desktop session, the picture is native Vulkan
+ * under the web view and this renders a transparent hole (`DesktopPictureHole`); everywhere
+ * else (browser, demo scenes, playback preview) it is the WebGL2 demo renderer.
+ */
+export default function LivePicture(props: LivePictureProps) {
+  if (props.source.kind === 'desktop' && isTauri()) return <DesktopPictureHole {...props} />;
+  return <WebLivePicture {...props} />;
+}
+
+/** WebGL2 demo camera + the monitor effects shader. */
+function WebLivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene }: LivePictureProps) {
   const derived = usePictureEffects(context);
   const effects = override ?? derived;
   const exposure = useCamera((s) => s.exposure);

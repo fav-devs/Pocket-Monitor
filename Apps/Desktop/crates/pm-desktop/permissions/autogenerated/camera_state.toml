@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-camera-state"
+description = "Enables the camera_state command without any pre-configured scope."
+commands.allow = ["camera_state"]
+
+[[permission]]
+identifier = "deny-camera-state"
+description = "Denies the camera_state command without any pre-configured scope."
+commands.deny = ["camera_state"]

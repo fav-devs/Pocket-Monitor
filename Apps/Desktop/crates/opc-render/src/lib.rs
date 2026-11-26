@@ -26,6 +26,7 @@ pub use lut::{
 };
 pub use present::Presented;
 pub use renderer::{
-    letterbox, FalseColorScale, FeedRenderer, GradeOptions, Peaking, PeakingSense, Rgba, Zebra,
+    letterbox, letterbox_in, FalseColorScale, FeedRenderer, GradeOptions, Peaking, PeakingSense,
+    Rgba, Zebra,
 };
 pub use still::{encode, write_png};

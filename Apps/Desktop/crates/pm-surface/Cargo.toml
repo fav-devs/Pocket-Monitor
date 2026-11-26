@@ -1,0 +1,26 @@
+[package]
+name = "pm-surface"
+description = "The native picture surface under Pocket Monitor's web view: a hit-test-transparent child HWND on Windows, a CAMetalLayer-backed NSView below the WKWebView on macOS. Window plumbing only, so it builds and checks for every target without FFmpeg or the Swift core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSResponder", "NSGraphics", "objc2-core-foundation"] }
+
+[lints]
+workspace = true

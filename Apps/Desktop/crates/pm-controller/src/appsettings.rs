@@ -3,21 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AppSettings {
     /// Webcam gestures on whenever the viewfinder opens.
     pub gestures: bool,
     /// Skip the home screen and open the remembered camera straight away at launch.
     pub open_camera_at_launch: bool,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            gestures: false,
-            open_camera_at_launch: false,
-        }
-    }
 }
 
 const HEADER: &str = "openpocketcine-desktop-app-v1";
@@ -61,7 +52,8 @@ pub fn path() -> PathBuf {
 }
 
 pub fn load() -> AppSettings {
-    std::fs::read_to_string(path()).map_or_else(|_| AppSettings::default(), |t| AppSettings::parse(&t))
+    std::fs::read_to_string(path())
+        .map_or_else(|_| AppSettings::default(), |t| AppSettings::parse(&t))
 }
 
 pub fn save(settings: &AppSettings) {

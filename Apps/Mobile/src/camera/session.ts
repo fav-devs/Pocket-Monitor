@@ -29,7 +29,12 @@ export type VideoSource =
   /** Procedural test scene (web preview, simulator, no camera). */
   | { kind: 'demo'; scene: 'studio' | 'bars' | 'skin' | 'night' }
   /** Watcher relay from another phone (native). */
-  | { kind: 'relay'; sessionId: string };
+  | { kind: 'relay'; sessionId: string }
+  /**
+   * Desktop (Tauri): the Rust backend presents the picture natively (Vulkan) under a
+   * transparent web view. `<LivePicture>` renders a transparent hole and reports its rect.
+   */
+  | { kind: 'desktop' };
 
 export interface FormatChange {
   resolution?: string;
@@ -154,9 +159,11 @@ export interface ConnectOptions {
  * Everything the UI can ask of a camera. Implementations:
  * - `DemoCameraSession` (src/camera/demo) — web preview and offline development.
  * - `NativeCameraSession` (src/camera/native) — real camera via src/core + modules/pocket-native.
+ * - `DesktopCameraSession` (src/camera/desktop) — the Tauri desktop app, over Tauri IPC to the
+ *   Rust backend (Apps/Desktop/crates/pm-desktop).
  */
 export interface CameraSession {
-  readonly kind: 'demo' | 'native' | 'watcher';
+  readonly kind: 'demo' | 'native' | 'watcher' | 'desktop';
   getState(): CameraState;
   subscribe(listener: (state: CameraState) => void): Unsubscribe;
   onEvent(listener: (event: SessionEvent) => void): Unsubscribe;

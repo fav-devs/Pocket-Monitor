@@ -37,6 +37,11 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
 - `0x09/0xa8` enables live view once at connect; repeats belong only to the watchdog.
 - The UDP ACK pump runs natively at 40 Hz, independent of JS and UI work.
 - Web always runs `DemoCameraSession`. Every screen must render and be usable on web.
+  Exception: inside the Tauri desktop app (`window.__TAURI_INTERNALS__`), `bootstrap.ts` picks
+  `DesktopCameraSession` (`src/camera/desktop`), which drives the camera through the Rust backend
+  over IPC; its picture is native Vulkan under a transparent web view, so `<LivePicture>` renders a
+  transparent hole for `VideoSource { kind: 'desktop' }`. The same web bundle still boots the demo
+  in a browser. See `docs/desktop-expo-port.md` §5.
 - UI follows the `pocket-ui` skill (`/.claude/skills/pocket-ui/SKILL.md`): Sondr design system, SN Pro, Hugeicons, light/dark, labels not explanations.
 - Every interactive control has at least a 44pt touch target.
 - Do not commit camera Wi-Fi passwords, captures, personal data, signing material or unofficial LUTs.

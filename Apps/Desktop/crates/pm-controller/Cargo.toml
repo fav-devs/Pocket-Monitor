@@ -1,0 +1,20 @@
+[package]
+name = "pm-controller"
+description = "Pocket Monitor's camera decisions without a window: the camera link thread, the live decode policy, the gimbal stream, assists, prefs, zoom, moves and presets, plus the mobile-shaped state and command vocabulary the Tauri app speaks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+opc-camera = { path = "../opc-camera" }
+opc-core-sys = { path = "../opc-core-sys" }
+opc-decode = { path = "../opc-decode" }
+opc-render = { path = "../opc-render" }
+opc-ui = { path = "../opc-ui" }
+opc-vcam = { path = "../opc-vcam" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

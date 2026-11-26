@@ -862,3 +862,162 @@ failure blocks the area that caused it, not just the release.
 
 Only when every box is ticked is `Apps/Desktop` (the winit/Slint/egui shell) deleted. The
 crates kept in §3.4 move under the new desktop app rather than being deleted with it.
+
+---
+
+## 5. Phase 1 status (2026-11-26)
+
+Phase 1 builds the skeleton of §3: a Tauri 2 app, the native picture under a transparent
+web view, the camera service, and the web session. **None of it has run on Windows or
+macOS yet.** It was written and checked in a Linux container with no Swift toolchain, so
+the app could be type-checked but not linked or launched there. Treat everything below as
+"compiles, not proven". The old `opc-monitor` binary still builds from the same sources and
+stays the operator build until the §4 gates pass.
+
+### 5.1 What exists
+
+| Piece | Where | Notes |
+| --- | --- | --- |
+| Controller crate | `Apps/Desktop/crates/pm-controller` | §3.4 `opc-controller`, named for the product. These modules **moved** out of `opc-monitor` verbatim: `appsettings`, `assists`, `gesture`, `hand`, `homewifi`, `luts`, `moves`, `pad`, `prefs` (with the `Prefs`/`Part` struct from `sheets.rs`), `presets`, `scopes`, `zoom`, `toggles` (`Toggles` from `shell.rs`), and the binary's `link.rs` (camera thread). `opc-monitor` re-exports them, so its paths, its shell and its tests are unchanged. |
+| Decode policy | `pm-controller/src/decode.rs` | `LiveDecoder` (codec latch, configuration packets, the mid-stream join race, the 30-unit keyframe skip), `is_keyframe`, `codec_of`, `dump_unit`, `fresh_session`. `view.rs` now calls it too, so both apps share one policy. |
+| Gimbal stream | `pm-controller/src/gimbal.rs` | `stick_axes` and `zoom_trigger_step` moved from `shell.rs`, `GimbalMode` moved too. New: `GimbalDrive` (the 200 ms keepalive, the 25 Hz ramp, rest on release, rest after a 250 ms heartbeat gap), tested. |
+| Mobile vocabulary | `pm-controller/src/{state,command,effects}.rs` | `CameraState` in the mobile shape, built from `Status`, plus `StateThrottle` (5 Hz, immediate fields at once). `CameraCommand`, the `CameraController`/`GimbalController` calls as one serde enum, resolved against the body's own ladders into `opc_camera::Command`. `PictureEffects` mapped onto `GradeOptions` + cube + false-colour scale. |
+| Picture surface | `Apps/Desktop/crates/pm-surface` | Windows option A: a child `HWND` at `HWND_BOTTOM`, `WM_NCHITTEST → HTTRANSPARENT`, no background erase. Option B with `PM_PICTURE_HOST=toplevel`. macOS: an `NSView` inserted below the `WKWebView`. Linux: refused (option B handle only, opt-in). |
+| Renderer | `opc-render` | `FeedRenderer::set_picture_rect` letterboxes into the web view's hole without a swapchain rebuild. `letterbox_in` is the one formula used by both the blit and `picture://fit`. The old window passes nothing, so its behaviour is unchanged. |
+| Tauri app | `Apps/Desktop/crates/pm-desktop` | Window "Pocket Monitor", 1280×720, transparent, `backgroundThrottling: disabled`, WebView2 background-throttling switches off, `viewfinder-256.png`/`.ico` icons, `frontendDist = ui/`. `keep_timers_fast()` runs first (moved to `pm_controller::platform`). |
+| Web export | `pm-desktop/scripts/prepare-ui.mjs` | Runs `npx expo export --platform web` in `Apps/Mobile` and copies it into `pm-desktop/ui`. The bundle is the same one a browser gets. |
+| Web session | `Apps/Mobile/src/camera/desktop/` | `DesktopCameraSession` over a typed `tauri.ts` bridge to `window.__TAURI_INTERNALS__` (no `@tauri-apps/api`). `bootstrap.ts` picks it inside Tauri (`EXPO_PUBLIC_DESKTOP=0` opts out). Contract additions: `kind: 'desktop'` and `VideoSource { kind: 'desktop' }`. |
+| Picture hole | `Apps/Mobile/src/features/picture/desktop/` | `LivePicture.web.tsx` branches to `DesktopPictureHole` only for `source.kind === 'desktop'` inside Tauri. The hole marks itself and its ancestors with a `!important` transparent rule, reports its rect (ResizeObserver, resize, 500 ms poll), sends the effects when they change, and positions overlays from `picture://fit`. The browser demo renderer is untouched. |
+| Windows build | `Apps/Desktop/build-tauri-debug.ps1` | `build-debug.ps1`'s toolchain discovery and DLL staging, for `pm-desktop`. |
+| CI | `.github/workflows/ci.yml` | WebKitGTK dev packages added, because the workspace now contains a Tauri crate. |
+
+**Threads (§3.3).** The main thread dispatches IPC and window events. Connect, disconnect and
+reconnect run on the blocking pool, because they join threads. `opc-camera` is the
+unchanged `Link` thread, and every send goes through its channel (`LinkCommander`).
+`pm-session` decodes each access unit as it arrives, folds status into `CameraState` and
+emits it. `pm-render` owns the `FeedRenderer`. It presents on a new picture, or every 16 ms
+while one exists, and calls `note_presented` after each real present. `pm-input` ticks at
+100 Hz for the stick and the delayed half of the tap-focus burst. The renderer is built on
+the main thread inside `with_webview`, because AppKit needs that, then moved to
+`pm-render`. A compile-time assertion keeps `FeedRenderer: Send`.
+
+### 5.2 IPC: implemented vs stubbed
+
+| Name | State |
+| --- | --- |
+| `camera_connect {target: {host?, model?}}`, `camera_disconnect`, `camera_reconnect`, `camera_state` | Implemented. With no host, the camera's SoftAP address. Also `--camera HOST[:PORT] --model ID` or `PM_CAMERA` on the command line. A web reload re-attaches through `camera_state`; it never reconnects (R11). |
+| `camera_command {command}` | Implemented: record (photo in a stills mode), photo, shooting mode (refused while rolling), exposure mode, ISO and ISO max (snapped to the body's ladder), shutter (snapped to the wheel), EV, WB preset/Kelvin/tint (tint kept), format size/rate (the body's list, rate kept), colour (refused while rolling), focus AFS/AFC, tap focus (`0x22`+`0x30` now, `0x68`+`0x32` after 0.4 s), zoom jump, zoom stop, tracking box (centre+size, FRAME TOO SMALL), stop tracking, audio channel, vocal boost, wind/directional (needs the DSP blob), gimbal recenter/flip/mode/speed. FOV and gimbal speed are sent once per link on the first picture (I6). |
+| Refused with operator copy (stubs) | Aperture, manual focus, continuous `zoomBy`, the D-Log2 zoom hop (the shell's `ZoomRules` wait is not wired), codec/bitrate, rear-only audio, the countdown flag (`startRecording({countdown})` starts at once). |
+| `gimbal_drive {x, y, source}`, `gimbal_release {source}` | Implemented. The web coalesces to one call per frame plus a 100 ms heartbeat. Rust rests on release, on 250 ms of silence, on `Focused(false)`, on `CloseRequested` and on disconnect. The JS side also releases on `blur`. Rests and a 1 Hz summary go into the log as `link: stick tx …`. |
+| `picture_layout {rect, dpr}`, `picture_set_effects {effects}` | Implemented. `rect: null` keeps presenting into the last hole, under the opaque UI. Stopping would starve the watchdog and cost an enable on a route change (G-ENABLE). |
+| `window_fullscreen {on?}` | Implemented (the web key binding is not added yet). |
+| Events `camera://state`, `camera://event`, `picture://fit`, `picture://stats`, `picture://error` | Implemented. `camera://event` carries the "no answer from the camera" notice and recording started/stopped. |
+| Not started | `control_key` and the desktop key superset, `picture_pointer`, `tracking://box` and the tracking poll, `lut_*`, `scopes_*` + `scope://samples`, `still_capture`, `moves_*`, `preset_*`, `media_*`, `player_*`, `vcam_*`, `relay_*`, BLE/Wi-Fi/station, `prefs_*`/`app_settings_*`, `diagnostics_write`, gamepad (gilrs), webcam gestures, the launch chain (LAN → station → SoftAP join), the home screen. On desktop, `startScan` returns no cameras, and the media service lists nothing. |
+
+### 5.3 Shader work `opc-render` still lacks (do not half-implement)
+
+`feed_state` reports these instead of faking them, and the render thread logs them once
+per change as `view: picture: not painted on the desktop yet: …`:
+
+- `lutIntensity` (≠ 1) and `lutExposureStops`: a mix and a pre-cube gain in `feed.frag`.
+- `desqueeze`: an anamorphic stretch in the blit, and the letterbox must use the desqueezed
+  aspect so `picture://fit` stays the single source.
+- `monochrome` (peaking's mono view) and `mirrorVertical`.
+- `sourceColor` (a display transform for log footage without a cube), and `signal`/`clipByte`
+  (zebra and peaking currently use the core's thresholds for the body's colour mode, as the
+  old desktop did).
+- `zebra.stripes = false`.
+- `split`/`split_vertical`: fields exist and nothing sets them.
+- `lutId` of the form `custom:<id>`: cubes the phones' document picker keeps in web storage.
+  These need `lut_load`. `look:<name>` maps to the core's built-in looks, and `file:<name>`
+  to the desktop LUT drop folder.
+- `resizeMode: 'fill'`: the native letterbox is always *fit*.
+- The false-colour name `video` is mapped to EL Zone. Confirm on hardware that the zones
+  match.
+
+### 5.4 Findings while porting
+
+- **AVC keyframes behind an SPS are not marked.** `is_keyframe` (moved verbatim) returns
+  on the *first* NAL for AVC. A Pocket 3 IDR that arrives as SPS + PPS + IDR in one access
+  unit is therefore not a keyframe, so the 30-unit backlog skip (P12) never finds one on
+  AVC. The behaviour is kept and pinned by a test (`decode::tests`). Fixing it changes the
+  physically proven live path, so it needs a camera.
+- **Pre-existing test failures** are unchanged by this work, and their counts are the same
+  before and after. In `opc-monitor` lib: `library::tests::the_conform_chip_cycles_the_targets_and_sets_the_speed`.
+  In `opc-monitor` `tests/shell.rs`: `a_controller_drives_the_shell_on_the_phones_map`,
+  `a_zoom_out_of_dlog2_hops_the_colour_first_and_puts_it_back_at_wide` and
+  `with_the_ramp_on_a_throw_eases_in_and_eases_back_to_rest`. All four are on a machine
+  without the core, where the stand-ins answer.
+- `cargo fmt --check` already reported diffs in `opc-monitor` (`connect.rs`, `home.rs`,
+  `webcam.rs`, …) and in the moved `link.rs`, `gesture.rs`, `hand.rs` and `presets.rs`. The
+  new files are formatted. The moved files were left as found, so the move stays a pure
+  move in review.
+- Phase 1 marks `live` on the first *decoded* picture. The old window marked it on the
+  first *presented* one.
+
+### 5.5 Build and run on Windows
+
+Prerequisites are those of `build-debug.ps1`: Swift for Windows, VS 2022 Build Tools (C++),
+the Windows SDK, the Vulkan SDK, shared LGPL FFmpeg (`FFMPEG_DIR`, or winget `Gyan.FFmpeg`)
+and Rust stable (MSVC). On top of those you need:
+
+- **Node 22** with npm.
+- The **WebView2 runtime**. Windows 11 ships it.
+- Optionally the Tauri CLI: `cargo install tauri-cli --version "^2" --locked`.
+
+```powershell
+cd Apps\Mobile
+npm ci
+cd ..\Desktop
+.\build-tauri-debug.ps1 -StopRunning          # web export, Swift core, cargo build, DLL staging
+.\target\debug-camera\pm-desktop.exe          # web UI; connect from the app
+# or straight to a camera whose SoftAP Windows has already joined:
+.\target\debug-camera\pm-desktop.exe --camera 192.168.2.1:9004 --model 0x20
+$env:PM_PICTURE_HOST = 'toplevel'; .\target\debug-camera\pm-desktop.exe   # option B
+```
+
+With the Tauri CLI you can run the same app from `Apps\Desktop\crates\pm-desktop`. Run
+`node scripts\prepare-ui.mjs` first, set `OPC_CORE_LIB_DIR`, and put the Swift and FFmpeg
+DLLs on `PATH`, as the script does. Then use `cargo tauri dev` for a debug build serving
+`ui/`, or `cargo tauri build` for an NSIS bundle. The bundle does not stage the Swift and
+FFmpeg DLLs or register the vcam DLL yet. The Inno installer (Z3, R12) is still the release
+path.
+
+For live UI edits, run `npx expo start --web --port 8081` in `Apps\Mobile` and launch with
+`cargo tauri dev --config '{"build":{"devUrl":"http://localhost:8081"}}'`.
+
+Logs go to `opc-monitor.log` beside the executable, in the old line formats. That file
+gets the `link:` lines and `view: pace:`/`slow:`, plus new lines: `link: stick tx …`,
+`input: rest: …`, `view: picture: …` and `pm-desktop: …`.
+
+### 5.6 First prototype checks on Windows (Spike 1/2 of §3.8)
+
+Run each with option A, then with `PM_PICTURE_HOST=toplevel` (option B). Record the GPU, the
+Windows build and the DPI.
+
+1. **Compositing (R1).** Is the picture visible through the hole, with the chrome drawn
+   over it? Look for a white or black flash at start (A10) and for holes in the web
+   chrome. With option A the open question is whether WebView2's transparent pixels show
+   a *sibling* child window at all. If they do not, option B or DirectComposition (option
+   C) is next.
+2. **Tearing and flicker.** Pan the gimbal on a high-contrast scene for 60 s. Watch the
+   edges of chips and sheets for flicker where the web view composites over the swapchain.
+3. **Latency (R2, G-LAT).** Run PresentMon against `pm-desktop.exe` and against
+   `opc-monitor.exe` on the same machine. Compare `MsBetweenDisplayChange` and whether the
+   present mode stays independent flip, or composed flip after the web view.
+4. **Focus and input (R4, K3).** Clicks and touches must reach the web view everywhere,
+   including over the picture (the HTTRANSPARENT child). Alt-Tab away while the stick is
+   held: the gimbal rests (`input: rest: focus lost`). Unfocused, the picture and the ACK
+   rate must hold (`link: transport: ack=` ≥ 39/s, G-UNFOCUSED).
+5. **Resize and DPI (R3, G-RESIZE).** Drag-resize, maximise, restore, minimise and restore.
+   Move between 100 % and 150 % monitors and toggle fullscreen (`window_fullscreen`). Look
+   for black frames over 100 ms, stretched pictures, a hole out of step with the picture,
+   and swapchain errors (`view: picture: present failed`).
+6. **Reload (R11).** With a dev build (`cargo tauri dev`), reload the web view mid-session.
+   The picture keeps running, the state re-attaches, and there is no second
+   `0x09/0xA8` (no extra `link:` enable lines).
+7. **Load (R6, R7).** Watch the `link: transport:` and `view: pace:` lines for 10 minutes
+   with assists on, and the CPU and working set of `msedgewebview2.exe` against the Slint
+   build.
+8. **R9.** The Swift facade (with `mimalloc-redirect.dll`) and WebView2 in one process:
+   any crash at start goes into `PANIC:` in the log.

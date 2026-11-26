@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-camera-disconnect"
+description = "Enables the camera_disconnect command without any pre-configured scope."
+commands.allow = ["camera_disconnect"]
+
+[[permission]]
+identifier = "deny-camera-disconnect"
+description = "Denies the camera_disconnect command without any pre-configured scope."
+commands.deny = ["camera_disconnect"]

@@ -64,6 +64,14 @@ pub fn letterbox(source: (u32, u32), display: (u32, u32)) -> (u32, u32, u32, u32
     )
 }
 
+/// [`letterbox`] inside a sub-rectangle `(x, y, width, height)` of the display, for a
+/// picture drawn into part of a window (the web view's transparent hole). The result is
+/// in the same display pixels as `rect`.
+pub fn letterbox_in(source: (u32, u32), rect: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
+    let (x, y, width, height) = letterbox(source, (rect.2, rect.3));
+    (rect.0 + x, rect.1 + y, width, height)
+}
+
 /// A rendered picture, 8-bit RGBA, tightly packed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rgba {
@@ -199,6 +207,10 @@ pub struct FeedRenderer {
     /// to the staging buffer once rather than every frame.
     overlay_staged: bool,
     overlay_opacity: f32,
+    /// Where on the swapchain the picture is letterboxed: the whole surface when `None`
+    /// (the winit viewfinder), or the web view's hole in the Tauri app. Moving it is a
+    /// viewport change, not a swapchain rebuild.
+    picture_rect: Option<(u32, u32, u32, u32)>,
 }
 
 impl std::fmt::Debug for FeedRenderer {
@@ -321,6 +333,7 @@ impl FeedRenderer {
             overlay: None,
             overlay_staged: false,
             overlay_opacity: 1.0,
+            picture_rect: None,
         })
     }
 
@@ -334,6 +347,18 @@ impl FeedRenderer {
         self.presenter
             .as_ref()
             .map(|presenter| (presenter.extent.width, presenter.extent.height))
+    }
+
+    /// Letterboxes the presented picture inside `rect` (surface pixels) instead of the
+    /// whole surface; the rest is the render pass's black clear. `None` restores the full
+    /// surface. Stills and [`render`](Self::render) are unaffected.
+    pub fn set_picture_rect(&mut self, rect: Option<(u32, u32, u32, u32)>) {
+        self.picture_rect = rect.filter(|rect| rect.2 > 0 && rect.3 > 0);
+    }
+
+    /// The rectangle [`set_picture_rect`](Self::set_picture_rect) last set.
+    pub fn picture_rect(&self) -> Option<(u32, u32, u32, u32)> {
+        self.picture_rect
     }
 
     /// Tells the swapchain the window changed size. Rebuilt on the next present.
@@ -546,6 +571,7 @@ impl FeedRenderer {
                 },
                 pipelines.pipelines[PASS_OVERLAY],
                 overlay_opacity,
+                None,
             );
             // Safety: the passes above left `output` readable by shaders; move it to a
             // transfer source and copy it back to host memory.
@@ -633,6 +659,7 @@ impl FeedRenderer {
             extent,
             pipeline,
             self.overlay_opacity,
+            self.picture_rect,
         );
 
         let presenter = self.presenter.as_mut().expect("still presenting");
@@ -950,6 +977,8 @@ fn record_frame(
     target_extent: vk::Extent2D,
     target_pipeline: vk::Pipeline,
     overlay_opacity: f32,
+    // Where the picture is letterboxed; the whole target when `None`.
+    picture_rect: Option<(u32, u32, u32, u32)>,
 ) {
     let (chroma_width, chroma_height) = picture.chroma_size();
     let plane_sizes = [
@@ -1079,10 +1108,20 @@ fn record_frame(
 
     // The picture keeps its proportions; the render pass's clear paints the bars. A
     // stretched face is a framing decision an operator would make wrongly.
-    let (x, y, width, height) = letterbox(
-        (picture.width, picture.height),
-        (target_extent.width, target_extent.height),
-    );
+    let full = (0, 0, target_extent.width, target_extent.height);
+    let rect = picture_rect.map_or(full, |(x, y, width, height)| {
+        // Clamp to the target: a hole reported before a resize lands must not paint
+        // outside the framebuffer.
+        let x = x.min(target_extent.width.saturating_sub(1));
+        let y = y.min(target_extent.height.saturating_sub(1));
+        (
+            x,
+            y,
+            width.min(target_extent.width - x).max(1),
+            height.min(target_extent.height - y).max(1),
+        )
+    });
+    let (x, y, width, height) = letterbox_in((picture.width, picture.height), rect);
     let fit = vk::Rect2D {
         offset: vk::Offset2D {
             x: x as i32,

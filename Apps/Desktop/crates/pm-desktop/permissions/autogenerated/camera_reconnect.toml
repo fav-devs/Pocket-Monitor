@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-camera-reconnect"
+description = "Enables the camera_reconnect command without any pre-configured scope."
+commands.allow = ["camera_reconnect"]
+
+[[permission]]
+identifier = "deny-camera-reconnect"
+description = "Denies the camera_reconnect command without any pre-configured scope."
+commands.deny = ["camera_reconnect"]

@@ -3,6 +3,11 @@
 //! The datalink has a 40 Hz pump to keep and a 5 ms read timeout to sit on; the window
 //! has a swapchain to feed. Neither can wait for the other, so they are two threads with
 //! two channels between them, and nothing shared but the messages.
+//!
+//! Moved here from the `opc-monitor` binary so the Tauri backend runs the very same
+//! thread. [`Link::commander`] hands out a cloneable handle onto the command channel, so
+//! the 100 Hz input thread and IPC handlers enqueue onto the camera thread exactly as the
+//! window does: nothing but this thread ever writes the socket.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,7 +21,14 @@ use opc_camera::{CameraSession, Command, Recovery, SessionEvent, SetOutcome, Sta
 
 /// Appends a concise diagnostic to the log beside the Windows executable. The window
 /// normally has no terminal, so decode outcomes must be available after it closes.
-pub(crate) fn diagnostic(message: impl std::fmt::Display) {
+pub fn diagnostic(message: impl std::fmt::Display) {
+    log_line("view", message);
+}
+
+/// Appends `<tag>: <message>` to `opc-monitor.log` beside the executable — the file and
+/// line formats the benchmark in `docs/desktop-expo-port.md` §4 parses. Never pass
+/// credentials or payloads.
+pub fn log_line(tag: &str, message: impl std::fmt::Display) {
     let Some(path) = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(|dir| dir.join("opc-monitor.log")))
@@ -24,7 +36,7 @@ pub(crate) fn diagnostic(message: impl std::fmt::Display) {
         return;
     };
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "view: {message}");
+        let _ = writeln!(file, "{tag}: {message}");
     }
 }
 
@@ -127,6 +139,50 @@ impl Link {
     /// Everything waiting from the camera.
     pub fn drain(&self) -> Vec<FromCamera> {
         self.events.try_iter().collect()
+    }
+
+    /// The next thing from the camera, waiting at most `timeout`. `Err(true)` means the
+    /// camera thread has gone.
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<FromCamera, bool> {
+        match self.events.recv_timeout(timeout) {
+            Ok(event) => Ok(event),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(false),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(true),
+        }
+    }
+
+    /// A handle other threads use to queue commands and presents onto this link.
+    pub fn commander(&self) -> LinkCommander {
+        LinkCommander {
+            commands: self.commands.clone(),
+        }
+    }
+}
+
+/// A cloneable sender onto a [`Link`]'s command channel. It never touches the socket:
+/// everything it sends is serialised on the camera thread behind the 40 Hz ACK pump.
+/// Once the link is dropped, sends are silently discarded.
+#[derive(Debug, Clone)]
+pub struct LinkCommander {
+    commands: Sender<ToCamera>,
+}
+
+impl LinkCommander {
+    pub fn send(&self, command: Command) {
+        let _ = self.commands.send(ToCamera::Send(command));
+    }
+
+    /// A picture reached the screen (the render thread's real present).
+    pub fn note_presented(&self) {
+        let _ = self.commands.send(ToCamera::Presented);
+    }
+
+    pub fn note_decoder_failed(&self, failed: bool) {
+        let _ = self.commands.send(ToCamera::DecoderFailed(failed));
+    }
+
+    pub fn set_repair_blocked(&self, blocked: bool) {
+        let _ = self.commands.send(ToCamera::RepairBlocked(blocked));
     }
 }
 

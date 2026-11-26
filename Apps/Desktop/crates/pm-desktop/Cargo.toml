@@ -1,0 +1,32 @@
+[package]
+name = "pm-desktop"
+description = "Pocket Monitor for Windows, macOS and Linux: a Tauri 2 shell whose interface is the Expo web build of Apps/Mobile, over a native Vulkan picture."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "pm-desktop"
+
+[[bin]]
+name = "pm-desktop"
+path = "src/main.rs"
+# The binary links the Swift core; its logic is tested in pm-controller.
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+raw-window-handle = "0.6"
+opc-camera = { path = "../opc-camera" }
+opc-core-sys = { path = "../opc-core-sys" }
+opc-decode = { path = "../opc-decode" }
+opc-render = { path = "../opc-render" }
+pm-controller = { path = "../pm-controller" }
+pm-surface = { path = "../pm-surface" }
+
+[lints]
+workspace = true

@@ -35,50 +35,9 @@ fn show_error(message: &str) {
 
 mod demo;
 
-/// A viewfinder that is not the focused window is a background process to Windows 11,
-/// which then coarsens its timers and can leave the picture frozen for most of a second
-/// at a time. A live monitor is never idle work: opt out of power throttling and ask for
-/// 1 ms timers.
+/// Power throttling off and 1 ms timers (A14 / P9); shared with the Tauri app.
 fn keep_timers_fast() {
-    #[cfg(target_os = "windows")]
-    {
-        #[repr(C)]
-        struct PowerThrottling {
-            version: u32,
-            control_mask: u32,
-            state_mask: u32,
-        }
-        #[link(name = "winmm")]
-        extern "system" {
-            fn timeBeginPeriod(period: u32) -> u32;
-        }
-        extern "system" {
-            fn GetCurrentProcess() -> *mut u8;
-            fn SetProcessInformation(
-                process: *mut u8,
-                class: i32,
-                info: *const PowerThrottling,
-                size: u32,
-            ) -> i32;
-        }
-        // ProcessPowerThrottling = 4; version 1; EXECUTION_SPEED = 1 controlled, state 0
-        // means "do not throttle".
-        let state = PowerThrottling {
-            version: 1,
-            control_mask: 1,
-            state_mask: 0,
-        };
-        // Safety: plain Win32 calls on the current process with a correctly sized struct.
-        unsafe {
-            SetProcessInformation(
-                GetCurrentProcess(),
-                4,
-                &state,
-                std::mem::size_of::<PowerThrottling>() as u32,
-            );
-            timeBeginPeriod(1);
-        }
-    }
+    pm_controller::platform::keep_timers_fast();
 }
 
 #[cfg(opc_core_linked)]
@@ -87,8 +46,9 @@ mod audio;
 mod ble_impl;
 #[cfg(opc_core_linked)]
 mod connect;
+// The camera thread lives in `pm-controller`, shared with the Tauri app.
 #[cfg(opc_core_linked)]
-mod link;
+use pm_controller::link;
 #[cfg(opc_core_linked)]
 mod media;
 #[cfg(opc_core_linked)]

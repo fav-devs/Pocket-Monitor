@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The Expo web build in the main window: core IPC (events, window) and every Pocket Monitor command (build.rs APP_COMMANDS).",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "allow-launch-args",
+    "allow-camera-connect",
+    "allow-camera-disconnect",
+    "allow-camera-reconnect",
+    "allow-camera-state",
+    "allow-camera-command",
+    "allow-gimbal-drive",
+    "allow-gimbal-release",
+    "allow-picture-layout",
+    "allow-picture-set-effects",
+    "allow-window-fullscreen"
+  ]
+}
