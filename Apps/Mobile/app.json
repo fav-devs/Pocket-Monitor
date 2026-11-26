@@ -7,7 +7,7 @@
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "backgroundColor": "#08090A",
+    "backgroundColor": "#0d0d0d",
     "ios": {
       "bundleIdentifier": "com.favdevs.pocketmonitor",
       "supportsTablet": true,
@@ -34,7 +34,7 @@
     "android": {
       "package": "com.favdevs.pocketmonitor",
       "adaptiveIcon": {
-        "backgroundColor": "#08090A",
+        "backgroundColor": "#121212",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -77,7 +77,11 @@
         {
           "image": "./assets/splash-icon.png",
           "imageWidth": 120,
-          "backgroundColor": "#08090A"
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0d0d0d"
+          }
         }
       ],
       [
