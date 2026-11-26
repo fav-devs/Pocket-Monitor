@@ -359,10 +359,10 @@ export default function LiveScreen() {
       <StatusBar hidden={Platform.OS !== 'web'} style="light" />
       {/* Picture */}
       <View pointerEvents="none" style={[rectStyle(layout.picture), { backgroundColor: colors.preview, overflow: 'hidden' }]}>
-        <LivePicture source={session.video} resizeMode={prefs.pictureFit} onPictureRect={setDrawn} />
+        {bx('pic') ? null : <LivePicture source={session.video} resizeMode={prefs.pictureFit} onPictureRect={setDrawn} />}
       </View>
       <View pointerEvents="box-none" style={fill}>
-        <AssistOverlays pictureRect={pictureRect} context="live" />
+        {bx('ov') ? null : <AssistOverlays pictureRect={pictureRect} context="live" />}
       </View>
 
       {/* Feed touches sit above the picture and under the chrome. */}
@@ -373,7 +373,7 @@ export default function LiveScreen() {
       <ShutterFlash trigger={flash} />
 
       {/* Operator chrome */}
-      {chromeShown ? (
+      {chromeShown && !bx('chrome') ? (
         <View pointerEvents="box-none" style={[fill, { opacity: chromeOpacity }]}>
           <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
             {bx('status') ? null : <LiveStatusChrome layout={layout} onBack={exit} />}
