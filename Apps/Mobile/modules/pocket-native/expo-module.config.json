@@ -1,16 +1,21 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["PocketBluetoothModule", "PocketWifiModule", "PocketDatalinkModule", "PocketVideoModule", "PocketGamepadModule", "PocketHeadMotionModule"]
+    "modules": [
+      "PocketBluetoothModule",
+      "PocketWifiModule",
+      "PocketDatalinkModule",
+      "PocketVideoModule",
+      "PocketGamepadModule",
+      "PocketHeadMotionModule"
+    ]
   },
   "android": {
     "modules": [
-      "com.favdevs.pocketnative.bluetooth.PocketBluetoothModule",
-      "com.favdevs.pocketnative.wifi.PocketWifiModule",
-      "com.favdevs.pocketnative.datalink.PocketDatalinkModule",
-      "com.favdevs.pocketnative.video.PocketVideoModule",
-      "com.favdevs.pocketnative.gamepad.PocketGamepadModule",
-      "com.favdevs.pocketnative.headmotion.PocketHeadMotionModule"
+      "com.favdevs.pocketnative.video.PocketVideoModule"
     ]
   }
 }
