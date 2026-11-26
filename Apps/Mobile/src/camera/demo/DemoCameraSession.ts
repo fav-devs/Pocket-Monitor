@@ -54,7 +54,7 @@ export class DemoCameraSession implements CameraSession {
   private timers: ReturnType<typeof setInterval>[] = [];
   private driveVector = { x: 0, y: 0 };
   private zoomRate = 0;
-  private media: CameraMediaItem[] = demoMediaItems();
+  private mediaItems: CameraMediaItem[] = demoMediaItems();
   private lastTarget: DiscoveredCamera | SavedCamera | null = null;
   private t = 0;
 
@@ -219,10 +219,10 @@ export class DemoCameraSession implements CameraSession {
       await this.delay();
       const elapsed = this.state.recording.elapsedSec;
       this.set((s) => ({ ...s, recording: { ...s.recording, recording: false } }));
-      this.media.unshift({
+      this.mediaItems.unshift({
         id: `demo-clip-${Date.now()}`,
         kind: 'video',
-        fileName: `DJI_${String(this.media.length + 1).padStart(4, '0')}.MP4`,
+        fileName: `DJI_${String(this.mediaItems.length + 1).padStart(4, '0')}.MP4`,
         createdAt: Date.now(),
         durationSec: elapsed,
         sizeBytes: elapsed * 1_250_000,
@@ -422,17 +422,17 @@ export class DemoCameraSession implements CameraSession {
   readonly media: CameraMediaService = {
     list: async () => {
       await this.delay(400);
-      return [...this.media];
+      return [...this.mediaItems];
     },
     setFavorite: async (id, favorite) => {
-      this.media = this.media.map((m) => (m.id === id ? { ...m, favorite } : m));
+      this.mediaItems = this.mediaItems.map((m) => (m.id === id ? { ...m, favorite } : m));
     },
     delete: async (ids) => {
       await this.delay(300);
-      this.media = this.media.filter((m) => !ids.includes(m.id));
+      this.mediaItems = this.mediaItems.filter((m) => !ids.includes(m.id));
     },
     download: async (id, onProgress) => {
-      const item = this.media.find((m) => m.id === id);
+      const item = this.mediaItems.find((m) => m.id === id);
       const total = item?.sizeBytes ?? 1;
       for (let i = 1; i <= 10; i++) {
         await this.delay(120);
