@@ -8,7 +8,7 @@ import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } f
 import { byteLabel, colorModeLabel, dateTimeLabel, durationLabel, resolutionLabel } from './format';
 import { favoriteColor, Glyph } from './MediaChips';
 
-/** Text over video: white with a soft shadow (pocket-ui on-video chrome). */
+/** Text over video: white with a soft shadow (on-video chrome). */
 export const videoText = { color: '#ffffff', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 } as const;
 
 /**

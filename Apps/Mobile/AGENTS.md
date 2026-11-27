@@ -42,7 +42,7 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
   over IPC; its picture is native Vulkan under a transparent web view, so `<LivePicture>` renders a
   transparent hole for `VideoSource { kind: 'desktop' }`. The same web bundle still boots the demo
   in a browser. See `docs/desktop-expo-port.md` §5.
-- UI follows the `pocket-ui` skill (`/.claude/skills/pocket-ui/SKILL.md`): Sondr design system, SN Pro, Hugeicons, light/dark, labels not explanations.
+- UI uses the Sondr design system (`src/components`, `src/constants`): SN Pro, Hugeicons, light/dark, labels not explanations.
 - Every interactive control has at least a 44pt touch target.
 - Do not commit camera Wi-Fi passwords, captures, personal data, signing material or unofficial LUTs.
   DJI LUT `.cube` files are not bundled.

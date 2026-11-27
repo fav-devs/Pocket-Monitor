@@ -6,7 +6,7 @@ import { fonts, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import type { Rect } from '../layout/fieldMonitorLayout';
 
 /**
- * On-video chrome (pocket-ui "On-video chrome", after ai-cut's camera screen). The monitor is
+ * On-video chrome (after the Sondr camera screen). The monitor is
  * always dark whatever the app theme, so these read white over the picture; theme colours are
  * used for accent, recording and status.
  */
