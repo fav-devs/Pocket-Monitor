@@ -234,8 +234,11 @@ interface AssistStore extends PersistedAssists {
   resetPanels: () => void;
   moveChip: (tool: AssistTool, toIndex: number) => void;
   openInspector: (tool: AssistTool | null, context?: AssistContext) => void;
-  addCustomLut: (entry: CustomLutEntry) => void;
+  /** Adds an imported LUT; `select` (default true) also makes it the monitoring LUT. */
+  addCustomLut: (entry: CustomLutEntry, select?: boolean) => void;
   removeCustomLut: (id: string) => void;
+  /** Optional (additive). Rename an imported LUT (LUT Hub). */
+  renameCustomLut: (id: string, name: string) => void;
   reset: () => void;
 }
 
@@ -274,13 +277,23 @@ export const useAssists = create<AssistStore>()(
           return { chipOrder: order };
         }),
       openInspector: (tool, context = 'live') => set({ configureTool: tool, configureContext: context }),
-      addCustomLut: (entry) =>
+      addCustomLut: (entry, select = true) =>
         set((s) => ({
           options: {
             ...s.options,
-            lut: { ...s.options.lut, custom: [entry, ...s.options.lut.custom.filter((c) => c.id !== entry.id)], selection: `custom:${entry.id}` },
+            lut: {
+              ...s.options.lut,
+              custom: [entry, ...s.options.lut.custom.filter((c) => c.id !== entry.id)],
+              selection: select ? `custom:${entry.id}` : s.options.lut.selection,
+            },
           },
         })),
+      renameCustomLut: (id, name) =>
+        set((s) => {
+          const trimmed = name.trim();
+          if (!trimmed) return s;
+          return { options: { ...s.options, lut: { ...s.options.lut, custom: s.options.lut.custom.map((c) => (c.id === id ? { ...c, name: trimmed } : c)) } } };
+        }),
       removeCustomLut: (id) =>
         set((s) => ({
           options: {

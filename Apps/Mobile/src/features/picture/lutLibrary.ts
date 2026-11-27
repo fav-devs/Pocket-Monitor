@@ -199,8 +199,11 @@ function slug(name: string) {
   );
 }
 
-/** Import a `.cube` text under a display name: validate, store, register, select. */
-export async function importCubeText(name: string, text: string): Promise<ImportResult> {
+/**
+ * Import a `.cube` text under a display name: validate, store, register, select. `select: false`
+ * (LUT Hub) keeps the monitoring LUT as it is.
+ */
+export async function importCubeText(name: string, text: string, options?: { select?: boolean }): Promise<ImportResult> {
   let cube: CubeLUT;
   try {
     cube = validatedImport(text);
@@ -216,13 +219,13 @@ export async function importCubeText(name: string, text: string): Promise<Import
     // Still usable this session.
   }
   registerNative(`custom:${id}`, cube, text);
-  useAssists.getState().addCustomLut(entry);
+  useAssists.getState().addCustomLut(entry, options?.select ?? true);
   emit();
   return { ok: true, entry };
 }
 
 /** Pick a `.cube` with the system document picker (web: file input). */
-export async function pickAndImportCube(): Promise<ImportResult> {
+export async function pickAndImportCube(options?: { select?: boolean }): Promise<ImportResult> {
   let result: DocumentPicker.DocumentPickerResult;
   try {
     result = await DocumentPicker.getDocumentAsync({ type: isWeb ? '.cube' : '*/*', copyToCacheDirectory: true, multiple: false });
@@ -245,7 +248,7 @@ export async function pickAndImportCube(): Promise<ImportResult> {
     return { ok: false, error: e instanceof Error ? e.message : 'Could not read that file.' };
   }
   if (text == null) return { ok: false, error: 'Could not read that file.' };
-  return importCubeText(asset.name, text);
+  return importCubeText(asset.name, text, options);
 }
 
 export async function deleteCustomLut(id: string) {
@@ -262,4 +265,29 @@ export async function deleteCustomLut(id: string) {
   await deleteCubeText(id);
   useAssists.getState().removeCustomLut(id);
   emit();
+}
+
+// ───────────────────────────── Generated cubes ─────────────────────────────
+
+/**
+ * Register a cube built in JS (the playback editor's baked look) under `id`, for the web
+ * renderer and the native demo picture. `unregisterCube` drops it again.
+ */
+export function registerCube(id: string, cube: CubeLUT) {
+  if (cubes.get(id) === cube) return;
+  cubes.set(id, cube);
+  registeredNative.delete(id);
+  emit();
+}
+
+export function unregisterCube(id: string) {
+  if (!cubes.delete(id)) return;
+  if (PocketVideo && registeredNative.has(id)) {
+    registeredNative.delete(id);
+    try {
+      PocketVideo.unloadLut(id);
+    } catch {
+      // ignore
+    }
+  }
 }

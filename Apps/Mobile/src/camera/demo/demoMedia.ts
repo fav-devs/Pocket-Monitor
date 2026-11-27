@@ -185,7 +185,8 @@ export function demoMediaItems(): CameraMediaItem[] {
       width: kind === 'video' ? 3840 : 4000,
       height: kind === 'video' ? 2160 : 3000,
       fps: kind === 'video' ? (i % 3 === 0 ? 60 : 30) : undefined,
-      colorMode: i % 4 === 0 ? 'dlog-m' : 'normal',
+      // One HLG take (demo-0002) so the player's HDR toggle shows in the demo.
+      colorMode: i % 4 === 0 ? 'dlog-m' : i === 1 ? 'hlg' : 'normal',
       favorite: i % 5 === 1,
       groupId: group,
       thumbnailUrl: svgDataUrl(studioSvg((look.pan + 1) * 37 + (dur ?? 2) / 2, look)),

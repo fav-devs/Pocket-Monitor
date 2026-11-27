@@ -3,6 +3,8 @@ import {
   ArrowRight01Icon,
   Camera01Icon,
   ChartHistogramIcon,
+  ColorsIcon,
+  CropIcon,
   Delete02Icon,
   Download04Icon,
   GoBackward15SecIcon,
@@ -14,8 +16,12 @@ import {
   PreviousIcon,
   RepeatIcon,
   RotateClockwiseIcon,
+  Rotate01Icon,
+  ScissorIcon,
   Share08Icon,
+  SlidersHorizontalIcon,
   SmartPhone01Icon,
+  SmileIcon,
   StarIcon,
   Timer02Icon,
   ViewIcon,
@@ -39,9 +45,23 @@ import { Spinner } from '@/components/spinner';
 import { useEscapeKey } from '@/components/desktop';
 import { useWideLayout } from '@/constants/layout';
 import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
+import {
+  applyPreset,
+  hasColor,
+  hasGeometry,
+  isIdentity,
+  outputAspect,
+  resetTool,
+  revertTool,
+  toolEdited,
+  type ClipEdit,
+  type EditTool,
+} from '@/core/edit';
 import AssistBar from '@/features/assists/AssistBar';
 import AssistOverlays from '@/features/assists/AssistOverlays';
 import LivePicture from '@/features/picture/LivePicture';
+import { useClipEdit, useClipEdits } from '@/state/clipEdits';
+import { useAssists } from '@/state/assists';
 import { phoneClipItem, useMediaPreferences, usePhoneMedia } from '@/state/media';
 import { DeliveryProgressPill, DeliveryQueueSheet } from './DeliveryQueue';
 import { deliveryPlatform } from './deliveryPlatform';
@@ -57,6 +77,13 @@ import { PlaybackInspector } from './PlaybackInspector';
 import { PlaybackFilmstrip, stripClock, usePlaybackFrames } from './PlaybackFilmstrip';
 import { usePlaybackEngine } from './usePlaybackEngine';
 import { useDesktopPlayback } from './desktop/useDesktopPlayback';
+import { CompareLine, CropGestureLayer, EditedPicture } from './edit/EditedPicture';
+import { AspectBody, EditorChrome, FaceBody, FilterBody, RotateBody, TOOL_TITLES, TrimBody, VolumeBody } from './edit/EditorPanels';
+import { ExportSheet, LutHubSheet, PresetSheet } from './edit/EditSheets';
+import { useEditExport } from './edit/exporter';
+import { customCube } from './edit/cubes';
+import { useLookThumbnails, useThumbFrame } from './edit/lookThumbs';
+import { useEditPreview } from './edit/useEditPreview';
 
 /** The picture rect for `aspect` in `w × h`: letterboxed (`fit`) or cropped to fill (`fill`). */
 function place(aspect: number, w: number, h: number, mode: 'fit' | 'fill'): LayoutRectangle {
@@ -73,6 +100,16 @@ function conformTargets(fps?: number): number[] {
   return [30, 25, 24].filter((t) => t < fps);
 }
 
+/** The editor's tools in the tool row (Mimo order). */
+const EDIT_TOOLS: { tool: EditTool; icon: IconSvgElement }[] = [
+  { tool: 'filter', icon: ColorsIcon },
+  { tool: 'aspect', icon: CropIcon },
+  { tool: 'rotate', icon: Rotate01Icon },
+  { tool: 'volume', icon: VolumeHighIcon },
+  { tool: 'face', icon: SmileIcon },
+  { tool: 'trim', icon: ScissorIcon },
+];
+
 /** A plain white transport icon (ai-cut watch chrome), or the big white play disc. */
 function Transport({ icon, label, onPress, primary }: { icon: IconSvgElement; label: string; onPress: () => void; primary?: boolean }) {
   return (
@@ -81,7 +118,7 @@ function Transport({ icon, label, onPress, primary }: { icon: IconSvgElement; la
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={4}
-      style={({ pressed }) => ({ width: primary ? 64 : 48, height: primary ? 64 : 48, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.65 : 1 })}
+      style={({ pressed }) => ({ width: primary ? 64 : 44, height: primary ? 64 : 48, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.65 : 1 })}
     >
       {primary ? (
         <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
@@ -122,10 +159,12 @@ function BarIcon({ icon, label, onPress, color = '#ffffff', filled, disabled, se
 
 /**
  * The player (`MonitorPlaybackScreen`), laid out like Mimo's: the picture fills a portrait
- * screen (double-tap or pinch to fit; landscape fits), a thin top bar (back, info, rendition,
- * favourite, download, share), and a filmstrip scrubber over the tools and transport. One fixed
- * picture child: expo-video for a file, the demo picture on a simulated timeline, or the
- * desktop's native player. `?from=phone` plays a clip saved on this phone.
+ * screen (double-tap or pinch to fit; landscape fits), a thin top bar (back, info, HDR,
+ * rendition, download, share, export), the Editing Preset button, and under the picture the
+ * filmstrip scrubber, the tool row (edit tools, then playback tools) and favourite · transport ·
+ * delete. An edit tool replaces the bottom with its panel (✕ · title · ✓) and fits the picture
+ * above it. One fixed picture child: expo-video for a file, the demo picture on a simulated
+ * timeline, or the desktop's native player. `?from=phone` plays a clip saved on this phone.
  */
 export default function PlaybackScreen() {
   const params = useLocalSearchParams<{ id: string; from?: string }>();
@@ -191,12 +230,33 @@ export default function PlaybackScreen() {
   /** Portrait opens filled, like Mimo; double-tap or pinch toggles. Landscape always fits. */
   const [fill, setFill] = useState(true);
   const [prepareError, setPrepareError] = useState<string | null>(null);
+  /** Play the low-res copy even when the original is on the phone (rendition toggle). */
+  const [preferLowRes, setPreferLowRes] = useState(false);
+
+  // ── Editor state: the open tool, its working edit and the edit as it was on open (✕).
+  const storedEdit = useClipEdit(item?.id, item?.durationSec);
+  const setStoredEdit = useClipEdits((s) => s.setEdit);
+  const [tool, setTool] = useState<EditTool | null>(null);
+  const [draft, setDraft] = useState<ClipEdit | null>(null);
+  const [snapshot, setSnapshot] = useState<ClipEdit | null>(null);
+  const [compare, setCompare] = useState(false);
+  const [panelSize, setPanelSize] = useState({ width: 0, height: 0 });
+  const [lutHubOpen, setLutHubOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportJob = useEditExport();
+  const customLuts = useAssists((s) => s.options.lut.custom);
 
   useEffect(() => {
     setConform(null);
     setConformOpen(false);
     setRatingOpen(false);
     setPrepareError(null);
+    setTool(null);
+    setDraft(null);
+    setSnapshot(null);
+    setCompare(false);
+    setPreferLowRes(false);
   }, [id]);
 
   const isVideo = item?.kind === 'video';
@@ -214,7 +274,10 @@ export default function PlaybackScreen() {
   }, [item?.id, canPrepare, prepared, session]);
   const waitingForCamera = canPrepare && !prepared;
 
-  const uri = isVideo ? localUri || prepared?.uri || item?.previewUrl || null : null;
+  // Renditions: the low-res copy (or the camera's preview stream) and the original on the phone.
+  const lowResUri = prepared?.rendition === 'low-res' ? prepared.uri : item?.previewUrl;
+  const playingLowRes = !!lowResUri && (preferLowRes || !localUri);
+  const uri = isVideo ? (preferLowRes && lowResUri ? lowResUri : localUri || prepared?.uri || item?.previewUrl || null) : null;
   const fps = item?.fps ?? 30;
   const baseEngine = usePlaybackEngine({
     uri: desktop || waitingForCamera ? null : uri,
@@ -247,6 +310,83 @@ export default function PlaybackScreen() {
     thumbnail,
     sourceKey: `${id}|${uri ?? 'sim'}`,
   });
+
+  // Switching rendition keeps the playhead.
+  const resumeAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (resumeAt.current == null || engine.kind !== 'video' || !engine.ready) return;
+    const t = resumeAt.current;
+    resumeAt.current = null;
+    engine.seek(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.kind, engine.ready, uri]);
+
+  // ── The edit: live while a tool is open (draft), else the stored one.
+  const editable = isVideo && !desktop;
+  const edit = tool && draft ? draft : storedEdit;
+  const source = useMemo(() => {
+    const w = item?.width && item.width > 0 ? item.width : 1920;
+    const h = item?.height && item.height > 0 ? item.height : Math.round(w / (16 / 9));
+    return { width: w, height: h };
+  }, [item?.width, item?.height]);
+  const hdrSource = item?.colorMode === 'hlg';
+  const editColour = editable && hasColor(edit);
+  const { demoEffects, nativePreview } = useEditPreview({
+    edit: editable ? edit : storedEdit,
+    engineKind: engine.kind,
+    player: engine.kind === 'video' ? baseEngine.player : null,
+    ready: engine.ready,
+    compare: compare && !!tool,
+    source,
+    hdrSource,
+    itemKey: `${id}|${uri ?? 'sim'}`,
+  });
+
+  const openTool = (t: EditTool) => {
+    setSnapshot(storedEdit);
+    setDraft(storedEdit);
+    setCompare(false);
+    setTool(t);
+    setChrome(true);
+  };
+  const closeTool = (apply: boolean) => {
+    if (!item || !tool) return;
+    if (apply && draft) setStoredEdit(item.id, draft);
+    else if (snapshot && draft) setStoredEdit(item.id, revertTool(draft, snapshot, tool));
+    setTool(null);
+    setDraft(null);
+    setSnapshot(null);
+    setCompare(false);
+  };
+  const change = (next: ClipEdit) => setDraft(next);
+
+  // Trim: playback stays inside the kept range (except while setting it).
+  const trim = editable && tool !== 'trim' ? edit.trim : null;
+  useEffect(() => {
+    if (!trim || !engine.playing) return;
+    if (engine.position >= trim.end - 0.03) {
+      if (prefs.loopPlayback) engine.seek(trim.start);
+      else {
+        engine.pause();
+        engine.seek(trim.end);
+      }
+    } else if (engine.position < trim.start - 0.15) engine.seek(trim.start);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trim?.start, trim?.end, engine.position, engine.playing]);
+
+  // Look thumbnails from the current frame while Filter is open.
+  const filterOpen = tool === 'filter';
+  const thumbFrame = useThumbFrame({
+    enabled: filterOpen,
+    uri: engine.kind === 'video' ? uri : null,
+    seconds: engine.position,
+    refreshKey: `${id}|${filterOpen}`,
+    demo: engine.kind === 'simulated',
+  });
+  const appliedLut = edit.lut;
+  const appliedCube = customCube(appliedLut);
+  const thumbs = useLookThumbnails(thumbFrame, appliedLut && appliedCube ? { id: appliedLut, cube: appliedCube } : null);
+
   const takeStill = () => {
     desktopEngine
       .screenshot()
@@ -289,6 +429,11 @@ export default function PlaybackScreen() {
   const pinch = useRef<{ d0: number; done: boolean } | null>(null);
   useEffect(() => () => void (tapTimer.current && clearTimeout(tapTimer.current)), []);
   const onPicturePress = () => {
+    // Editing: a tap plays / pauses (the panel stays).
+    if (tool) {
+      if (isVideo) engine.toggle();
+      return;
+    }
     const now = Date.now();
     if (now - lastTap.current < 280) {
       lastTap.current = 0;
@@ -308,6 +453,7 @@ export default function PlaybackScreen() {
     return t && t.length >= 2 ? Math.hypot(t[0].pageX - t[1].pageX, t[0].pageY - t[1].pageY) : null;
   };
   const onPinchMove = (e: GestureResponderEvent) => {
+    if (tool) return;
     const d = touchDistance(e);
     if (d == null) return;
     if (!pinch.current) pinch.current = { d0: d, done: false };
@@ -326,7 +472,8 @@ export default function PlaybackScreen() {
   };
   const goTo = (target?: { id: string }) => target && router.setParams({ id: target.id });
   // The desktop app's own key handler above already takes Esc; the browser preview gets it here.
-  useEscapeKey(goBack, wideLayout && !desktop);
+  // With a tool open, Esc cancels the tool first.
+  useEscapeKey(tool ? () => closeTool(false) : goBack, (wideLayout && !desktop) || !!tool);
   const sideInset = Math.max(insets.left, insets.right);
 
   if (!item) {
@@ -344,6 +491,7 @@ export default function PlaybackScreen() {
     );
   }
 
+  const editing = !!tool && editable;
   const rating = prefs.ratings[item.id] ?? 0;
   const position = scrubbing ? scrubbing.position : engine.position;
   const timecode = prefs.playbackTimecode;
@@ -357,10 +505,10 @@ export default function PlaybackScreen() {
     ? (engine.kind === 'desktop' && engine.rendition) || (localUri ? 'Original' : 'On camera')
     : fromPhone
       ? 'On this phone'
-      : localUri
+      : localUri && !playingLowRes
         ? 'Original'
         : prepared
-          ? prepared.rendition === 'low-res'
+          ? prepared.rendition === 'low-res' || playingLowRes
             ? 'Low-Res'
             : 'Original'
           : !isVideo
@@ -368,12 +516,39 @@ export default function PlaybackScreen() {
             : engine.kind === 'simulated' && !waitingForCamera
               ? 'Demo'
               : 'Low-Res';
-  const aspect = item.width && item.height ? item.width / item.height : 16 / 9;
-  const filled = portrait && fill && !desktop;
-  const rect = { ...place(aspect, canvas.width, canvas.height, filled ? 'fill' : 'fit') };
+  // Low-Res ↔ Original: switch when both exist, or fetch the original from the Low-Res title.
+  const canSwitchRendition = isVideo && !desktop && !fromPhone && engine.kind === 'video' && !!lowResUri && (!!localUri || !!session.media.download);
+  const switchRendition = () => {
+    resumeAt.current = engine.position;
+    if (playingLowRes) {
+      if (localUri) setPreferLowRes(false);
+      else if (!transfer) {
+        lib
+          .download(session.media, item.id)
+          .then(() => {
+            resumeAt.current = engine.position;
+            setPreferLowRes(false);
+          })
+          .catch((e: unknown) => lib.showNotice(`Download failed. ${e instanceof Error ? e.message : ''}`.trim()));
+      }
+    } else setPreferLowRes(true);
+  };
+
+  // ── Picture placement: the output aspect (crop / rotation) in the area the picture may use.
+  const aspect = editable ? outputAspect(source, edit.rotation, edit.crop) : item.width && item.height ? item.width / item.height : 16 / 9;
+  const landscapePanel = editing && !portrait;
+  const panelW = landscapePanel ? Math.min(400, Math.max(320, canvas.width * 0.4)) : 0;
+  const area = editing
+    ? portrait
+      ? { x: 0, y: insets.top + 8, width: canvas.width, height: Math.max(0, canvas.height - insets.top - 8 - panelSize.height) }
+      : { x: sideInset + 8, y: insets.top + 8, width: Math.max(0, canvas.width - panelW - sideInset - 16), height: Math.max(0, canvas.height - insets.top - 16 - insets.bottom) }
+    : { x: 0, y: 0, width: canvas.width, height: canvas.height };
+  const filled = portrait && fill && !desktop && !editing;
+  const placed = place(aspect, area.width, area.height, filled ? 'fill' : 'fit');
+  const rect = { ...placed, x: placed.x + area.x, y: placed.y + area.y };
   // A real clip crops about its centre. The demo scene's subject stands at 30 % of the frame
   // (`studio()` in the picture shaders), so the demo crops about the subject instead.
-  if (filled && engine.kind === 'simulated' && isVideo && rect.width > canvas.width) {
+  if (filled && engine.kind === 'simulated' && isVideo && rect.width > canvas.width && !hasGeometry(edit)) {
     rect.x = Math.min(0, Math.max(canvas.width - rect.width, canvas.width / 2 - 0.3 * rect.width));
   }
   // The part of the picture on screen (fill crops it): where taps, overlays and buttons go.
@@ -417,18 +592,48 @@ export default function PlaybackScreen() {
     else goBack();
   };
 
+  const startExport = (quality: 'original' | 'low-res') => {
+    void exportJob.start({
+      item,
+      edit: storedEdit,
+      quality,
+      originalUri: localUri ?? null,
+      lowResUri: lowResUri && !/^https?:/.test(lowResUri) ? lowResUri : null,
+      downloadOriginal: () => lib.download(session.media, item.id),
+      sourceSize: source,
+      hdrSource,
+      simulate: engine.kind !== 'video',
+    });
+  };
+
   const stillUri = localUri || prepared?.uri || item.originalUrl || item.previewUrl || thumbnail;
+  // Android: SurfaceView ignores view transforms, so a rotated / cropped preview uses a TextureView.
+  const transformed = editable && (hasGeometry(edit) || tool === 'aspect' || tool === 'rotate');
+  const videoPicture = (key: string) => (
+    <VideoView
+      key={key}
+      player={baseEngine.player}
+      style={{ width: '100%', height: '100%' }}
+      contentFit="cover"
+      nativeControls={false}
+      surfaceType={transformed ? 'textureView' : 'surfaceView'}
+    />
+  );
+  const demoPicture = (effects?: typeof demoEffects) => <LivePicture source={{ kind: 'demo', scene: 'studio' }} resizeMode="fill" context="playback" effects={effects} />;
   const picture = desktop ? null : item.kind === 'photo' ? (
       <Image source={{ uri: stillUri }} placeholder={thumbnail ? { uri: thumbnail } : undefined} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={150} />
     ) : waitingForCamera || (engine.kind === 'video' && !engine.ready) ? (
       thumbnail ? <Image source={{ uri: thumbnail }} style={{ width: '100%', height: '100%' }} contentFit="cover" /> : null
     ) : engine.kind === 'video' ? (
-      <VideoView player={engine.player} style={{ width: '100%', height: '100%' }} contentFit="cover" nativeControls={false} />
+      videoPicture('video')
     ) : (
-      <LivePicture source={{ kind: 'demo', scene: 'studio' }} resizeMode="fill" context="playback" />
+      demoPicture(demoEffects)
     );
+  // Before/after: the demo draws both halves in React; a real clip splits in the native stage.
+  const compareOn = editing && compare && editColour;
+  const beforePicture = compareOn && engine.kind === 'simulated' ? demoPicture(undefined) : undefined;
 
-  const tool = {
+  const tool_ = {
     assists: <ToolWell key="assists" icon={ChartHistogramIcon} label="Assists" caption="Assists" active={assists} onPress={() => setAssists((a) => !a)} />,
     conform: (
       <ToolWell
@@ -462,19 +667,36 @@ export default function PlaybackScreen() {
         onPress={() => setRatingOpen(true)}
       />
     ),
-    remove: (
-      <ToolWell
-        key="delete"
-        icon={Delete02Icon}
-        label={fromPhone ? 'Delete clip from this phone' : 'Delete clip from camera'}
-        caption="Delete"
-        destructive
-        onPress={() => setConfirmDelete(true)}
-      />
-    ),
     hide: <ToolWell key="hide" icon={ViewOffSlashIcon} label="Hide playback controls" caption="Clean" onPress={() => setChrome(false)} />,
     still: desktop ? <ToolWell key="still" icon={Camera01Icon} label="Screenshot (S)" caption="Still" onPress={takeStill} /> : null,
   };
+  const editWells = editable
+    ? EDIT_TOOLS.map(({ tool: t, icon }) => (
+        <ToolWell key={t} icon={icon} label={TOOL_TITLES[t]} caption={TOOL_TITLES[t]} edited={toolEdited(storedEdit, t)} onPress={() => openTool(t)} />
+      ))
+    : [];
+  const playbackWells = isVideo ? [tool_.assists, tool_.conform, tool_.sound, tool_.loop, tool_.still, tool_.rate, tool_.hide] : [tool_.still, tool_.rate, tool_.hide];
+  const toolRow = (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toolRow} style={styles.toolScroll}>
+      {editWells}
+      {editWells.length ? <View style={styles.toolDivider} /> : null}
+      {playbackWells}
+    </ScrollView>
+  );
+
+  const favoriteButton = (
+    <BarIcon
+      icon={StarIcon}
+      label="Favorite clip"
+      selected={item.favorite}
+      color={item.favorite ? favoriteColor : '#ffffff'}
+      filled={item.favorite}
+      onPress={() => setFavorite(!item.favorite)}
+    />
+  );
+  const deleteButton = (
+    <BarIcon icon={Delete02Icon} label={fromPhone ? 'Delete clip from this phone' : 'Delete clip from camera'} color="#ff6b6b" onPress={() => setConfirmDelete(true)} />
+  );
 
   const transport = (
     <View style={styles.transport}>
@@ -484,7 +706,7 @@ export default function PlaybackScreen() {
         primary
         icon={engine.reachedEnd ? RotateClockwiseIcon : engine.playing ? PauseIcon : PlayIcon}
         label={engine.reachedEnd ? 'Restart clip' : engine.playing ? 'Pause' : 'Play'}
-        onPress={() => (engine.reachedEnd ? (engine.seek(0), engine.play()) : engine.toggle())}
+        onPress={() => (engine.reachedEnd ? (engine.seek(trim?.start ?? 0), engine.play()) : engine.toggle())}
       />
       <Transport icon={GoForward15SecIcon} label="Forward 15 seconds" onPress={() => engine.seek(engine.position + 15)} />
       <Transport icon={NextIcon} label="Forward one frame" onPress={() => engine.stepFrames(1)} />
@@ -510,6 +732,25 @@ export default function PlaybackScreen() {
     frames: burst.length || undefined,
   });
 
+  const edited = editable && !isIdentity(storedEdit);
+  const lutName = appliedLut ? (customLuts.find((l) => l.id === appliedLut)?.name ?? null) : null;
+
+  // ── The open tool's panel.
+  const panelBody = !tool ? null : tool === 'filter' ? (
+    <FilterBody edit={edit} onChange={change} thumbs={thumbs} lutName={lutName} onLutHub={() => setLutHubOpen(true)} />
+  ) : tool === 'aspect' ? (
+    <AspectBody edit={edit} onChange={change} source={source} />
+  ) : tool === 'rotate' ? (
+    <RotateBody edit={edit} onChange={change} />
+  ) : tool === 'volume' ? (
+    <VolumeBody edit={edit} onChange={change} />
+  ) : tool === 'face' ? (
+    <FaceBody edit={edit} onChange={change} />
+  ) : (
+    <TrimBody edit={edit} onChange={change} position={engine.position} duration={engine.duration} />
+  );
+  const colourTool = tool === 'filter' || tool === 'face';
+
   return (
     <View style={[styles.root, wideLayout && styles.rootRow]}>
       <View style={styles.stage}>
@@ -521,9 +762,18 @@ export default function PlaybackScreen() {
             <LivePicture source={{ kind: 'desktop' }} resizeMode="fit" context="playback" />
           </View>
         ) : (
-          <View style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, overflow: 'hidden' }}>{picture}</View>
+          <View style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height, overflow: 'hidden' }}>
+            {editable && rect.width > 0 ? (
+              <EditedPicture edit={edit} source={source} frame={{ width: rect.width, height: rect.height }} before={beforePicture}>
+                {picture}
+              </EditedPicture>
+            ) : (
+              picture
+            )}
+            {compareOn && nativePreview ? <CompareLine frame={{ width: rect.width, height: rect.height }} /> : null}
+          </View>
         )}
-        {assists && isVideo ? (
+        {assists && isVideo && !editing ? (
           <AssistOverlays
             context="playback"
             pictureRect={{ x: rect.x, y: rect.y, width: rect.width, height: rect.height }}
@@ -531,24 +781,30 @@ export default function PlaybackScreen() {
             clearance={{ top: chrome ? headerH : 0, bottom: chrome ? bottomH : 0, left: chrome && !portrait ? sideInset + 84 : 0 }}
           />
         ) : null}
-        <Pressable
-          accessibilityLabel={chrome ? 'Hide playback controls' : 'Show playback controls'}
-          accessibilityHint={portrait ? (filled ? 'Double-tap to fit the picture' : 'Double-tap to fill the screen') : undefined}
-          accessibilityRole="button"
-          accessibilityActions={portrait ? [{ name: 'magicTap', label: filled ? 'Fit the picture' : 'Fill the screen' }] : undefined}
-          onAccessibilityAction={() => portrait && setFill((f) => !f)}
-          onPress={onPicturePress}
-          onLongPress={() => isVideo && engine.toggle()}
-          onTouchMove={onPinchMove}
-          onTouchEnd={() => (pinch.current = null)}
-          style={{ position: 'absolute', left: shown.x, top: shown.y, width: shown.width, height: shown.height }}
-        />
-        {chrome && prev ? (
+        {tool === 'aspect' && editable ? (
+          <View style={{ position: 'absolute', left: rect.x, top: rect.y, width: rect.width, height: rect.height }}>
+            <CropGestureLayer edit={edit} source={source} frame={{ width: rect.width, height: rect.height }} onChange={(crop) => change({ ...edit, crop })} />
+          </View>
+        ) : (
+          <Pressable
+            accessibilityLabel={editing ? (engine.playing ? 'Pause' : 'Play') : chrome ? 'Hide playback controls' : 'Show playback controls'}
+            accessibilityHint={!editing && portrait ? (filled ? 'Double-tap to fit the picture' : 'Double-tap to fill the screen') : undefined}
+            accessibilityRole="button"
+            accessibilityActions={!editing && portrait ? [{ name: 'magicTap', label: filled ? 'Fit the picture' : 'Fill the screen' }] : undefined}
+            onAccessibilityAction={() => !editing && portrait && setFill((f) => !f)}
+            onPress={onPicturePress}
+            onLongPress={() => isVideo && !editing && engine.toggle()}
+            onTouchMove={onPinchMove}
+            onTouchEnd={() => (pinch.current = null)}
+            style={{ position: 'absolute', left: shown.x, top: shown.y, width: shown.width, height: shown.height }}
+          />
+        )}
+        {chrome && !editing && prev ? (
           <View style={{ position: 'absolute', left: shown.x + 10 + (portrait ? 0 : sideInset), top: shown.y + shown.height / 2 - 22 }}>
             <SideButton icon={ArrowLeft01Icon} label="Previous clip" onPress={() => goTo(prev)} />
           </View>
         ) : null}
-        {chrome && next ? (
+        {chrome && !editing && next ? (
           <View style={{ position: 'absolute', left: shown.x + shown.width - 54 - (portrait ? 0 : sideInset), top: shown.y + shown.height / 2 - 22 }}>
             <SideButton icon={ArrowRight01Icon} label="Next clip" onPress={() => goTo(next)} />
           </View>
@@ -562,9 +818,37 @@ export default function PlaybackScreen() {
         </View>
       ) : null}
 
-      {chrome ? (
+      {editing ? (
+        // ── Editor: the tool's panel replaces the bottom (portrait) or sits on the right (landscape).
+        <View
+          onLayout={(e) => setPanelSize({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
+          style={
+            landscapePanel
+              ? [styles.sidePanel, { width: panelW + insets.right, paddingRight: insets.right, paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 10) }]
+              : [styles.bottomPanel, { paddingBottom: Math.max(insets.bottom, 10), paddingLeft: insets.left, paddingRight: insets.right }]
+          }
+        >
+          <View style={styles.panelColumn}>
+            <EditorChrome
+              tool={tool!}
+              position={position}
+              duration={engine.duration}
+              playing={engine.playing}
+              onToggle={() => engine.toggle()}
+              compare={compare}
+              onCompare={colourTool ? () => setCompare((c) => !c) : undefined}
+              onReset={colourTool ? undefined : () => change(resetTool(edit, tool!))}
+              resetDisabled={!toolEdited(edit, tool!)}
+              onCancel={() => closeTool(false)}
+              onApply={() => closeTool(true)}
+            >
+              {panelBody}
+            </EditorChrome>
+          </View>
+        </View>
+      ) : chrome ? (
         <>
-          {/* Top bar: back · info | rendition | favourite · download · share */}
+          {/* Top bar: back · info · HDR | rendition | download · share · export */}
           <View
             style={[styles.header, { paddingTop: insets.top + (portrait ? 4 : 8), paddingLeft: sideInset + 8, paddingRight: sideInset + 8 }]}
             onLayout={(e) => setHeaderH(e.nativeEvent.layout.height)}
@@ -579,24 +863,34 @@ export default function PlaybackScreen() {
                   selected={wideLayout ? inspector : info}
                   onPress={() => (wideLayout ? setInspector((v) => !v) : setInfo(true))}
                 />
+                {hdrSource && editable ? (
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityLabel="HDR"
+                    accessibilityState={{ checked: storedEdit.hdr === 'keep' }}
+                    onPress={() => setStoredEdit(item.id, { ...storedEdit, hdr: storedEdit.hdr === 'keep' ? 'sdr' : 'keep' })}
+                    hitSlop={6}
+                    style={({ pressed }) => [styles.hdr, storedEdit.hdr === 'keep' ? styles.hdrOn : styles.hdrOff, pressed && { opacity: 0.65 }]}
+                  >
+                    <Text style={[styles.hdrText, { color: storedEdit.hdr === 'keep' ? '#fedb2e' : 'rgba(255,255,255,0.6)' }]}>HDR</Text>
+                  </Pressable>
+                ) : null}
               </View>
-              <View style={styles.titleBlock}>
+              <Pressable
+                accessibilityRole={canSwitchRendition ? 'button' : 'text'}
+                accessibilityLabel={canSwitchRendition ? (playingLowRes ? (localUri ? 'Play the original' : 'Download and play the original') : 'Play the low-res copy') : undefined}
+                disabled={!canSwitchRendition}
+                onPress={switchRendition}
+                style={({ pressed }) => [styles.titleBlock, pressed && { opacity: 0.65 }]}
+              >
                 <Text numberOfLines={1} style={styles.title}>
-                  {conform ? `${rendition} · ${conform}p` : rendition}
+                  {transfer && canSwitchRendition && playingLowRes ? `Original ${Math.round(transfer.fraction * 100)}%` : conform ? `${rendition} · ${conform}p` : rendition}
                 </Text>
                 <Text numberOfLines={1} style={styles.subtitle}>
                   {item.fileName}
                 </Text>
-              </View>
+              </Pressable>
               <View style={[styles.headerSide, styles.headerSideEnd]}>
-                <BarIcon
-                  icon={StarIcon}
-                  label="Favorite clip"
-                  selected={item.favorite}
-                  color={item.favorite ? favoriteColor : '#ffffff'}
-                  filled={item.favorite}
-                  onPress={() => setFavorite(!item.favorite)}
-                />
                 {fromPhone || desktop ? null : (
                   <BarIcon
                     icon={onPhone ? SmartPhone01Icon : Download04Icon}
@@ -608,6 +902,11 @@ export default function PlaybackScreen() {
                   </BarIcon>
                 )}
                 <BarIcon icon={Share08Icon} label="Share clip" onPress={() => setSharing(true)} />
+                {edited ? (
+                  <Pressable accessibilityRole="button" accessibilityLabel="Export edited clip" onPress={() => setExportOpen(true)} hitSlop={6} style={({ pressed }) => [styles.exportPill, pressed && { opacity: 0.7 }]}>
+                    <Text style={styles.exportText}>Export</Text>
+                  </Pressable>
+                ) : null}
               </View>
             </View>
             {isVideo && engine.kind === 'simulated' && !waitingForCamera && prefs.playbackAudioMeters ? (
@@ -617,7 +916,21 @@ export default function PlaybackScreen() {
             ) : null}
           </View>
 
-          {/* Bottom: burst frames, filmstrip scrubber, tools, transport */}
+          {editable ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Editing Preset"
+              onPress={() => setPresetsOpen(true)}
+              style={({ pressed }) => [styles.presetButton, { top: headerH + (isVideo && engine.kind === 'simulated' && prefs.playbackAudioMeters ? 48 : 6), right: sideInset + 12 }, pressed && { opacity: 0.65 }]}
+            >
+              <View style={styles.presetWell}>
+                <Glyph icon={SlidersHorizontalIcon} size={20} color="#ffffff" strokeWidth={1.8} />
+              </View>
+              <Text style={styles.presetCaption}>{'Editing\nPreset'}</Text>
+            </Pressable>
+          ) : null}
+
+          {/* Bottom: burst frames, filmstrip scrubber, tools, favourite · transport · delete */}
           <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 10), paddingLeft: sideInset + 12, paddingRight: sideInset + 12 }]} onLayout={(e) => setBottomH(e.nativeEvent.layout.height)}>
             <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.85)']} locations={[0, 0.35, 1]} style={styles.fill} />
             <View style={styles.bottomColumn}>
@@ -668,19 +981,30 @@ export default function PlaybackScreen() {
                   />
                   {portrait ? (
                     <>
-                      <View style={[styles.tools, width >= 600 && styles.toolsRoomy]}>{[tool.assists, tool.conform, tool.sound, tool.loop, tool.still, tool.rate, tool.remove, tool.hide]}</View>
-                      {transport}
+                      {toolRow}
+                      <View style={styles.actionRow}>
+                        {favoriteButton}
+                        {transport}
+                        {deleteButton}
+                      </View>
                     </>
                   ) : (
                     <View style={styles.landscapeRow}>
-                      <View style={[styles.toolGroup, { justifyContent: 'flex-start' }]}>{[tool.assists, tool.conform, tool.sound, tool.loop]}</View>
+                      <View style={{ flex: 1, minWidth: 0 }}>{toolRow}</View>
                       {transport}
-                      <View style={[styles.toolGroup, { justifyContent: 'flex-end' }]}>{[tool.still, tool.rate, tool.remove, tool.hide]}</View>
+                      <View style={styles.landscapeEnd}>
+                        {favoriteButton}
+                        {deleteButton}
+                      </View>
                     </View>
                   )}
                 </>
               ) : (
-                <View style={[styles.tools, styles.photoTools]}>{[tool.still, tool.rate, tool.remove, tool.hide]}</View>
+                <View style={styles.landscapeRow}>
+                  {favoriteButton}
+                  <View style={{ flex: 1, minWidth: 0 }}>{toolRow}</View>
+                  {deleteButton}
+                </View>
               )}
             </View>
           </View>
@@ -703,8 +1027,8 @@ export default function PlaybackScreen() {
         </View>
       )}
 
-      <DeliveryProgressPill bottom={chrome ? bottomH + 8 : Math.max(insets.bottom, 10) + 70} />
-      {lib.notice ? <NoticeToast text={lib.notice} bottom={(chrome ? bottomH : Math.max(insets.bottom, 10)) + 90} /> : null}
+      {!editing ? <DeliveryProgressPill bottom={chrome ? bottomH + 8 : Math.max(insets.bottom, 10) + 70} /> : null}
+      {lib.notice ? <NoticeToast text={lib.notice} bottom={(editing ? panelSize.height : chrome ? bottomH : Math.max(insets.bottom, 10)) + 90} /> : null}
 
       <Sheet visible={info && !wideLayout} title="Clip info" onClose={() => setInfo(false)}>
         <ClipInfoList rows={infoRows} />
@@ -730,6 +1054,36 @@ export default function PlaybackScreen() {
         {conform != null ? <Text style={styles.sheetMuted}>Audio is muted while conformed.</Text> : null}
         <View style={{ height: spacing.sm }} />
       </Sheet>
+      <LutHubSheet
+        visible={lutHubOpen}
+        onClose={() => setLutHubOpen(false)}
+        applied={edit.lut}
+        onApply={(lut) => {
+          if (tool && draft) setDraft({ ...draft, lut, lutStrength: lut && lut !== draft.lut ? 1 : draft.lutStrength });
+          else setStoredEdit(item.id, { ...storedEdit, lut });
+          setLutHubOpen(false);
+        }}
+      />
+      <PresetSheet
+        visible={presetsOpen}
+        onClose={() => setPresetsOpen(false)}
+        edit={storedEdit}
+        onApply={(p) => {
+          setStoredEdit(item.id, applyPreset(storedEdit, p));
+          setPresetsOpen(false);
+          lib.showNotice(`Applied ${p.name}`);
+        }}
+      />
+      <ExportSheet
+        visible={exportOpen}
+        onClose={() => setExportOpen(false)}
+        edit={storedEdit}
+        sourceSize={source}
+        hdrSource={hdrSource}
+        lowResAvailable={engine.kind !== 'video' || (!!lowResUri && !/^https?:/.test(lowResUri))}
+        originalOnPhone={!!localUri}
+        onExport={startExport}
+      />
       <DeliverySheet visible={sharing} items={burst.length ? burst : [item]} onClose={() => setSharing(false)} />
       <DeliveryQueueSheet visible={deliveryPanelOpen} onClose={() => setDeliveryPanel(false)} />
       <ConfirmSheet
@@ -744,7 +1098,7 @@ export default function PlaybackScreen() {
         onConfirm={() => void doDelete()}
       />
       </View>
-      {wideLayout && inspector ? (
+      {wideLayout && inspector && !editing ? (
         <PlaybackInspector
           fileName={item.fileName}
           rendition={conform ? `${rendition} · ${conform}p` : rendition}
@@ -787,24 +1141,37 @@ function createStyles(colors: ThemeColors) {
     loadingText: { fontFamily: fonts.medium, fontSize: 14, ...videoText, textAlign: 'center' as const, maxWidth: 320 },
     header: { position: 'absolute' as const, left: 0, right: 0, top: 0, paddingBottom: 22 },
     headerRow: { flexDirection: 'row' as const, alignItems: 'center' as const },
-    headerSide: { flexDirection: 'row' as const, alignItems: 'center' as const, minWidth: 120 },
+    headerSide: { flexDirection: 'row' as const, alignItems: 'center' as const, minWidth: 128 },
     headerSideEnd: { justifyContent: 'flex-end' as const },
-    titleBlock: { flex: 1, minWidth: 0, alignItems: 'center' as const, gap: 1 },
+    titleBlock: { flex: 1, minWidth: 0, alignItems: 'center' as const, gap: 1, minHeight: 44, justifyContent: 'center' as const },
     title: { fontFamily: fonts.semibold, fontSize: 15, ...videoText, color: 'rgba(255,255,255,0.88)' },
     subtitle: { fontFamily: fonts.medium, fontSize: 11, color: 'rgba(255,255,255,0.6)', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 },
     percent: { fontFamily: fonts.semibold, fontSize: 11, ...videoText, fontVariant: ['tabular-nums' as const] },
+    hdr: { height: 24, paddingHorizontal: 6, borderRadius: 6, borderWidth: 1.5, alignItems: 'center' as const, justifyContent: 'center' as const, marginLeft: 4 },
+    hdrOn: { borderColor: '#fedb2e' },
+    hdrOff: { borderColor: 'rgba(255,255,255,0.5)' },
+    hdrText: { fontFamily: fonts.bold, fontSize: 11, letterSpacing: 0.3 },
+    exportPill: { height: 30, paddingHorizontal: 12, borderRadius: 999, backgroundColor: colors.accent, alignItems: 'center' as const, justifyContent: 'center' as const, marginLeft: 4 },
+    exportText: { fontFamily: fonts.semibold, fontSize: 13, color: '#111111' },
     meters: { position: 'absolute' as const, bottom: -40 },
+    presetButton: { position: 'absolute' as const, alignItems: 'center' as const, gap: 4, minWidth: 56 },
+    presetWell: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center' as const, justifyContent: 'center' as const },
+    presetCaption: { fontFamily: fonts.medium, fontSize: 11, ...videoText, textAlign: 'center' as const, lineHeight: 13 },
     bottom: { position: 'absolute' as const, left: 0, right: 0, bottom: 0, paddingTop: 36, alignItems: 'center' as const },
     bottomColumn: { width: '100%' as const, maxWidth: 760, gap: 6 },
     filmstrip: { gap: 6, paddingVertical: 4 },
     frame: { width: 64, height: 44, borderRadius: 8, overflow: 'hidden' as const, borderWidth: 2, borderColor: 'transparent' },
     frameOn: { borderColor: '#ffffff' },
-    transport: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 6 },
-    tools: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, paddingTop: 2 },
-    toolsRoomy: { justifyContent: 'center' as const, gap: 20 },
-    photoTools: { justifyContent: 'flex-end' as const, gap: 12 },
+    transport: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 4 },
+    toolScroll: { flexGrow: 0 },
+    toolRow: { gap: 14, paddingTop: 2, paddingHorizontal: 2, alignItems: 'flex-start' as const },
+    toolDivider: { width: 1, height: 36, marginTop: 4, backgroundColor: 'rgba(255,255,255,0.22)' },
+    actionRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const },
     landscapeRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8 },
-    toolGroup: { flex: 1, flexDirection: 'row' as const, gap: 6 },
+    landscapeEnd: { flexDirection: 'row' as const, alignItems: 'center' as const },
+    bottomPanel: { position: 'absolute' as const, left: 0, right: 0, bottom: 0, backgroundColor: colors.preview, alignItems: 'center' as const },
+    sidePanel: { position: 'absolute' as const, right: 0, top: 0, bottom: 0, backgroundColor: colors.preview, justifyContent: 'flex-end' as const },
+    panelColumn: { width: '100%' as const, maxWidth: 560 },
     ratingBody: { alignItems: 'center' as const, gap: 4, paddingBottom: spacing.md },
     sheetMuted: { fontFamily: fonts.regular, fontSize: 14, color: colors.mutedForeground },
   };

@@ -122,6 +122,7 @@ export function ToolWell({
   disabled,
   filledIcon,
   iconColor,
+  edited,
 }: {
   icon: IconSvgElement;
   label: string;
@@ -132,6 +133,8 @@ export function ToolWell({
   disabled?: boolean;
   filledIcon?: boolean;
   iconColor?: string;
+  /** A small primary dot: this tool changed the clip. */
+  edited?: boolean;
 }) {
   const color = iconColor ?? (active ? '#111111' : destructive ? '#ff6b6b' : '#ffffff');
   return (
@@ -156,6 +159,7 @@ export function ToolWell({
         }}
       >
         <Glyph icon={icon} size={22} color={color} filled={filledIcon} strokeWidth={1.7} />
+        {edited ? <View style={{ position: 'absolute', top: 5, right: 5, width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#17a9f3' }} /> : null}
       </View>
       {caption ? (
         <Text numberOfLines={1} style={{ fontFamily: fonts.medium, fontSize: 11, ...videoText }}>
