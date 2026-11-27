@@ -232,7 +232,7 @@ export function TagChooser({ selected, onToggle, extra = [] }: { selected: strin
         ))}
       </ChipRow>
       <View style={styles.addRow}>
-        <TextField value={draft} onChangeText={setDraft} placeholder="New tag" accessibilityLabel="New tag" maxLength={32} onSubmitEditing={add} returnKeyType="done" style={styles.flex} />
+        <TextField value={draft} onChangeText={setDraft} placeholder="New tag" accessibilityLabel="New tag" maxLength={32} onSubmitEditing={add} returnKeyType="done" style={styles.field} />
         <Button title="Add" variant="secondary" onPress={add} disabled={!draft.trim()} />
       </View>
     </View>
@@ -488,6 +488,7 @@ export function ExportMarkersSheet({ visible, items, onClose, onDone }: { visibl
 function createStyles(colors: ThemeColors) {
   return {
     flex: { flex: 1 },
+    field: { flex: 1, minWidth: 0, width: 0 },
     form: { gap: spacing.sm, paddingBottom: spacing.md },
     formAfterList: { paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border },
     list: { paddingBottom: spacing.sm },
