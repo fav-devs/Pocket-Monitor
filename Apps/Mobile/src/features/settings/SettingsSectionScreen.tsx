@@ -1,4 +1,4 @@
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import AssistSettingsPanel from '@/features/assists/AssistSettingsPanel';
 import MediaSettingsPanel from '@/features/media/MediaSettingsPanel';
@@ -21,8 +21,13 @@ import { gesturesAvailable } from '@/camera/desktop/gestures';
 
 /** `/settings/<section>`: one Operator Setup section as its own settings page (e.g. `/settings/assists`). */
 export default function SettingsSectionScreen() {
-  const { section } = useLocalSearchParams<{ section?: string }>();
+  const { section, from } = useLocalSearchParams<{ section?: string; from?: string }>();
   const info = sectionInfo(typeof section === 'string' ? section : undefined);
+  // Opened from another section's row: the wide layout's breadcrumb leads back to it.
+  const parent = typeof from === 'string' ? sectionInfo(from) : undefined;
+  const crumbs = parent
+    ? [{ label: parent.title, onPress: () => (router.canGoBack() ? router.back() : router.replace(`/settings/${parent.id}`)) }]
+    : undefined;
   const [legal, setLegal] = useState<LegalPage | null>(null);
   const [reporting, setReporting] = useState(false);
   if (!info || (info.desktopOnly && !gesturesAvailable())) return <Redirect href="/settings" />;
@@ -87,7 +92,7 @@ export default function SettingsSectionScreen() {
 
   return (
     <>
-      <SettingsScreenPage title={info.title} fallback="/settings">
+      <SettingsScreenPage title={info.title} fallback="/settings" crumbs={crumbs}>
         {body}
       </SettingsScreenPage>
       {info.id === 'support' || info.id === 'about' ? (

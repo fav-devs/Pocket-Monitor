@@ -1,18 +1,19 @@
 import { ServerStack01Icon, Unlink01Icon, Wifi01Icon, WifiDisconnected01Icon } from '@hugeicons/core-free-icons';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
 import { desktopCameraEnabled } from '@/camera/bootstrap';
 import { Icon } from '@/components/icon';
 import { SettingsDestructiveButton, SettingsGroup, SettingsRow } from '@/components/settings-ui';
 import { Squircle } from '@/components/squircle';
+import { useWideLayout } from '@/constants/layout';
 import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { connectionPhaseLabel } from '@/features/pairing/presentation';
 import { SettingsScreenPage, ValueText } from './components/ui';
 import { tint } from './components/feedback';
 import { appVersion } from './diagnostics';
 import { gesturesAvailable } from '@/camera/desktop/gestures';
-import { sectionInfo, settingsGroups, visibleSectionIds, type SettingsSectionId } from './sections';
+import { sectionInfo, settingsGroups, settingsLanding, visibleSectionIds, type SettingsSectionId } from './sections';
 
 const STATUS_WELL = 44;
 
@@ -28,6 +29,9 @@ export default function SettingsScreen() {
   const phase = useCamera((s) => s.connection.phase);
   const cameraName = useCamera((s) => s.identity?.name);
   const live = phase === 'live';
+  // Wide layout: the section list is the split view's column, so Settings opens on a section.
+  const wide = useWideLayout();
+  if (wide) return <Redirect href={`/settings/${settingsLanding(gesturesAvailable())}`} />;
 
   const disconnect = () => {
     session.disconnect().catch(() => {});

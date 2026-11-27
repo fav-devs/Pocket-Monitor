@@ -71,7 +71,7 @@ export function DesktopAppRows() {
         icon={CameraSmileIcon}
         title="Gestures"
         value={settings ? (settings.gestures ? sourceLabel(settings.gestureSource ?? 'cameraFeed') : 'Off') : undefined}
-        onPress={() => router.push('/settings/gestures')}
+        onPress={() => router.push('/settings/gestures?from=operator')}
         testID="desktop.gestures"
       />
       <SwitchRow

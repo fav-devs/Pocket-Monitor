@@ -43,7 +43,7 @@ export function ExposureSection() {
       </Group>
       <Group label="LUT" note={SettingsCopy.look}>
         <ValueRow icon={ColorsIcon} title="Look" value={look} />
-        <LinkRow icon={PaintBoardIcon} title="Choose look" onPress={() => router.push('/settings/assists')} last />
+        <LinkRow icon={PaintBoardIcon} title="Choose look" onPress={() => router.push('/settings/assists?from=exposure')} last />
       </Group>
       <Group
         label="Camera exposure"

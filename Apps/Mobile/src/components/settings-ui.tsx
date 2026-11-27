@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
@@ -7,7 +7,9 @@ import type { IconSvgElement } from "@hugeicons/react-native";
 import { Icon } from "@/components/icon";
 import { PullRefreshScrollView } from "@/components/pull-refresh-scroll-view";
 import { Squircle } from "@/components/squircle";
-import { CONTENT_MAX_WIDTH, centredColumn } from "@/constants/layout";
+import { CONTENT_MAX_WIDTH, READABLE_MAX_WIDTH, WIDE_PAGE_PADDING, centredColumn, useWideLayout } from "@/constants/layout";
+import { isHovered } from "./desktop";
+import { type Crumb, PageToolbar } from "./page-toolbar";
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from "@/constants/theme";
 
 const SETTINGS_ICON_WELL = 36;
@@ -18,15 +20,32 @@ export function SettingsPage({
 	children,
 	refreshing = false,
 	onRefresh,
+	crumbs,
+	toolbarTitle,
+	actions,
 }: {
 	title: string;
 	children: ReactNode;
 	refreshing?: boolean;
 	onRefresh?: () => Promise<void>;
+	/** Wide layout: the levels above this page (`Media › Settings`). */
+	crumbs?: Crumb[];
+	/** Wide layout: the toolbar's title when it differs from the phone's big title. */
+	toolbarTitle?: string;
+	/** Wide layout: buttons at the toolbar's end. */
+	actions?: ReactNode;
 }) {
 	const { colors } = useTheme();
 	const styles = useThemedStyles(createStyles);
 	const insets = useSafeAreaInsets();
+	const wide = useWideLayout();
+	if (wide) {
+		return (
+			<WidePage title={toolbarTitle ?? title} crumbs={crumbs} actions={actions}>
+				{children}
+			</WidePage>
+		);
+	}
 	return (
 		<PullRefreshScrollView
 			contentContainerStyle={[
@@ -62,6 +81,40 @@ export function SettingsPage({
 			</View>
 			{children}
 		</PullRefreshScrollView>
+	);
+}
+
+/**
+ * A page in the wide layout: the slim toolbar (title or breadcrumb, actions), then the page's
+ * content in a left-aligned readable column that scrolls under it.
+ */
+export function WidePage({
+	title,
+	crumbs,
+	detail,
+	actions,
+	children,
+	maxWidth = READABLE_MAX_WIDTH,
+}: {
+	title: string;
+	crumbs?: Crumb[];
+	detail?: string | null;
+	actions?: ReactNode;
+	children: ReactNode;
+	maxWidth?: number;
+}) {
+	const styles = useThemedStyles(createStyles);
+	return (
+		<View style={styles.widePage}>
+			<PageToolbar title={title} crumbs={crumbs} detail={detail} actions={actions} />
+			<ScrollView
+				style={styles.wideScroll}
+				contentContainerStyle={[styles.content, styles.wideContent, { maxWidth: maxWidth + WIDE_PAGE_PADDING * 2 }]}
+				keyboardShouldPersistTaps="handled"
+			>
+				{children}
+			</ScrollView>
+		</View>
 	);
 }
 
@@ -121,10 +174,11 @@ export function SettingsRow({
 }) {
 	const { colors } = useTheme();
 	const styles = useThemedStyles(createStyles);
+	const wide = useWideLayout();
 	const well = iconBg ?? colors.surfaceStrong;
 	const tint = iconColor ?? colors.foreground;
 	const body = (
-		<View style={[styles.row, !last && styles.rowBorder, disabled && styles.disabled]}>
+		<View style={[styles.row, wide && styles.rowWide, !last && styles.rowBorder, disabled && styles.disabled]}>
 			<Squircle width={SETTINGS_ICON_WELL} height={SETTINGS_ICON_WELL} radius={SETTINGS_ICON_RADIUS} color={well}>
 				<Icon icon={icon} size={18} color={tint} />
 			</Squircle>
@@ -147,7 +201,7 @@ export function SettingsRow({
 			accessibilityLabel={title}
 			disabled={disabled}
 			onPress={onPress}
-			style={({ pressed }) => pressed && styles.pressed}
+			style={(state) => [isHovered(state) && !disabled && styles.rowHover, state.pressed && styles.pressed]}
 		>
 			{body}
 		</Pressable>
@@ -185,6 +239,14 @@ function createStyles(colors: ThemeColors) {
 	const hairline = StyleSheet.hairlineWidth;
 	return {
 		content: { paddingHorizontal: spacing.md, gap: spacing.lg },
+		widePage: { flex: 1, backgroundColor: colors.background },
+		wideScroll: { flex: 1 },
+		wideContent: {
+			width: "100%" as const,
+			paddingHorizontal: WIDE_PAGE_PADDING,
+			paddingTop: 28,
+			paddingBottom: 56,
+		},
 		heading: { gap: spacing.sm },
 		back: { alignSelf: "flex-start" as const, paddingVertical: 4, marginLeft: -4 },
 		title: { fontFamily: fonts.bold, fontSize: 32, letterSpacing: -0.8, color: colors.foreground },
@@ -209,6 +271,8 @@ function createStyles(colors: ThemeColors) {
 			paddingVertical: 13,
 			minHeight: 52,
 		},
+		rowWide: { minHeight: 48, paddingVertical: 10 },
+		rowHover: { backgroundColor: colors.surfaceStrong },
 		rowBorder: {
 			borderBottomWidth: hairline,
 			borderBottomColor: colors.border,

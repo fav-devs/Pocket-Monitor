@@ -77,3 +77,18 @@ export function sectionInfo(id: string | undefined): SettingsSectionInfo | undef
 export function visibleSectionIds(ids: readonly SettingsSectionId[], desktop: boolean): SettingsSectionId[] {
   return ids.filter((id) => desktop || !sectionInfo(id)?.desktopOnly);
 }
+
+/** The section Settings opens on in the wide layout (split view): the first one listed. */
+export function settingsLanding(desktop: boolean): SettingsSectionId {
+  for (const group of settingsGroups) {
+    const ids = visibleSectionIds(group.ids, desktop);
+    if (ids.length) return ids[0];
+  }
+  return 'connection';
+}
+
+/** The section a `/settings/<id>` path shows, for the split view's selection. */
+export function sectionFromPath(pathname: string): SettingsSectionId | null {
+  const match = /^\/settings\/([^/?#]+)/.exec(pathname);
+  return (match && sectionInfo(match[1])?.id) || null;
+}

@@ -6,9 +6,10 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { SegmentedControl } from '@/components/segmented-control';
-import { SettingsRow } from '@/components/settings-ui';
+import type { Crumb } from '@/components/page-toolbar';
+import { SettingsRow, WidePage } from '@/components/settings-ui';
 import { Squircle } from '@/components/squircle';
-import { CONTENT_MAX_WIDTH, centredColumn } from '@/constants/layout';
+import { CONTENT_MAX_WIDTH, centredColumn, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { settingsFeedback } from './feedback';
 
@@ -26,15 +27,26 @@ export function SettingsScreenPage({
   title,
   children,
   fallback = '/',
+  crumbs,
 }: {
   title: string;
   children: ReactNode;
   /** Where Back goes when there is nothing to go back to. */
   fallback?: '/' | '/live' | '/settings';
+  /** Wide layout: the levels above this page (`Exposure & Look › View Assists`). */
+  crumbs?: Crumb[];
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
+  const wide = useWideLayout();
+  if (wide) {
+    return (
+      <WidePage title={title} crumbs={crumbs}>
+        {children}
+      </WidePage>
+    );
+  }
   return (
     <ScrollView
       style={styles.page}
