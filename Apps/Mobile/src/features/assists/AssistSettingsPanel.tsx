@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useLiveLayouts } from '@/features/live/layout/layoutStore';
 import { Text, View } from 'react-native';
 import { ArrowReloadHorizontalIcon, Delete02Icon } from '@hugeicons/core-free-icons';
 import { FieldSection } from '@/components/field-section';
@@ -50,7 +51,8 @@ function ShowIn({ tool }: { tool: AssistTool }) {
 /** Settings → View Assists: every tool's switch and options, panel layout reset, defaults. */
 export default function AssistSettingsPanel() {
   const styles = useThemedStyles(createStyles);
-  const resetPanels = useAssists((s) => s.resetPanels);
+  // Scope and meter positions live in the active live layout (General › Layout).
+  const resetPanels = useLiveLayouts((s) => s.resetPanels);
   const reset = useAssists((s) => s.reset);
   const [open, setOpen] = useState<AssistTool | null>(null);
   const last = useRef<AssistTool | null>(null);

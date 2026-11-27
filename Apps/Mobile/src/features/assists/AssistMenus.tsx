@@ -32,6 +32,7 @@ import { defaultAssistOptions, useAssists, useSourceTransfer, type AssistTool } 
 import { MenuScroll, MenuTabs, Note, Swatches, SwitchRow, TextAction } from './menuKit';
 import { FalseColorLegend } from './overlays/Meters';
 import { LutPicker } from './LutPicker';
+import { useLiveLayouts } from '@/features/live/layout/layoutStore';
 
 /**
  * A tool's options (`MonitorToolInspector` bodies): the whole body of its sheet, tabs pinned where it has sections.
@@ -435,14 +436,7 @@ function MirrorMenu() {
 }
 
 function ResetPanel({ id }: { id: 'waveform' | 'parade' | 'histogram' | 'vectorscope' }) {
-  const setPanel = useAssists((s) => s.setPanel);
-  return (
-    <TextAction
-      label="Reset position and size"
-      onPress={() => {
-        setPanel(id, 'landscape', { center: undefined, scale: undefined });
-        setPanel(id, 'portrait', { center: undefined, scale: undefined });
-      }}
-    />
-  );
+  // Positions and sizes live in the active live layout (every orientation).
+  const resetPanel = useLiveLayouts((s) => s.resetPanel);
+  return <TextAction label="Reset position and size" onPress={() => resetPanel(id)} />;
 }

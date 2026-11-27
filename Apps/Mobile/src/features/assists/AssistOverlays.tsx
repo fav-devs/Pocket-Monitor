@@ -10,6 +10,7 @@ import { AssistInspectorHost, type AssistSheetPlacement } from './AssistInspecto
 import { CrosshairOverlay, GridOverlay, GuidesOverlay, LevelOverlay } from './overlays/Framing';
 import { EVMeter } from './overlays/Meters';
 import { FloatingPanels } from './scopes/FloatingPanels';
+import { MovableScopePanel } from './scopes/MovableScopePanel';
 
 export interface AssistOverlaysProps {
   /** Where the picture is drawn, in this overlay's coordinates (LivePicture `onPictureRect`). */
@@ -70,7 +71,7 @@ export default function AssistOverlays({ pictureRect, context, obstacles, cleara
           {on.GRID ? <GridOverlay feed={pictureRect} size={size} thirds={grid.thirds} phi={grid.phi} diagonal={grid.diagonal} /> : null}
           {on.CROSS ? <CrosshairOverlay feed={pictureRect} /> : null}
           {on.LEVEL && context === 'live' ? <LiveLevel feed={feed} portrait={canvas.height > canvas.width} /> : null}
-          {on.EV ? <EVOverlay feed={feed} context={context} colorMode={colorMode} /> : null}
+          {on.EV ? <EVOverlay feed={feed} context={context} colorMode={colorMode} canvas={canvas} clearance={clearance} obstacles={obstacles} enabled={!locked} /> : null}
           <FloatingPanels
             context={context}
             canvas={canvas}
@@ -104,7 +105,24 @@ function LiveLevel({ feed, portrait }: { feed: Rect; portrait: boolean }) {
   return <LevelOverlay feed={feed} roll={live ? roll : null} pitch={live ? pitch : null} portrait={portrait} />;
 }
 
-function EVOverlay({ feed, context, colorMode }: { feed: Rect; context: AssistContext; colorMode?: ColorMode | null }) {
+/** The EV meter: a slim plate by the picture's leading edge by default; drag it anywhere (saved in the layout). */
+function EVOverlay({
+  feed,
+  context,
+  colorMode,
+  canvas,
+  clearance,
+  obstacles,
+  enabled,
+}: {
+  feed: Rect;
+  context: AssistContext;
+  colorMode?: ColorMode | null;
+  canvas: Rect;
+  clearance?: Partial<Insets>;
+  obstacles?: Rect[];
+  enabled: boolean;
+}) {
   const metered = useCamera((s) => (context === 'live' ? s.exposure.meteredEv : null));
   const crushClip = useAssists((s) => s.options.crushClip);
   const { transfer, clipByte } = useSourceTransfer(colorMode);
@@ -118,8 +136,19 @@ function EVOverlay({ feed, context, colorMode }: { feed: Rect; context: AssistCo
     ? (evMeterValue(metered, null, transfer) ?? desktopBundle?.pictureStops ?? null)
     : evMeterValue(metered, bundle ? bundle.samples.histLuma : null, transfer);
   return (
-    <View pointerEvents="none" style={{ position: 'absolute', left: frame.x, top: frame.y }}>
-      <EVMeter value={value} width={frame.width} height={frame.height} />
-    </View>
+    <MovableScopePanel
+      id="evMeter"
+      baseSize={{ width: frame.width, height: frame.height }}
+      canvas={canvas}
+      clearance={clearance}
+      obstacles={obstacles}
+      defaultCenter={() => ({ x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 })}
+      resizable={false}
+      fixedScale={1}
+      enabled={enabled}
+      accessibilityLabel="EV meter"
+    >
+      {() => <EVMeter value={value} width={frame.width} height={frame.height} />}
+    </MovableScopePanel>
   );
 }
