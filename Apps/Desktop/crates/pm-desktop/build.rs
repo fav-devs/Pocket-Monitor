@@ -89,6 +89,8 @@ const APP_COMMANDS: &[&str] = &[
     "media_resume_live",
     "media_cache_size",
     "media_cache_clear",
+    "media_sidecar",
+    "markers_save",
     "player_state",
     "player_toggle",
     "player_seek",

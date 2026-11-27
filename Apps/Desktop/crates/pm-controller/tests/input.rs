@@ -434,6 +434,26 @@ fn a_controller_drives_on_the_phones_map() {
 }
 
 #[test]
+fn menu_and_the_marker_gesture_ask_the_web_for_a_marker() {
+    let mut input = input();
+    input.set_status(Status::default(), 0.0);
+    assert!(
+        input.pad_button(PadButton::Menu, 0.1).is_empty(),
+        "no camera command"
+    );
+    let mut map = GestureMap::default();
+    map.set(Gesture::Horns, GestureAction::Marker);
+    input.set_gesture_map(map);
+    assert!(input.gesture(Gesture::Horns, 0.2).is_empty());
+    assert_eq!(input.take_marker_requests(), ["gamepad", "gesture"]);
+    assert!(input.take_marker_requests().is_empty(), "taken once");
+    // The controller off: Menu does nothing.
+    input.set_gamepad(false, 0.3);
+    assert!(input.pad_button(PadButton::Menu, 0.3).is_empty());
+    assert!(input.take_marker_requests().is_empty());
+}
+
+#[test]
 fn y_clears_tracking_and_an_unplug_rests_the_stick() {
     let mut input = input();
     quarter(&mut input, 0.0);

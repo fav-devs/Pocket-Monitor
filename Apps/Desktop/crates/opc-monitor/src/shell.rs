@@ -1566,6 +1566,8 @@ impl Shell {
                 let command = self.record_command();
                 self.act(Action::Send(command), now)
             }
+            // Markers live in the Pocket Monitor app (Apps/Mobile); this window has none.
+            GestureAction::Marker => Vec::new(),
             action @ (GestureAction::NextPreset | GestureAction::PreviousPreset) => {
                 let filled: Vec<usize> = (0..presets::SLOTS)
                     .filter(|&i| self.presets.slots[i].is_some())
@@ -1610,6 +1612,8 @@ impl Shell {
             PadAction::IsoDown => self.iso_step(-1),
             PadAction::ShutterOpen => self.shutter_step(1),
             PadAction::ShutterClose => self.shutter_step(-1),
+            // Markers live in the Pocket Monitor app (Apps/Mobile); this window has none.
+            PadAction::Marker => Vec::new(),
         }
     }
 

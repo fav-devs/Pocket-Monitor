@@ -120,6 +120,9 @@ struct Inner {
     /// When a live picture last arrived after the resume started.
     live_count: u64,
     last_live: Option<f64>,
+    /// Clip metadata sidecars the web sent, by camera path: written beside the original
+    /// now if it is cached, else when its download lands (`pm_controller::sidecar`).
+    sidecars: HashMap<String, String>,
 }
 
 impl Inner {
@@ -140,6 +143,7 @@ impl Inner {
             repair_blocked: false,
             live_count: 0,
             last_live: None,
+            sidecars: HashMap::new(),
         }
     }
 
@@ -350,6 +354,24 @@ impl MediaService {
         }
         inner.worker().ask(MediaJob::Original(file));
         Ok(())
+    }
+
+    /// `media_sidecar`: the clip's metadata sidecar from the web, beside the cached
+    /// original now, or when its download lands. A clip not on this machine keeps it until
+    /// then (the newest wins).
+    pub fn sidecar(&self, id: &str, json: String) -> Result<Option<String>, String> {
+        pm_controller::sidecar::validate(&json)?;
+        let file = self.file(id)?;
+        let mut inner = self.inner.lock().map_err(|e| e.to_string())?;
+        if inner.cache.has_original(&file) {
+            let original = inner.cache.original_path(&file);
+            inner.sidecars.remove(&file.path);
+            drop(inner);
+            let path = pm_controller::sidecar::write_beside(&original, &json)?;
+            return Ok(Some(path.display().to_string()));
+        }
+        inner.sidecars.insert(file.path, json);
+        Ok(None)
     }
 
     /// `media_favorite`: the local star, and the camera's when the record has a handle.
@@ -749,6 +771,12 @@ fn drain_worker(
                     inner.library.proxies.insert(path.clone());
                 } else {
                     inner.library.cached.insert(path.clone());
+                    // The download path writes the clip's sidecar beside it.
+                    if let Some(json) = inner.sidecars.remove(&path) {
+                        if let Err(error) = pm_controller::sidecar::write_beside(&local, &json) {
+                            log_line("media", format_args!("sidecar not written: {error}"));
+                        }
+                    }
                 }
                 list_changed = true;
                 if inner.want.get(&path) == Some(&Want::Play) {
@@ -927,6 +955,39 @@ pub async fn media_cache_size(app: AppHandle) -> Result<u64, String> {
 #[tauri::command]
 pub async fn media_cache_clear(app: AppHandle) -> Result<(), String> {
     blocking(app, MediaService::clear_cache).await?
+}
+
+/// The clip's metadata sidecar (`docs/clip-metadata.md`) beside its cached original, or
+/// when its download lands. Returns the path when written now.
+#[tauri::command]
+pub async fn media_sidecar(
+    app: AppHandle,
+    id: String,
+    json: String,
+) -> Result<Option<String>, String> {
+    blocking(app, move |media| media.sidecar(&id, json)).await?
+}
+
+/// "Export markers": the FCPXML / EDL / CSV text into `Videos/Pocket Monitor/Markers`,
+/// never over an earlier file. Returns the path.
+#[tauri::command]
+pub async fn markers_save(file_name: String, contents: String) -> Result<String, String> {
+    use pm_controller::sidecar;
+    if contents.len() > sidecar::MAX_BYTES {
+        return Err("The export is too large.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .ok_or_else(|| "No home folder to save into.".to_string())?;
+        let folder = sidecar::markers_folder(std::path::Path::new(&home));
+        let path = sidecar::unique_path(&folder, &sidecar::safe_file_name(&file_name));
+        sidecar::write_whole(&path, contents.as_bytes())
+            .map_err(|e| format!("Could not save the markers: {e}"))?;
+        Ok(path.display().to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Puts the media, player, virtual camera and relay services into Tauri state (from

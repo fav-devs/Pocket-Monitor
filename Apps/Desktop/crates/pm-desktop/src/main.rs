@@ -331,6 +331,8 @@ fn main() {
             media::media_delete,
             media::media_close,
             media::media_resume_live,
+            media::media_sidecar,
+            media::markers_save,
             media::media_cache_size,
             media::media_cache_clear,
             player::player_state,

@@ -46,6 +46,7 @@ Viewfinder keys
 
   Space        start recording            T      countdown, or cancel it
   R            stop recording             S      write a still
+  M            marker while recording
   Arrows       pan and tilt               C      recentre the gimbal
   + / -        next / previous zoom stop  F      flip to selfie and back
   0            back to wide               V      cycle gimbal mode
@@ -55,7 +56,7 @@ Viewfinder keys
   A            assist toolbar             K      programmed moves
   F11          fullscreen                 Esc    close a sheet, then the viewfinder
 
-  Z zebra      P peaking      L colour cube      M mirror      H hide the chrome
+  Z zebra      P peaking      L colour cube      I mirror      H hide the chrome
 
   J            gestures on / off          Y      hand view: what the hand tracker sees
 
@@ -430,7 +431,8 @@ mod tests {
     #[test]
     fn the_key_list_names_every_key_the_viewfinder_takes() {
         for key in [
-            "Space", "Tab", "F11", "1 - 6", "Esc", " E ", " K ", " A ", " T ", " J ", " Y ",
+            "Space", "Tab", "F11", "1 - 6", "Esc", " E ", " K ", " A ", " T ", " J ", " Y ", " M ",
+            " I ",
         ] {
             assert!(KEYS.contains(key), "{key}");
         }

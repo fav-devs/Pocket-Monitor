@@ -164,6 +164,9 @@ pub struct LiveInput {
     gesture_hold: Option<GestureHold>,
     notices: Vec<Notice>,
     stick_log: Vec<StickSend>,
+    /// Markers asked for (the pad's Menu, a gesture) since the web last took them, by
+    /// what asked. The web keeps markers and the take's clock.
+    markers: Vec<&'static str>,
 }
 
 impl Default for LiveInput {
@@ -212,6 +215,7 @@ impl LiveInput {
             gesture_hold: None,
             notices: Vec::new(),
             stick_log: Vec::new(),
+            markers: Vec::new(),
         }
     }
 
@@ -278,6 +282,11 @@ impl LiveInput {
             tone: "warning",
         }));
         out
+    }
+
+    /// Markers asked for since the last call (`gamepad`, `gesture`), for `input://marker`.
+    pub fn take_marker_requests(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.markers)
     }
 
     /// Every stick write since the last call, for the `stick tx` log line.
@@ -564,6 +573,10 @@ impl LiveInput {
             PadAction::IsoDown => self.iso_step(-1),
             PadAction::ShutterOpen => self.shutter_step(1),
             PadAction::ShutterClose => self.shutter_step(-1),
+            PadAction::Marker => {
+                self.markers.push("gamepad");
+                Vec::new()
+            }
         }
     }
 
@@ -1056,6 +1069,11 @@ impl LiveInput {
             GestureAction::Record => {
                 self.notice("GESTURE: RECORD", "info");
                 vec![self.record_command()]
+            }
+            GestureAction::Marker => {
+                // The web's marker toast says what happened.
+                self.markers.push("gesture");
+                Vec::new()
             }
             GestureAction::FaceTrack => {
                 if self.tracker.is_tracking() {

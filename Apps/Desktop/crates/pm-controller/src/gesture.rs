@@ -118,10 +118,12 @@ pub enum GestureAction {
     Record,
     /// Start tracking the face the camera sees, or stop tracking.
     FaceTrack,
+    /// A marker on the take being recorded (the web keeps markers). Not mapped by default.
+    Marker,
 }
 
 impl GestureAction {
-    pub const ALL: [GestureAction; 8] = [
+    pub const ALL: [GestureAction; 9] = [
         GestureAction::Nothing,
         GestureAction::Recenter,
         GestureAction::Flip,
@@ -130,6 +132,7 @@ impl GestureAction {
         GestureAction::Stop,
         GestureAction::Record,
         GestureAction::FaceTrack,
+        GestureAction::Marker,
     ];
 
     pub fn label(self) -> &'static str {
@@ -142,6 +145,7 @@ impl GestureAction {
             GestureAction::Stop => "Stop everything",
             GestureAction::Record => "Start / stop recording (hold 2.5 s)",
             GestureAction::FaceTrack => "Face tracking on / off",
+            GestureAction::Marker => "Add marker",
         }
     }
 
@@ -156,6 +160,7 @@ impl GestureAction {
             GestureAction::Stop => "stop",
             GestureAction::Record => "record",
             GestureAction::FaceTrack => "face_track",
+            GestureAction::Marker => "marker",
         }
     }
 }
@@ -436,6 +441,28 @@ mod tests {
         for action in GestureAction::ALL {
             assert_eq!(serde_json::to_value(action).unwrap(), action.key());
         }
+    }
+
+    #[test]
+    fn add_marker_reads_and_writes_but_no_gesture_does_it_by_default() {
+        assert!(Gesture::ALL
+            .iter()
+            .all(|g| GestureMap::default().get(*g) != GestureAction::Marker));
+        assert_eq!(
+            serde_json::to_value(GestureAction::Marker).unwrap(),
+            "marker"
+        );
+        assert_eq!(
+            serde_json::from_value::<GestureAction>("marker".into()).unwrap(),
+            GestureAction::Marker
+        );
+        let read: GestureMap = serde_json::from_str(r#"{"horns":"marker"}"#).unwrap();
+        assert_eq!(read.get(Gesture::Horns), GestureAction::Marker);
+        assert_eq!(serde_json::to_value(read).unwrap()["horns"], "marker");
+        let mut lines = GestureMap::default();
+        lines.read_line("gesture.point=marker");
+        assert_eq!(lines.get(Gesture::Point), GestureAction::Marker);
+        assert!(lines.to_lines().contains("gesture.point=marker"));
     }
 
     #[test]

@@ -90,6 +90,8 @@
     "allow-media-resume-live",
     "allow-media-cache-size",
     "allow-media-cache-clear",
+    "allow-media-sidecar",
+    "allow-markers-save",
     "allow-player-state",
     "allow-player-toggle",
     "allow-player-seek",

@@ -74,6 +74,8 @@ pub enum UiAction {
     /// `J`: gestures on or off, already carried out in Rust (the source stays as set);
     /// the web reflects the setting.
     ToggleGestures,
+    /// `M`: a marker on the take being recorded. The web keeps markers and their clock.
+    Marker,
 }
 
 /// Where a key goes.
@@ -104,7 +106,9 @@ pub fn route(key: DesktopKey) -> Option<Route> {
             'z' => Route::Ui(UiAction::ToggleZebra),
             'p' => Route::Ui(UiAction::TogglePeaking),
             'l' => Route::Ui(UiAction::ToggleGrade),
-            'm' => Route::Ui(UiAction::ToggleMirror),
+            // `M` is the marker, as in every editor; the mirror moved to `I`.
+            'm' => Route::Ui(UiAction::Marker),
+            'i' => Route::Ui(UiAction::ToggleMirror),
             'h' => Route::Ui(UiAction::ToggleChrome),
             'g' => Route::Ui(UiAction::Library),
             's' => Route::Ui(UiAction::Still),
@@ -141,6 +145,7 @@ pub const KEY_HELP: &[(&str, &str)] = &[
     ("R", "Stop recording"),
     ("T", "Countdown, or cancel it"),
     ("S", "Still of the picture"),
+    ("M", "Marker while recording"),
     ("Arrows", "Pan and tilt"),
     ("C", "Recentre"),
     ("F", "Flip"),
@@ -156,7 +161,7 @@ pub const KEY_HELP: &[(&str, &str)] = &[
     ("E", "Exposure"),
     ("K", "Moves"),
     ("A", "Assists"),
-    ("Z P L M", "Zebra · Peaking · Cube · Mirror"),
+    ("Z P L I", "Zebra · Peaking · Cube · Mirror"),
     ("J", "Gestures on / off"),
     ("Y", "Hand view"),
     ("F11", "Fullscreen"),
@@ -203,6 +208,7 @@ mod tests {
             "p",
             "l",
             "m",
+            "i",
             "1",
             "2",
             "3",
@@ -247,6 +253,15 @@ mod tests {
             serde_json::to_value(UiAction::ToggleHandView).unwrap(),
             "toggle-hand-view"
         );
+    }
+
+    #[test]
+    fn m_adds_a_marker_and_i_mirrors() {
+        assert_eq!(routed("m"), Some(Route::Ui(UiAction::Marker)));
+        assert_eq!(routed("M"), Some(Route::Ui(UiAction::Marker)));
+        assert_eq!(routed("i"), Some(Route::Ui(UiAction::ToggleMirror)));
+        assert_eq!(serde_json::to_value(UiAction::Marker).unwrap(), "marker");
+        assert!(KEY_HELP.iter().any(|(key, _)| *key == "M"));
     }
 
     #[test]

@@ -495,6 +495,10 @@ fn run(
                 serde_json::json!({ "type": "notice", "message": notice.text, "tone": notice.tone }),
             );
         }
+        // The pad's Menu and the "Add marker" gesture: the web puts the marker on its take.
+        for source in live.take_marker_requests() {
+            let _ = app.emit("input://marker", serde_json::json!({ "source": source }));
+        }
         if let Ok(value) = serde_json::to_value(live.tracker.view()) {
             if let Some(value) = tracking_view.offer(value, at) {
                 let _ = app.emit("tracking://box", value);
@@ -667,6 +671,7 @@ pub(crate) fn pad_button(button: gilrs::Button) -> Option<PadButton> {
         Button::DPadDown => PadButton::DpadDown,
         Button::DPadLeft => PadButton::DpadLeft,
         Button::DPadRight => PadButton::DpadRight,
+        Button::Start => PadButton::Menu,
         _ => return None,
     })
 }

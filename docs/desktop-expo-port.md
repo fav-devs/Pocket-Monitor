@@ -333,7 +333,8 @@ natively). There are also 24 keyboard rows (7 missing on mobile web) and 11 game
 | `E` | Exposure sheet | MISSING | Add |
 | `K` | Moves sheet | MISSING | Add |
 | `A` | Assist toolbar | MISSING | Add |
-| `Z` `P` `L` `M` | Zebra, peaking, cube, mirror (every screen, including the player) | YES (live only) | Also in the player |
+| `Z` `P` `L` `I` | Zebra, peaking, cube, mirror (every screen, including the player). Mirror was `M` until markers (below). | YES (live only) | Also in the player |
+| `M` | Marker on the take being recorded (`UiAction::Marker`; the web keeps markers, `docs/clip-metadata.md`) | YES | Done |
 | `1`–`6` | Recall gimbal preset | MISSING | Add |
 | `Esc` | Close a sheet first, then close the viewfinder (library: back; player: back) | Close the viewfinder | Keep the sheet-first rule |
 | `F11` | *Documented, not bound* (D1) | MISSING | Add |
@@ -353,6 +354,7 @@ natively). There are also 24 keyboard rows (7 missing on mobile web) and 11 game
 | LT / RT | Hold to zoom at the phones' rate (dt clamp 0.1 s) | YES | R |
 | D-pad up/down | ISO on the body's list | YES | R |
 | D-pad left/right | Shutter (left opens) | YES | R |
+| Menu (Start / Options) | Marker on the take being recorded (`PadAction::Marker` → `input://marker`) | YES (Menu) | R + W |
 | Controls tab | **Game controller** switch, connected pad name, map help line `pad::MAP_HELP` | YES `prefs.gamepadEnabled`, "Gamepad" row Connected / Not connected | W + R |
 | Connect/disconnect | Name updates | Toasts; unplug rests stick and zoom | R + W (add the toasts, keep the rest) |
 

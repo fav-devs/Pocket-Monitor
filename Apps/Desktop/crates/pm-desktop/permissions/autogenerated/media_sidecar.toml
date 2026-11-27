@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-sidecar"
+description = "Enables the media_sidecar command without any pre-configured scope."
+commands.allow = ["media_sidecar"]
+
+[[permission]]
+identifier = "deny-media-sidecar"
+description = "Denies the media_sidecar command without any pre-configured scope."
+commands.deny = ["media_sidecar"]

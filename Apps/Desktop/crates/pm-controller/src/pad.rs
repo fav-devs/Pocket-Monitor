@@ -1,7 +1,7 @@
 //! A game controller, mapped the way the phones map an extended pad (discussion #159):
 //! left stick pans and tilts, the triggers zoom, A records, B recentres, X flips,
-//! Y clears tracking, the shoulders step the zoom stops, and the D-pad walks ISO and
-//! shutter.
+//! Y clears tracking, the shoulders step the zoom stops, the D-pad walks ISO and
+//! shutter, and Menu (Start / Options) adds a marker while recording.
 
 /// The buttons the map knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,8 @@ pub enum PadButton {
     DpadDown,
     DpadLeft,
     DpadRight,
+    /// Start / Options.
+    Menu,
 }
 
 /// What a button does.
@@ -31,6 +33,8 @@ pub enum PadAction {
     IsoDown,
     ShutterOpen,
     ShutterClose,
+    /// A marker on the take being recorded.
+    Marker,
 }
 
 impl PadButton {
@@ -46,13 +50,14 @@ impl PadButton {
             Self::DpadDown => PadAction::IsoDown,
             Self::DpadLeft => PadAction::ShutterOpen,
             Self::DpadRight => PadAction::ShutterClose,
+            Self::Menu => PadAction::Marker,
         }
     }
 }
 
 /// The map as a line for the Controls tab.
 pub const MAP_HELP: &str =
-    "Left stick pans and tilts · triggers zoom · A record · B recentre · X flip · Y clear tracking · LB / RB zoom stop · D-pad ISO and shutter";
+    "Left stick pans and tilts · triggers zoom · A record · B recentre · X flip · Y clear tracking · LB / RB zoom stop · D-pad ISO and shutter · Menu marker";
 
 /// Neutral inside this on the stick and the triggers.
 pub const REST: f64 = 0.08;
@@ -71,5 +76,7 @@ mod tests {
         assert_eq!(PadButton::RightShoulder.action(), PadAction::ZoomIn);
         assert_eq!(PadButton::DpadUp.action(), PadAction::IsoUp);
         assert_eq!(PadButton::DpadLeft.action(), PadAction::ShutterOpen);
+        assert_eq!(PadButton::Menu.action(), PadAction::Marker);
+        assert!(MAP_HELP.contains("Menu marker"));
     }
 }

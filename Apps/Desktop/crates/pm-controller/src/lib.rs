@@ -53,6 +53,7 @@ pub mod prefs;
 pub mod presets;
 pub mod scopes;
 pub mod sharing;
+pub mod sidecar;
 pub mod state;
 pub mod toggles;
 pub mod tracking;
