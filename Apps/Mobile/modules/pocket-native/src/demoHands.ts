@@ -2,7 +2,9 @@
  * A made-up `PocketHands` for the web demo: two hands and a face, 15 readings a second, so the
  * hand view, the status pill and the Gestures page can be seen in a browser. The right hand holds
  * up an open palm, swaying a little; the left pinches and holds still (a zoom grip inside its dead
- * zone, so it never zooms); a face sits above them. No microphone.
+ * zone, so it never zooms) for 4.5 s of every 9, and is lowered for the rest, so the palm, no
+ * longer held back by a grip, is read as a pose (its hold fills, then it fires); a face sits on
+ * the demo scene's presenter. No microphone.
  */
 import type { HandsFace, HandsLandmarks, HandsSeenEvent, HandsSource, HandsStartOptions, HandsStatusEvent, PocketHandsNativeModule } from './types';
 
@@ -56,7 +58,10 @@ export function createDemoHands(): PocketHandsNativeModule {
     const face: HandsFace = { x: 0.226, y: 0.29, width: 0.14, height: 0.31, score: 0.93 };
     return {
       source,
-      hands: [demoHand(0.54 + sway, 0.5, [true, true, true, true], false, true, 0.97), demoHand(0.11, 0.62, [false, true, true, true], true, false, 0.94)],
+      hands:
+        t % 9 < 4.5
+          ? [demoHand(0.54 + sway, 0.5, [true, true, true, true], false, true, 0.97), demoHand(0.11, 0.62, [false, true, true, true], true, false, 0.94)]
+          : [demoHand(0.54 + sway, 0.5, [true, true, true, true], false, true, 0.97)],
       // Faces a few times a second, as the native modules look for them.
       faces: frame % 4 === 0 ? [face] : null,
       aspect: ASPECT,
