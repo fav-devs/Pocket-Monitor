@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react';
 import { AppState, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useCamera } from '@/camera';
+import { desktopCameraEnabled } from '@/camera/bootstrap';
+import { desktopShareNote } from '@/camera/desktop/sharing';
 import { CameraWiFiQRCode } from '@/core/ble/wifiQr';
 import { readWifiPassword } from '@/features/pairing/credentials';
 import { encodeQr, qrPath } from '@/features/watcher/qr';
-import { reclaimFeedControl, useFeedSharingStatus, type FeedSharingStatus } from '@/features/watcher/useFeedSharing';
+import { reclaimFeedControl, setDesktopFeedSharing, useFeedSharingStatus, type FeedSharingStatus } from '@/features/watcher/useFeedSharing';
 import { Chip } from '@/components/chip';
 import { ChipRow } from '@/components/field-section';
 import { SettingsRow } from '@/components/settings-ui';
@@ -84,6 +86,10 @@ function shareNote(live: boolean, sharing: boolean, status: FeedSharingStatus): 
  * Feed sharing (`MonitorFeedSharingSettings`): the watcher relay host. Share this feed advertises
  * the live camera on its Wi-Fi (`useFeedSharing`); passcode, control requests and priority apply
  * to the running host at once.
+ *
+ * On the desktop the host is the PC's own (`src/camera/desktop/sharing.ts`): view-only, no
+ * passcode, the camera's HEVC as it arrives. The switch follows the host rather than a saved
+ * setting (it starts off at every launch), and the phone-host rows it has no use for are left out.
  */
 export function SharingSection() {
   const router = useRouter();
@@ -102,6 +108,27 @@ export function SharingSection() {
   const entry = draft === null ? null : passcodeEntry(draft);
   const join = useJoinPayload(showCode, cameraId, ssid, live);
   const watcherHolds = status.active && status.holder !== 'Host';
+
+  if (desktopCameraEnabled) {
+    return (
+      <>
+        <Group label="Share" note={desktopShareNote(live, status)}>
+          <SwitchRow
+            icon={LiveStreaming01Icon}
+            title="Share this feed"
+            value={status.active}
+            onChange={(v) => void setDesktopFeedSharing(v)}
+            disabled={!live && !status.active}
+            testID="sharing.desktop.share"
+            last
+          />
+        </Group>
+        <Group label="Watch a feed">
+          <LinkRow icon={ViewIcon} title="Join as watcher" onPress={() => router.push('/watcher')} last />
+        </Group>
+      </>
+    );
+  }
 
   return (
     <>

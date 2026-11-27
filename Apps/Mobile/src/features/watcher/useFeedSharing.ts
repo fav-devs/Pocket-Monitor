@@ -11,6 +11,9 @@
  *
  * Mounted once at the root (`<FeedSharingHost />`). Web and builds without the relay module never
  * advertise; the Settings rows say so.
+ *
+ * Inside the desktop app the host is Rust's (`src/camera/desktop/sharing.ts`): the switch asks it
+ * directly (`setDesktopFeedSharing`), and `useDesktopFeedSharing` mirrors its status here.
  */
 import { useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
@@ -25,6 +28,8 @@ import { RelayCopy, decodeCommand, encodeState } from '@/camera/watcher/protocol
 import { useSettingsLocal } from '@/features/settings/settingsStore';
 import { sessionClock } from '@/camera/native/clock';
 import { currentCameraSession } from '@/camera';
+import { desktopCameraEnabled } from '@/camera/bootstrap';
+import { desktopSharing, sharingRowsStatus, type DesktopSharingStatus } from '@/camera/desktop/sharing';
 import { windowFor } from './hostSettings';
 
 export interface FeedSharingStatus {
@@ -189,8 +194,37 @@ export function useFeedSharing() {
   );
 }
 
+const applyDesktop = (status: DesktopSharingStatus | null) => useFeedSharingStatus.setState(sharingRowsStatus(status));
+
+/**
+ * The desktop's Share switch: Rust checks the old rules (a live HEVC camera feed) and answers
+ * with the readout. Never persisted: sharing starts off at every launch, as before.
+ */
+export async function setDesktopFeedSharing(on: boolean): Promise<void> {
+  if (on) useFeedSharingStatus.setState({ ...sharingRowsStatus(null), state: 'starting', active: true });
+  try {
+    applyDesktop(await desktopSharing.set(on));
+  } catch (error) {
+    applyDesktop({ active: false, status: typeof error === 'string' ? error : 'Sharing could not start', watchers: 0, stopped: false });
+  }
+}
+
+/** The desktop host's status, mirrored into `useFeedSharingStatus` for the Settings rows. */
+function useDesktopFeedSharing() {
+  useEffect(() => {
+    if (!desktopCameraEnabled) return;
+    applyDesktop(null);
+    desktopSharing
+      .state()
+      .then(applyDesktop)
+      .catch(() => {});
+    return desktopSharing.onStatus(applyDesktop);
+  }, []);
+}
+
 /** Root-mounted runner for the sharing host. Renders nothing. */
 export function FeedSharingHost() {
   useFeedSharing();
+  useDesktopFeedSharing();
   return null;
 }

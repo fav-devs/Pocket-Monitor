@@ -229,7 +229,7 @@ function DesktopWatcher() {
     relay
       .join({ name: host.name, passcode: passcode.trim(), addresses: host.addresses, port: host.port })
       .then(() => router.push('/live'))
-      .catch((e) => setError(typeof e === 'string' ? e : 'Could not join the phone.'))
+      .catch((e) => setError(typeof e === 'string' ? e : 'Could not join the shared feed.'))
       .finally(() => setJoining(false));
   };
 
@@ -241,8 +241,8 @@ function DesktopWatcher() {
           <Watching info={info} />
         ) : (
           <>
-            <Text style={styles.title}>Watch a phone</Text>
-            <Text style={styles.subtitle}>Phones sharing on this Wi-Fi</Text>
+            <Text style={styles.title}>Watch a shared feed</Text>
+            <Text style={styles.subtitle}>Sharing on this Wi-Fi</Text>
             {hosts.hosts.length ? (
               <View style={styles.card}>
                 {hosts.hosts.map((h, i) => (
@@ -254,15 +254,15 @@ function DesktopWatcher() {
                 <Squircle width={56} height={56} radius={18} color={colors.surface}>
                   {hosts.browsing && !hosts.error ? <Spinner opacity={1} color={colors.mutedForeground} /> : <Icon icon={SmartPhone01Icon} size={24} color={colors.mutedForeground} />}
                 </Squircle>
-                <Text style={styles.emptyTitle}>{hosts.error ? 'Can’t look for phones' : 'Looking for phones…'}</Text>
-                <Text style={styles.line}>{hosts.error ?? 'Turn on Sharing on the phone.'}</Text>
+                <Text style={styles.emptyTitle}>{hosts.error ? 'Can’t look for shared feeds' : 'Looking for shared feeds…'}</Text>
+                <Text style={styles.line}>{hosts.error ?? 'Join the same Wi-Fi as the device sharing the feed.'}</Text>
               </View>
             )}
             <Text style={styles.fieldLabel}>Passcode</Text>
             <TextField
               value={passcode}
               onChangeText={setPasscode}
-              placeholder="If the phone asks for one"
+              placeholder="If the host set one"
               autoCapitalize="none"
               autoCorrect={false}
               secureTextEntry
