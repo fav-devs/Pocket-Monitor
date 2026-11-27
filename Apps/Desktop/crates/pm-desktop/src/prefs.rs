@@ -30,18 +30,21 @@ pub fn prefs_set(patch: serde_json::Value) -> Result<serde_json::Value, String> 
     Ok(prefs::prefs_json(&saved.prefs))
 }
 
-/// The home screen's settings (A2): webcam gestures and *Open my camera straight away*.
+/// The home screen's settings (A2): gestures (on, source, hand control, stick hand, face
+/// tracking by itself, the gesture map) and *Open my camera straight away*.
 #[tauri::command]
 pub fn app_settings_get() -> AppSettings {
     appsettings::load()
 }
 
+/// Saves the settings and applies the gesture ones live (`gestures::apply`): a source
+/// switched here starts reading it at once, no restart.
 #[tauri::command]
 pub fn app_settings_set(settings: AppSettings) -> Result<AppSettings, String> {
     let _guard = WRITE.lock().map_err(|_| "settings are busy".to_string())?;
     appsettings::save_to(&appsettings::path(), &settings)
         .map_err(|error| format!("could not save the settings: {error}"))?;
-    crate::input::post(crate::input::InputMsg::GestureMap(settings.gesture_map));
+    crate::gestures::apply_soon(settings);
     Ok(settings)
 }
 

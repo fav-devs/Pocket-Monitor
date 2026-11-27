@@ -169,6 +169,7 @@ impl PictureHub {
     /// The player takes the picture over (`true`) or gives it back to live view.
     pub fn set_player(&self, on: bool) {
         self.player.store(on, std::sync::atomic::Ordering::Relaxed);
+        crate::vision::service().set_player(on);
     }
 
     /// Live pictures pushed so far (counted even while the player holds them back).
@@ -189,6 +190,8 @@ impl PictureHub {
     }
 
     pub fn layout(&self, hole: Option<(CssRect, f64)>) {
+        // Gestures act only while the live picture is on screen (`vision.rs`).
+        crate::vision::service().set_hole(hole.is_some());
         self.post(RenderMsg::Layout(hole));
     }
 
@@ -614,8 +617,13 @@ fn render_loop(renderer: FeedRenderer, hub: Arc<PictureHub>, app: &AppHandle, si
             placeholder_presented = false;
         }
         if let Some(picture) = next {
-            // The scopes read the camera signal on their own thread (P20).
+            // The scopes read the camera signal on their own thread (P20), and the hand
+            // models read the live picture on theirs (camera-feed gestures, §1.T): both
+            // by reference count, neither ever waits.
             hub.scopes.offer(&picture);
+            if !hub.player.load(std::sync::atomic::Ordering::Relaxed) {
+                crate::vision::service().offer(&picture);
+            }
             latest = Some(picture);
             latest_at = Instant::now();
             second.1 += 1;

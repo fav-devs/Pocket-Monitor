@@ -22,6 +22,7 @@ USAGE:
     pocket-monitor watch [NAME] [--phone-at IP:PORT] [--passcode P]
     pocket-monitor home | setup | demo
     pocket-monitor headless scan [--seconds N] | pair | station --ssid NAME
+                        | identity CAMERA-IP
     pocket-monitor keys
     pocket-monitor version
 
@@ -33,7 +34,8 @@ camera); a LAN address is remembered for the next launch.
 `watch` takes the feed a phone running Pocket Monitor is sharing; without a NAME it opens
 the list of phones sharing. The passcode may also come from PM_PHONE_PASSCODE.
 `headless` runs Bluetooth without a window; `station` reads the network password from
-PM_WIFI_PASSWORD so it never lands in a command line or a log.
+PM_WIFI_PASSWORD so it never lands in a command line or a log. `identity` prints what a
+camera on the LAN reports as its Wi-Fi name, without Bluetooth.
 `--gestures` (or PM_GESTURES=1) turns webcam gestures on.
 Environment: PM_WEBCAM picks a webcam, PM_DUMP_STREAM=PATH writes every access unit
 as Annex-B, PM_CAMERA=HOST[:PORT] is --camera, PM_PICTURE_HOST=toplevel draws the
@@ -55,8 +57,14 @@ Viewfinder keys
 
   Z zebra      P peaking      L colour cube      M mirror      H hide the chrome
 
+  J            gestures on / off          Y      hand view: what the hand tracker sees
+
   Drag         track what you drew around (mouse or one finger)
   Click        focus there
+
+Hands (gestures on): pinch and drag the right hand for the gimbal stick, the left for
+zoom (up in, down out); hold a peace sign 2.5 s to start or stop recording; open and
+close a hand three times to track your face; clap twice to recentre.
 
 Two arrows at once pan diagonally. The gimbal keeps moving while a key is held and
 rests the moment it comes up, or when the window loses focus.";
@@ -422,7 +430,7 @@ mod tests {
     #[test]
     fn the_key_list_names_every_key_the_viewfinder_takes() {
         for key in [
-            "Space", "Tab", "F11", "1 - 6", "Esc", " E ", " K ", " A ", " T ",
+            "Space", "Tab", "F11", "1 - 6", "Esc", " E ", " K ", " A ", " T ", " J ", " Y ",
         ] {
             assert!(KEYS.contains(key), "{key}");
         }

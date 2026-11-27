@@ -76,6 +76,7 @@
     "allow-preset-seconds",
     "allow-gestures-set",
     "allow-gestures-state",
+    "allow-hand-view-set",
     "allow-media-list",
     "allow-media-refresh",
     "allow-media-play",

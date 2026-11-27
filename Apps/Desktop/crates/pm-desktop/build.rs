@@ -76,6 +76,7 @@ const APP_COMMANDS: &[&str] = &[
     "preset_seconds",
     "gestures_set",
     "gestures_state",
+    "hand_view_set",
     // Media library, player, virtual camera, relay (docs/desktop-expo-port.md §1.U–W, §1.E).
     "media_list",
     "media_refresh",

@@ -1,6 +1,7 @@
 //! The viewfinder's live controls without a window: keys, the gimbal stick from every
 //! source, the game controller, zoom, tracking and tap focus, the record countdown,
-//! programmed moves, gimbal presets and webcam gestures.
+//! programmed moves, gimbal presets, gestures (webcam or the camera's own picture), both
+//! hands' pinch-and-drag control, face tracking by gesture and the double clap.
 //!
 //! These are the decisions the Slint shell (`opc-monitor/src/shell.rs`) made in `press`,
 //! `release`, `controller_*`, `gesture`, `pointer_*`, `touch`, `move_*`, `preset_*` and
@@ -20,6 +21,7 @@ use serde::Serialize;
 
 use crate::gesture::{Gesture, GestureAction, GestureMap};
 use crate::gimbal::{zoom_trigger_step, DriveSource, GimbalDrive, StickSend};
+use crate::hand::Control as HandControl;
 use crate::moves::{can_send, MoveEngine, Program, Waypoint, MAX_DURATION, MIN_DURATION};
 use crate::pad::{PadAction, PadButton, REST as PAD_REST};
 use crate::prefs::Prefs;
@@ -34,6 +36,12 @@ pub const ZOOM_HOLD_INTERVAL: f64 = 0.05;
 pub const MOVE_COUNTDOWN_SECONDS: f64 = 3.0;
 /// The countdown lengths the Assist tab offers.
 pub const COUNTDOWN_CHOICES: [u32; 3] = [3, 5, 10];
+/// A pinching hand's stick throw is repeated this often between readings, inside the
+/// drive's 250 ms heartbeat.
+pub const HAND_BEAT: f64 = 0.1;
+/// A hand stick not read again for this long is let go (the models stopped answering):
+/// longer than the hand model's own 0.3 s grace for a hand out of view.
+pub const HAND_STALE: f64 = 0.5;
 
 /// A line for the operator.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +94,17 @@ pub struct PresetsView {
     pub cursor: Option<usize>,
 }
 
+/// A held gesture on its way to recording: the old viewfinder's
+/// `HOLD TO START RECORDING [####------]` line.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GestureHold {
+    /// "HOLD TO START RECORDING" or "HOLD TO STOP RECORDING".
+    pub text: &'static str,
+    /// 0…1 in tenths, as the bar fills.
+    pub fraction: f64,
+}
+
 /// `input://state`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +116,8 @@ pub struct InputView {
     pub program: ProgramView,
     pub presets: PresetsView,
     pub gamepad_enabled: bool,
+    /// A held gesture part-way to recording.
+    pub gesture_hold: Option<GestureHold>,
 }
 
 /// The live controls.
@@ -133,6 +154,14 @@ pub struct LiveInput {
     presets_path: Option<PathBuf>,
     /// What each webcam gesture does (`desktop-app-v1.txt`, the home screen's map).
     gesture_map: GestureMap,
+    /// The camera's picture is being read, so a face can be found for the face gesture.
+    face_finder: bool,
+    /// A gesture asked for the face to be tracked; the picture reader answers.
+    face_request: bool,
+    /// A pinching hand's throw and when it was last read.
+    hand_stick: Option<(f64, f64, f64)>,
+    hand_beat_at: f64,
+    gesture_hold: Option<GestureHold>,
     notices: Vec<Notice>,
     stick_log: Vec<StickSend>,
 }
@@ -176,6 +205,11 @@ impl LiveInput {
             preset_followup: None,
             presets_path: None,
             gesture_map: GestureMap::default(),
+            face_finder: false,
+            face_request: false,
+            hand_stick: None,
+            hand_beat_at: f64::NEG_INFINITY,
+            gesture_hold: None,
             notices: Vec::new(),
             stick_log: Vec::new(),
         }
@@ -449,6 +483,7 @@ impl LiveInput {
     /// Rest at once, whoever was driving: focus loss, close, disconnect.
     pub fn rest(&mut self, now: f64) -> Vec<Command> {
         self.stick = Stick::default();
+        self.hand_stick = None;
         self.pad_held = false;
         self.pad_triggers = (0.0, 0.0);
         self.zoom_rate = 0.0;
@@ -996,9 +1031,10 @@ impl LiveInput {
     /// A gesture does what the app settings' [`GestureMap`] says, as the old
     /// viewfinder's `Shell::gesture` does: recentre, flip, stop (the take's move,
     /// tracking and the body's timed move), record, or step through the saved presets.
-    /// Face tracking needs a face finder on the camera's picture, which this controller
-    /// does not run: the gesture lets go of tracking when there is some, and says so
-    /// otherwise.
+    /// Face tracking lets go of tracking when there is some; otherwise, while the
+    /// camera's picture is read ([`Self::set_face_finder`]), it asks the reader for the
+    /// face ([`Self::take_face_request`], answered with [`Self::track_face`]), and says it
+    /// needs the camera's picture when gestures come from the webcam.
     pub fn gesture(&mut self, gesture: Gesture, now: f64) -> Vec<Command> {
         match self.gesture_map.get(gesture) {
             GestureAction::Nothing => Vec::new(),
@@ -1025,6 +1061,10 @@ impl LiveInput {
                 if self.tracker.is_tracking() {
                     self.notice("FACE TRACKING OFF", "info");
                     self.tracker.clear(now)
+                } else if self.face_finder {
+                    self.face_request = true;
+                    self.notice("LOOKING FOR YOUR FACE", "info");
+                    Vec::new()
                 } else {
                     self.notice("FACE TRACKING NEEDS THE CAMERA'S PICTURE", "info");
                     Vec::new()
@@ -1052,6 +1092,137 @@ impl LiveInput {
                 self.preset_go(next, now)
             }
         }
+    }
+
+    // ── The camera's picture read for hands and faces ─────────────────────────
+
+    /// What each gesture does now.
+    pub fn gesture_map(&self) -> GestureMap {
+        self.gesture_map
+    }
+
+    /// Whether the camera's own picture is being read for hands and faces.
+    pub fn set_face_finder(&mut self, on: bool) {
+        self.face_finder = on;
+        if !on {
+            self.face_request = false;
+            self.gesture_hold = None;
+        }
+    }
+
+    /// True once after the face gesture asked for the face to be tracked.
+    pub fn take_face_request(&mut self) -> bool {
+        std::mem::take(&mut self.face_request)
+    }
+
+    /// How long a gesture has to be held: recording takes longer than the rest.
+    pub fn gesture_hold_seconds(&self, gesture: Gesture) -> f64 {
+        crate::vision::hold_seconds(&self.gesture_map, gesture)
+    }
+
+    /// A held pose part-way to firing (or none): shown while it is the one that
+    /// records, between a tenth and the whole of its hold.
+    pub fn gesture_progress(&mut self, progress: Option<(Gesture, f32)>) {
+        self.gesture_hold = progress
+            .filter(|(gesture, fraction)| {
+                self.gesture_map.get(*gesture) == GestureAction::Record
+                    && (0.1..1.0).contains(fraction)
+            })
+            .map(|(_, fraction)| GestureHold {
+                text: if self.status.is_recording {
+                    "HOLD TO STOP RECORDING"
+                } else {
+                    "HOLD TO START RECORDING"
+                },
+                fraction: (f64::from(fraction) * 10.0).floor() / 10.0,
+            });
+    }
+
+    /// A pinching hand's control, `dt` seconds after the last reading: the stick hand
+    /// drives the gimbal as a controller stick would, the zoom hand holds-to-zoom at the
+    /// triggers' rate. The old viewfinder's `Shell::hand_control`.
+    pub fn hand_control(&mut self, control: HandControl, dt: f64, now: f64) -> Vec<Command> {
+        match control {
+            HandControl::Stick { x, y } => {
+                let (x, y) = (f64::from(x), f64::from(y));
+                if x.abs() < PAD_REST && y.abs() < PAD_REST {
+                    if self.hand_stick.take().is_none() {
+                        return Vec::new();
+                    }
+                    return self.release(Some(DriveSource::Hand), now);
+                }
+                self.hand_stick = Some((x, y, now));
+                self.hand_beat_at = now;
+                self.drive(x, y, DriveSource::Hand, now)
+            }
+            HandControl::StickEnd => self.hand_release(now),
+            HandControl::Zoom { rate } => {
+                let (out, into) = (f64::from((-rate).max(0.0)), f64::from(rate.max(0.0)));
+                if out < PAD_REST && into < PAD_REST {
+                    return Vec::new();
+                }
+                let max = if self.model_id < 0 && !self.zoom_rules.can_zoom() {
+                    12.0
+                } else {
+                    self.zoom_rules.max()
+                };
+                let next = zoom_trigger_step(self.zoom, out, into, dt.clamp(0.0, 0.1), max);
+                if (next - self.zoom).abs() < 0.005 {
+                    return Vec::new();
+                }
+                self.zoom_write(ZoomWrite::Slider(next), now)
+            }
+            HandControl::ZoomEnd => Vec::new(),
+        }
+    }
+
+    /// Lets go of the hand's stick, if it was holding it.
+    pub fn hand_release(&mut self, now: f64) -> Vec<Command> {
+        if self.hand_stick.take().is_none() {
+            return Vec::new();
+        }
+        self.release(Some(DriveSource::Hand), now)
+    }
+
+    /// Whether a pinching hand is driving the gimbal.
+    pub fn hand_driving(&self) -> bool {
+        self.hand_stick.is_some()
+    }
+
+    /// The hand's throw between readings: repeated inside the heartbeat while it is
+    /// fresh, let go once the readings stop.
+    fn hand_tick(&mut self, now: f64) -> Vec<Command> {
+        let Some((x, y, heard)) = self.hand_stick else {
+            return Vec::new();
+        };
+        if now - heard > HAND_STALE || self.drive.source() != Some(DriveSource::Hand) {
+            return self.hand_release(now);
+        }
+        if now - self.hand_beat_at < HAND_BEAT {
+            return Vec::new();
+        }
+        self.hand_beat_at = now;
+        let sent = self.drive.drive(x, y, DriveSource::Hand, now);
+        self.stick(sent)
+    }
+
+    /// A double clap: the gimbal goes back to centre.
+    pub fn clap(&mut self, _now: f64) -> Vec<Command> {
+        self.notice("CLAP: RECENTRE", "info");
+        vec![Command::GimbalRecenter]
+    }
+
+    /// Tracks the face the picture reader found (`raw`: left, top, width, height of the
+    /// decoded picture), as a drag of that box would.
+    pub fn track_face(&mut self, raw: (f64, f64, f64, f64), now: f64) -> Vec<Command> {
+        self.notice("FACE TRACKING", "info");
+        let model = self.model_id;
+        self.tracker.region(raw, model, now)
+    }
+
+    /// The face gesture found no face in time.
+    pub fn no_face(&mut self) {
+        self.notice("NO FACE FOUND", "info");
     }
 
     // ── Pointers ──────────────────────────────────────────────────────────────
@@ -1088,6 +1259,7 @@ impl LiveInput {
             self.pad_held = false;
         }
         let mut out = self.stick(sent);
+        out.extend(self.hand_tick(now));
         out.extend(self.tracker.tick(now));
         out.extend(self.move_tick(now));
         out.extend(self.preset_followup_tick(now));
@@ -1148,6 +1320,7 @@ impl LiveInput {
                 cursor: self.preset_cursor,
             },
             gamepad_enabled: self.gamepad,
+            gesture_hold: self.gesture_hold.clone(),
         }
     }
 }

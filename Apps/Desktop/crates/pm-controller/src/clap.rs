@@ -88,9 +88,43 @@ impl ClapDetector {
     }
 }
 
+/// A device's interleaved samples (`channels` per frame) as mono into `out`, the average
+/// of each frame's channels. A partial frame at the end is dropped.
+pub fn downmix(interleaved: impl Iterator<Item = f32>, channels: usize, out: &mut Vec<f32>) {
+    let channels = channels.max(1);
+    out.clear();
+    let mut sum = 0.0;
+    let mut count = 0;
+    for sample in interleaved {
+        sum += sample;
+        count += 1;
+        if count == channels {
+            out.push(sum / channels as f32);
+            sum = 0.0;
+            count = 0;
+        }
+    }
+}
+
+/// A 16-bit sample in -1..1.
+pub fn sample_i16(sample: i16) -> f32 {
+    f32::from(sample) / 32768.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stereo_is_averaged_into_mono() {
+        let mut out = vec![9.0];
+        downmix([0.5, -0.5, 1.0, 0.0, 0.25].into_iter(), 2, &mut out);
+        assert_eq!(out, [0.0, 0.5]);
+        downmix([0.1, 0.2].into_iter(), 0, &mut out);
+        assert_eq!(out, [0.1, 0.2]);
+        assert_eq!(sample_i16(i16::MIN), -1.0);
+        assert_eq!(sample_i16(16384), 0.5);
+    }
 
     const RATE: u32 = 16_000;
 

@@ -518,10 +518,47 @@ pub enum Update {
     },
 }
 
+/// What a job looks at: a frame already scaled to RGB, or a decoded picture the worker
+/// scales itself (so the thread that offers it pays for a reference count, nothing more).
+enum JobFrame {
+    Rgb {
+        rgb: Vec<u8>,
+        width: usize,
+        height: usize,
+    },
+    Picture {
+        picture: std::sync::Arc<opc_decode::OwnedPicture>,
+        width: usize,
+    },
+}
+
+impl JobFrame {
+    /// The RGB frame and its size: the picture is scaled to `width` across, keeping its
+    /// shape, nearest-sampled (`crate::scopes::small_rgb`).
+    fn into_rgb(self) -> (Vec<u8>, usize, usize) {
+        match self {
+            JobFrame::Rgb { rgb, width, height } => (rgb, width, height),
+            JobFrame::Picture { picture, width } => {
+                let (width, height) = picture_frame_size(picture.width, picture.height, width);
+                let rgb = crate::scopes::small_rgb(&picture, width, height);
+                (rgb, width, height)
+            }
+        }
+    }
+}
+
+/// The frame the models read from a `source_width × source_height` picture scaled to
+/// `width` across: the old viewfinder's 480 wide, its height in proportion (at least 2).
+pub fn picture_frame_size(source_width: u32, source_height: u32, width: usize) -> (usize, usize) {
+    if source_width == 0 || source_height == 0 || width == 0 {
+        return (width.max(2), 2);
+    }
+    let height = (width as u64 * u64::from(source_height) / u64::from(source_width)) as usize;
+    (width, height.max(2))
+}
+
 struct Job {
-    rgb: Vec<u8>,
-    width: usize,
-    height: usize,
+    frame: JobFrame,
     faces: bool,
 }
 
@@ -558,7 +595,8 @@ impl HandWorker {
             // Ends when the sender is dropped, which also ends the models.
             while let Ok(job) = job_rx.recv() {
                 let started = Instant::now();
-                let hands = net.detect(&job.rgb, job.width, job.height);
+                let (rgb, width, height) = job.frame.into_rgb();
+                let hands = net.detect(&rgb, width, height);
                 let faces = job.faces.then(|| {
                     let finder = face_net.get_or_insert_with(|| {
                         crate::facenet::FaceNet::new()
@@ -567,7 +605,7 @@ impl HandWorker {
                     });
                     finder
                         .as_mut()
-                        .map(|finder| finder.detect(&job.rgb, job.width, job.height))
+                        .map(|finder| finder.detect(&rgb, width, height))
                         .unwrap_or_default()
                 });
                 let ms = started.elapsed().as_secs_f32() * 1000.0;
@@ -582,12 +620,32 @@ impl HandWorker {
     /// Offers a frame; false when the worker is still busy with the last one. `faces`
     /// asks for the faces in it too.
     pub fn submit(&self, rgb: Vec<u8>, width: usize, height: usize, faces: bool) -> bool {
-        match self.jobs.try_send(Job {
-            rgb,
-            width,
-            height,
+        self.offer(Job {
+            frame: JobFrame::Rgb { rgb, width, height },
             faces,
-        }) {
+        })
+    }
+
+    /// Offers a decoded picture by reference count; the worker scales it to `width`
+    /// across (in proportion) before the models read it. False when the worker is still
+    /// busy, and then nothing was copied.
+    pub fn submit_picture(
+        &self,
+        picture: std::sync::Arc<opc_decode::OwnedPicture>,
+        width: usize,
+        faces: bool,
+    ) -> bool {
+        if picture.width == 0 || picture.height == 0 {
+            return false;
+        }
+        self.offer(Job {
+            frame: JobFrame::Picture { picture, width },
+            faces,
+        })
+    }
+
+    fn offer(&self, job: Job) -> bool {
+        match self.jobs.try_send(job) {
             Ok(()) => true,
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => false,
         }
@@ -617,6 +675,42 @@ mod tests {
         );
         let black = vec![0u8; 480 * 270 * 3];
         assert!(net.detect(&black, 480, 270).is_empty());
+    }
+
+    #[test]
+    fn a_picture_is_read_at_480_across_in_proportion() {
+        assert_eq!(picture_frame_size(1920, 1080, 480), (480, 270));
+        assert_eq!(picture_frame_size(3840, 2160, 480), (480, 270));
+        assert_eq!(picture_frame_size(1080, 1920, 480), (480, 853));
+        assert_eq!(picture_frame_size(1000, 1, 480), (480, 2));
+        assert_eq!(picture_frame_size(0, 0, 480), (480, 2));
+    }
+
+    #[test]
+    fn the_worker_reads_a_decoded_picture_offered_by_reference() {
+        let worker = HandWorker::start();
+        let picture = std::sync::Arc::new(opc_decode::OwnedPicture::black(1280, 720));
+        let started = Instant::now();
+        let mut submitted = false;
+        let mut seen = None;
+        while started.elapsed().as_secs() < 60 && seen.is_none() {
+            if !submitted {
+                submitted = worker.submit_picture(std::sync::Arc::clone(&picture), 480, true);
+            }
+            for update in worker.updates() {
+                match update {
+                    Update::Seen { hands, faces, .. } => seen = Some((hands, faces)),
+                    Update::Failed(error) => panic!("{error}"),
+                    Update::Ready(_) => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (hands, faces) = seen.expect("a result");
+        assert!(hands.is_empty());
+        assert_eq!(faces, Some(Vec::new()));
+        let empty = std::sync::Arc::new(opc_decode::OwnedPicture::black(0, 0));
+        assert!(!worker.submit_picture(empty, 480, false));
     }
 
     #[test]

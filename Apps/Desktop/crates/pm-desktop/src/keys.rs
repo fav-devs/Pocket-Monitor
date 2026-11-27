@@ -4,8 +4,9 @@
 //! R stops, `+`/`-` step the body's stops, the arrows are a held stick fed by the web's
 //! 100 ms heartbeat, 1–6 recall presets, T arms the countdown). `V` goes through the
 //! camera service so the commanded gimbal mode stays true in `camera://state`. `F11`
-//! toggles fullscreen here (D1). Everything else comes back to the web as the
-//! [`UiAction`] to carry out (a sheet, an assist, the chrome, the library, a still, Esc).
+//! toggles fullscreen here (D1), and `J` switches gestures here (`gestures::toggle`).
+//! Everything else comes back to the web as the [`UiAction`] to carry out (a sheet, an
+//! assist, the chrome, the library, a still, `Y`'s hand view, Esc).
 //! The handler only routes and queues; it never waits.
 
 use pm_controller::command::CameraCommand;
@@ -50,6 +51,10 @@ pub fn control_key(
             if action == UiAction::Fullscreen {
                 let wanted = !window.is_fullscreen().unwrap_or(false);
                 let _ = window.set_fullscreen(wanted);
+            }
+            if action == UiAction::ToggleGestures {
+                // Saved and applied off the main thread; `gestures://state` follows.
+                crate::gestures::toggle();
             }
             Some(action)
         }

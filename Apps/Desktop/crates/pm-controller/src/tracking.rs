@@ -220,6 +220,27 @@ impl Tracker {
         }
     }
 
+    /// Tracks a region found on the sensor (`raw`: left, top, width, height as fractions
+    /// of the decoded picture, before any mirroring), as a drag of that box would: the
+    /// face finder's box goes out the same way an operator's does, minimum side and all.
+    /// The old viewfinder's `Shell::track_region`.
+    pub fn region(&mut self, raw: (f64, f64, f64, f64), model_id: i32, now: f64) -> Vec<Command> {
+        let (x, y, w, h) = raw;
+        if ![x, y, w, h].iter().all(|v| v.is_finite()) || w <= 0.0 || h <= 0.0 {
+            return Vec::new();
+        }
+        let seen_x = if self.mirror { 1.0 - x - w } else { x };
+        let mut drag = Drag::start((clamp01(seen_x), clamp01(y)), self.mirror);
+        drag.extend((clamp01(seen_x + w), clamp01(y + h)));
+        // A box the size of a click is not a region: nothing, rather than a focus tap.
+        if drag.command(self.next_track_id).is_none() {
+            return Vec::new();
+        }
+        self.drag = None;
+        self.owner = None;
+        self.finish(drag, model_id, now)
+    }
+
     /// Every pointer is gone (focus loss, the picture left the screen).
     pub fn cancel_all(&mut self) {
         self.owner = None;

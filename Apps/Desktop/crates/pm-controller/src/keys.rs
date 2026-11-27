@@ -69,6 +69,11 @@ pub enum UiAction {
     Escape,
     /// `F11`, already carried out in Rust; the web may reflect it.
     Fullscreen,
+    /// `Y`: the hand view over the picture (landmarks, boxes, faces).
+    ToggleHandView,
+    /// `J`: gestures on or off, already carried out in Rust (the source stays as set);
+    /// the web reflects the setting.
+    ToggleGestures,
 }
 
 /// Where a key goes.
@@ -103,6 +108,8 @@ pub fn route(key: DesktopKey) -> Option<Route> {
             'h' => Route::Ui(UiAction::ToggleChrome),
             'g' => Route::Ui(UiAction::Library),
             's' => Route::Ui(UiAction::Still),
+            'y' => Route::Ui(UiAction::ToggleHandView),
+            'j' => Route::Ui(UiAction::ToggleGestures),
             'v' => Route::GimbalCycle,
             'r' | 't' | 'c' | 'f' | 'x' | '[' | ']' | '0' | '=' | '+' | '-' | '_' | '1'..='6' => {
                 Route::Input(Key::Char(c.to_ascii_lowercase()))
@@ -150,6 +157,8 @@ pub const KEY_HELP: &[(&str, &str)] = &[
     ("K", "Moves"),
     ("A", "Assists"),
     ("Z P L M", "Zebra · Peaking · Cube · Mirror"),
+    ("J", "Gestures on / off"),
+    ("Y", "Hand view"),
     ("F11", "Fullscreen"),
     ("Esc", "Close a sheet, then the viewfinder"),
 ];
@@ -202,6 +211,8 @@ mod tests {
             "6",
             "Escape",
             "F11",
+            "y",
+            "j",
         ] {
             assert!(routed(name).is_some(), "{name:?} does nothing");
         }
@@ -223,6 +234,19 @@ mod tests {
         assert_eq!(routed("Z"), routed("z"));
         assert_eq!(routed("R"), Some(Route::Input(Key::Char('r'))));
         assert_eq!(routed("V"), Some(Route::GimbalCycle));
+    }
+
+    #[test]
+    fn y_shows_the_hand_view_and_j_switches_gestures() {
+        assert_eq!(routed("y"), Some(Route::Ui(UiAction::ToggleHandView)));
+        assert_eq!(routed("Y"), Some(Route::Ui(UiAction::ToggleHandView)));
+        assert_eq!(routed("j"), Some(Route::Ui(UiAction::ToggleGestures)));
+        assert!(KEY_HELP.iter().any(|(key, _)| *key == "Y"));
+        assert!(KEY_HELP.iter().any(|(key, _)| *key == "J"));
+        assert_eq!(
+            serde_json::to_value(UiAction::ToggleHandView).unwrap(),
+            "toggle-hand-view"
+        );
     }
 
     #[test]

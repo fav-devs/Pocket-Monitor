@@ -104,13 +104,15 @@ impl GimbalMode {
     }
 }
 
-/// Who is driving: the arrow keys, a game controller, or the on-screen pad / touch.
+/// Who is driving: the arrow keys, a game controller, the on-screen pad / touch, or a
+/// pinching hand seen by the camera (`crate::hand::Controls`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriveSource {
     Keys,
     Pad,
     Touch,
+    Hand,
 }
 
 /// One stick write, with the throw it carries for the `stick tx` log line.

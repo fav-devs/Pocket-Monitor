@@ -1045,3 +1045,148 @@ fn an_unknown_body_keeps_the_lens_range_rather_than_pinning_zoom_to_one() {
         [Command::ZoomFactor(12.0)]
     );
 }
+
+// ── Gestures from the camera's picture, hand control and the clap ────────────
+
+use pm_controller::hand::Control as HandControl;
+
+#[test]
+fn a_pinching_hand_drives_the_stick_and_keeps_it_alive_between_readings() {
+    let mut input = input();
+    assert_eq!(
+        input.hand_control(HandControl::Stick { x: 0.8, y: 0.0 }, 0.05, 0.0),
+        [stick_axes(0.8, 0.0, 4)]
+    );
+    assert!(input.hand_driving());
+    // No new reading for 0.3 s: the throw is repeated, never rested by the heartbeat.
+    let mut sent = Vec::new();
+    let mut t = 0.0;
+    while t < 0.3 {
+        t += 0.01;
+        sent.extend(input.tick(t));
+    }
+    assert!(!sent.contains(&rest()), "{sent:?}");
+    assert!(sent.contains(&stick_axes(0.8, 0.0, 4)));
+    // Readings stop for good: let go.
+    let mut later = Vec::new();
+    while t < 0.7 {
+        t += 0.01;
+        later.extend(input.tick(t));
+    }
+    assert_eq!(later.last(), Some(&rest()));
+    assert!(!input.hand_driving());
+}
+
+#[test]
+fn opening_the_pinch_or_a_centred_drag_rests_the_gimbal() {
+    let mut input = input();
+    input.hand_control(HandControl::Stick { x: 0.0, y: 0.6 }, 0.05, 0.0);
+    assert_eq!(
+        input.hand_control(HandControl::StickEnd, 0.05, 0.05),
+        [rest()]
+    );
+    assert!(input
+        .hand_control(HandControl::StickEnd, 0.05, 0.1)
+        .is_empty());
+    input.hand_control(HandControl::Stick { x: 0.6, y: 0.0 }, 0.05, 0.2);
+    assert_eq!(
+        input.hand_control(HandControl::Stick { x: 0.01, y: 0.0 }, 0.05, 0.25),
+        [rest()]
+    );
+    assert!(input
+        .hand_control(HandControl::Stick { x: 0.0, y: 0.0 }, 0.05, 0.3)
+        .is_empty());
+}
+
+#[test]
+fn the_all_axes_lock_holds_against_the_hand_too() {
+    let mut input = input();
+    input.lock_all_axes(true, 0.0);
+    assert!(input
+        .hand_control(HandControl::Stick { x: 1.0, y: 0.0 }, 0.05, 0.1)
+        .is_empty());
+}
+
+#[test]
+fn the_zoom_hand_zooms_in_and_out_at_the_triggers_rate() {
+    let mut input = input();
+    input.set_model(Some(0x22));
+    input.set_status(Status::default(), 0.0);
+    let into = input.hand_control(HandControl::Zoom { rate: 1.0 }, 0.05, 0.05);
+    assert!(matches!(into[..], [Command::ZoomFactor(_)]), "{into:?}");
+    assert!(input
+        .hand_control(HandControl::Zoom { rate: 0.05 }, 0.05, 0.1)
+        .is_empty());
+    assert!(input
+        .hand_control(HandControl::ZoomEnd, 0.05, 0.15)
+        .is_empty());
+}
+
+#[test]
+fn the_face_gesture_asks_the_picture_reader_and_tracks_what_it_finds() {
+    let mut input = input();
+    input.set_face_finder(true);
+    assert!(input.gesture(Gesture::FaceTrack, 0.0).is_empty());
+    assert_eq!(notices(&mut input), ["LOOKING FOR YOUR FACE"]);
+    assert!(input.take_face_request());
+    assert!(!input.take_face_request(), "once");
+    let (x, y, w, h) = track_set(&input.track_face((0.4, 0.1, 0.2, 0.36), 0.5));
+    assert!((x - 0.5).abs() < 0.01 && (y - 0.28).abs() < 0.01, "{x} {y}");
+    assert!((w - 0.2).abs() < 0.01 && (h - 0.36).abs() < 0.01);
+    assert_eq!(notices(&mut input), ["FACE TRACKING"]);
+    assert!(input.tracker.is_tracking());
+    // The same gesture again lets go.
+    assert_eq!(
+        input.gesture(Gesture::FaceTrack, 1.0),
+        [Command::TrackClear]
+    );
+    assert_eq!(notices(&mut input), ["FACE TRACKING OFF"]);
+    input.no_face();
+    assert_eq!(notices(&mut input), ["NO FACE FOUND"]);
+}
+
+#[test]
+fn a_face_on_a_mirrored_picture_is_tracked_where_it_is_on_the_sensor() {
+    let mut input = input();
+    input.tracker.set_mirror(true);
+    let (x, ..) = track_set(&input.track_face((0.1, 0.1, 0.2, 0.36), 0.0));
+    assert!((x - 0.2).abs() < 0.01, "sensor centre {x}");
+    let seen = input.tracker.view().seen.expect("drawn");
+    assert!((seen.x - 0.7).abs() < 1e-6, "drawn mirrored at {}", seen.x);
+}
+
+#[test]
+fn the_record_hold_shows_its_progress_and_only_for_record() {
+    let mut input = input();
+    assert_eq!(input.gesture_hold_seconds(Gesture::Two), 2.5);
+    assert_eq!(input.gesture_hold_seconds(Gesture::Fist), 0.9);
+    input.gesture_progress(Some((Gesture::Two, 0.47)));
+    let hold = input.view(0.0).gesture_hold.expect("shown");
+    assert_eq!(hold.text, "HOLD TO START RECORDING");
+    assert!((hold.fraction - 0.4).abs() < 1e-9);
+    input.gesture_progress(Some((Gesture::Fist, 0.5)));
+    assert!(input.view(0.0).gesture_hold.is_none());
+    input.gesture_progress(Some((Gesture::Two, 0.05)));
+    assert!(input.view(0.0).gesture_hold.is_none());
+    input.set_status(
+        Status {
+            is_recording: true,
+            ..Status::default()
+        },
+        0.0,
+    );
+    input.gesture_progress(Some((Gesture::Two, 0.9)));
+    assert_eq!(
+        input.view(0.0).gesture_hold.map(|h| h.text),
+        Some("HOLD TO STOP RECORDING")
+    );
+    input.gesture_progress(None);
+    assert!(input.view(0.0).gesture_hold.is_none());
+}
+
+#[test]
+fn a_double_clap_recentres() {
+    let mut input = input();
+    assert_eq!(input.clap(0.0), [Command::GimbalRecenter]);
+    assert_eq!(notices(&mut input), ["CLAP: RECENTRE"]);
+}

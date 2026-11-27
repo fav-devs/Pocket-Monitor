@@ -6,15 +6,19 @@
 //! release, rest after 250 ms of heartbeat silence), hold-to-zoom at the dial's 20 Hz,
 //! the tracking poll (0.5 s) and push silence (0.35 s), the tap-focus ACK wait (0.4 s),
 //! the record countdown, the programmed-move engine with its 40 ms late abort, and the
-//! preset two-step follow-up. It also polls the game controller (gilrs, [`crate::gamepad`])
-//! and takes webcam gestures ([`crate::gestures`]).
+//! preset two-step follow-up. It also polls the game controller (gilrs, [`crate::gamepad`]),
+//! takes webcam gestures ([`crate::gestures`]), reads the hand models' results on the
+//! camera's own picture ([`crate::vision`], `pm_controller::vision::FeedReader`: poses,
+//! sweeps, both hands' pinch-and-drag, the face to track), and hears the double clap
+//! ([`crate::mic`]), all while gestures are on and the live picture is on screen.
 //!
 //! The web posts intents over IPC ([`crate::keys`], [`crate::pointer`], [`crate::moves`])
 //! and the camera's session thread forwards what the body says ([`observe`]); this thread
 //! decides what reaches the wire and when. Nothing here waits on the web view or the
 //! window; commands go onto the camera thread's channel. It emits, each only on change:
 //! `input://state` (countdown, program, presets, lock; ≤ 15 Hz), `tracking://box`
-//! (≤ 15 Hz), `gamepad://state` (≤ 60 Hz), and notices on `camera://event`.
+//! (≤ 15 Hz), `gamepad://state` (≤ 60 Hz), `vision://hands` while the hand view is on
+//! (≤ 15 Hz), and notices on `camera://event`.
 
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -23,14 +27,17 @@ use std::time::{Duration, Instant};
 
 use opc_camera::{Command, DumlFrame, SetOutcome, Status};
 use opc_ui::Key;
-use pm_controller::gesture::{Gesture, GestureMap};
+use pm_controller::appsettings::{AppSettings, GestureSource};
+use pm_controller::gesture::Gesture;
 use pm_controller::gimbal::{DriveSource, StickSend, INPUT_TICK_SECONDS};
+use pm_controller::handnet::Update;
 use pm_controller::input::{LiveInput, Pose};
 use pm_controller::link::{log_line, FromCamera, LinkCommander};
 use pm_controller::pad::PadButton;
 use pm_controller::prefs;
 use pm_controller::presets;
 use pm_controller::tracking::PointerPhase;
+use pm_controller::vision::{FeedReader, HandOverlay, Tuning};
 use pm_controller::zoom::ZoomWrite;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -115,8 +122,11 @@ pub(crate) enum InputMsg {
     Configure(InputConfig),
     Move(MoveOp),
     Gesture(Gesture),
-    /// The home screen's gesture map changed (`app_settings_set`).
-    GestureMap(GestureMap),
+    /// The gesture settings changed (`gestures::apply`): the map, the source, hand
+    /// control, the stick hand, face tracking by itself.
+    AppSettings(Box<AppSettings>),
+    /// `Y`: the hand view is showing; `vision://hands` goes out while it is.
+    HandView(bool),
     /// Re-emit everything (a reloaded web view re-attaching).
     Resend,
     Stop,
@@ -255,6 +265,11 @@ impl Changed {
         self.last = None;
         self.at = f64::NEG_INFINITY;
     }
+
+    /// Whether an offer now could go out: build the value only then.
+    fn due(&self, now: f64) -> bool {
+        now - self.at >= self.interval
+    }
 }
 
 fn reply(
@@ -280,6 +295,7 @@ fn run(
     let mut live = LiveInput::new(&prefs).with_presets_at(presets::path_beside(&prefs_path));
     live.set_feel(sensitivity, tau);
     live.set_gesture_map(pm_controller::appsettings::load().gesture_map);
+    let mut gestures = Gestures::new(pm_controller::appsettings::load());
     let mut ramp = prefs.ramp;
     let mut sensitivity = sensitivity;
     let mut app: Option<AppHandle> = None;
@@ -289,6 +305,7 @@ fn run(
     let mut tracking_view = Changed::new(VIEW_INTERVAL);
     let mut input_view = Changed::new(VIEW_INTERVAL);
     let mut pad_view = Changed::new(PAD_INTERVAL);
+    let mut hands_view = Changed::new(VIEW_INTERVAL);
     let mut next_tick = 0.0;
 
     let send = |commands: Vec<Command>| {
@@ -402,12 +419,25 @@ fn run(
                     MoveOp::PresetClear(slot) => live.preset_clear(slot),
                     MoveOp::PresetSeconds(seconds) => live.preset_seconds(seconds),
                 },
-                InputMsg::Gesture(gesture) => out.extend(live.gesture(gesture, at)),
-                InputMsg::GestureMap(map) => live.set_gesture_map(map),
+                InputMsg::Gesture(gesture) => {
+                    // Webcam gestures act on the live picture only, as on the viewfinder.
+                    if gestures.settings.gestures && crate::vision::service().on_screen() {
+                        out.extend(live.gesture(gesture, at));
+                    }
+                }
+                InputMsg::AppSettings(settings) => {
+                    live.set_gesture_map(settings.gesture_map);
+                    out.extend(gestures.configure(*settings, &mut live, at));
+                }
+                InputMsg::HandView(on) => {
+                    gestures.hand_view = on;
+                    hands_view.forget();
+                }
                 InputMsg::Resend => {
                     tracking_view.forget();
                     input_view.forget();
                     pad_view.forget();
+                    hands_view.forget();
                 }
             }
         }
@@ -423,6 +453,7 @@ fn run(
                 }
             }
         }
+        out.extend(gestures.look(&mut live, at));
         out.extend(live.tick(at));
         let mut index = 0;
         while index < later.len() {
@@ -472,6 +503,141 @@ fn run(
         if let Ok(value) = serde_json::to_value(live.view(at)) {
             if let Some(value) = input_view.offer(value, at) {
                 let _ = app.emit("input://state", value);
+            }
+        }
+        if gestures.hand_view && hands_view.due(at) {
+            if let Ok(value) = serde_json::to_value(gestures.overlay(at)) {
+                if let Some(value) = hands_view.offer(value, at) {
+                    let _ = app.emit("vision://hands", value);
+                }
+            }
+        }
+    }
+}
+
+/// Gestures on the input thread: the camera's picture read for hands and faces, and the
+/// double clap. The webcam reader runs on its own thread (`gestures.rs`) and posts
+/// [`InputMsg::Gesture`].
+struct Gestures {
+    settings: AppSettings,
+    /// While the camera's picture is the source and gestures are on.
+    reader: Option<FeedReader>,
+    /// While gestures are on, whichever source.
+    mic: Option<crate::mic::ClapMic>,
+    hand_view: bool,
+}
+
+impl Gestures {
+    fn new(settings: AppSettings) -> Self {
+        // Nothing runs until `gestures::apply` says so (at launch, from the setting).
+        Self {
+            settings: AppSettings {
+                gestures: false,
+                ..settings
+            },
+            reader: None,
+            mic: None,
+            hand_view: false,
+        }
+    }
+
+    /// The setting changed: start or stop what it asks for, live.
+    fn configure(&mut self, settings: AppSettings, live: &mut LiveInput, at: f64) -> Vec<Command> {
+        let mut out = Vec::new();
+        let feed = settings.gestures && settings.gesture_source == GestureSource::CameraFeed;
+        if feed && self.reader.is_none() {
+            self.reader = Some(FeedReader::new());
+        } else if !feed && self.reader.take().is_some() {
+            // Whatever the hands held, they let go of.
+            out.extend(live.hand_release(at));
+            live.gesture_progress(None);
+        }
+        if !settings.hand_control && live.hand_driving() {
+            out.extend(live.hand_release(at));
+        }
+        crate::vision::service().set_reading(feed);
+        live.set_face_finder(feed);
+        if settings.gestures {
+            self.mic.get_or_insert_with(crate::mic::ClapMic::start);
+        } else {
+            // Dropping it releases the microphone.
+            self.mic = None;
+        }
+        self.settings = settings;
+        out
+    }
+
+    /// Every pass of the input loop: the hand models' results since the last pass, and
+    /// the clap, carried out on the live controls.
+    fn look(&mut self, live: &mut LiveInput, at: f64) -> Vec<Command> {
+        let mut out = Vec::new();
+        let on_screen = crate::vision::service().on_screen();
+        if self.mic.as_ref().is_some_and(crate::mic::ClapMic::take) && on_screen {
+            out.extend(live.clap(at));
+        }
+        let Some(reader) = self.reader.as_mut() else {
+            return out;
+        };
+        let updates = crate::vision::service().updates();
+        let fresh = updates
+            .iter()
+            .any(|update| matches!(update, Update::Seen { .. }));
+        let tuning = Tuning {
+            map: live.gesture_map(),
+            stick_is_right: self.settings.stick_is_right,
+            hand_control: self.settings.hand_control && on_screen,
+            face_requested: live.take_face_request(),
+            auto_face: self.settings.auto_face_track && on_screen,
+            tracking: live.tracker.is_tracking(),
+        };
+        let looked = reader.read(updates, live.live_pose(), at, &tuning);
+        crate::vision::service().set_want_faces(reader.wants_faces());
+        for control in looked.controls {
+            out.extend(live.hand_control(control, looked.dt, at));
+        }
+        if !on_screen {
+            live.gesture_progress(None);
+            return out;
+        }
+        for gesture in looked.gestures {
+            out.extend(live.gesture(gesture, at));
+        }
+        if fresh {
+            live.gesture_progress(looked.progress);
+        }
+        if let Some(rect) = looked.face {
+            out.extend(live.track_face(rect, at));
+        }
+        if looked.no_face {
+            live.no_face();
+        }
+        out
+    }
+
+    /// What the hand view draws now.
+    fn overlay(&self, at: f64) -> HandOverlay {
+        let stick = self.settings.stick_is_right;
+        if !self.settings.gestures {
+            return HandOverlay::new("off", "", None, &[], stick);
+        }
+        match (&self.reader, self.settings.gesture_source) {
+            (Some(reader), _) => HandOverlay::new(
+                "cameraFeed",
+                reader.status(),
+                reader.scene(),
+                reader.faces(at),
+                stick,
+            ),
+            (None, GestureSource::Webcam) => {
+                let state = crate::gestures::state();
+                let status = state
+                    .problem
+                    .or(state.device)
+                    .unwrap_or_else(|| "starting the webcam".to_string());
+                HandOverlay::new("webcam", &status, None, &[], stick)
+            }
+            (None, GestureSource::CameraFeed) => {
+                HandOverlay::new("cameraFeed", "", None, &[], stick)
             }
         }
     }

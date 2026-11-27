@@ -13,7 +13,8 @@
 //!   [`moves`], [`presets`], [`pad`], [`gesture`], [`hand`], [`homewifi`].
 //! - [`handnet`] and [`facenet`]: the MediaPipe hand and YuNet face models through ONNX
 //!   Runtime, on their own thread; [`clap`]: the double clap heard in a microphone's
-//!   samples (the stream that feeds it stays with the app).
+//!   samples (the stream that feeds it stays with the app); [`vision`]: the hands and faces
+//!   in the camera's own picture, read for the live controls and the hand view.
 //!
 //! And the vocabulary the Tauri app speaks to the Expo web build:
 //!
@@ -55,6 +56,7 @@ pub mod state;
 pub mod toggles;
 pub mod tracking;
 pub mod vcam;
+pub mod vision;
 pub mod zoom;
 
 pub use assists::{AssistOptions, AssistTool};

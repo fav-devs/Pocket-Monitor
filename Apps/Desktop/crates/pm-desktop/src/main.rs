@@ -27,6 +27,7 @@ mod known;
 mod launch;
 mod luts;
 mod media;
+mod mic;
 mod moves;
 mod picture;
 mod player;
@@ -38,6 +39,7 @@ mod station;
 mod stills;
 mod uri;
 mod vcam;
+mod vision;
 
 use std::sync::{Arc, Mutex};
 
@@ -314,6 +316,7 @@ fn main() {
             moves::preset_seconds,
             gestures::gestures_set,
             gestures::gestures_state,
+            gestures::hand_view_set,
             media::media_list,
             media::media_refresh,
             media::media_play,

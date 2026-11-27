@@ -1,9 +1,19 @@
-//! Webcam gestures (§1.T): the operator's webcam read by the MediaPipe hand model
+//! Gestures (§1.T): where they are read from, switched live.
+//!
+//! The setting (`desktop-app-v1.txt`: `gestures`, `gesture_source`, `hand_control`,
+//! `stick_is_right`, `auto_face_track`, the gesture map) is applied by [`apply`] whenever
+//! it changes — `app_settings_set`, `gestures_set`, `J` — with no restart: the webcam reader
+//! here starts or stops, and the input thread is told, which starts or stops reading the
+//! camera's own picture (`vision.rs`), the clap microphone (`mic.rs`), and takes the map
+//! and the hand settings. `gestures://state` tells the web what is running.
+//!
+//! **Webcam source**: the operator's webcam read by the MediaPipe hand model
 //! (`pm_controller::handnet`) for sweeps and held poses (`pm_controller::hand`), mapped
 //! onto the gimbal by the input thread through the home screen's gesture map
-//! (`LiveInput::gesture`).
+//! (`LiveInput::gesture`). The pinch controls and the face finder run on the camera's own
+//! picture only, as in the old viewfinder.
 //!
-//! Capture is an `ffmpeg` child (the same FFmpeg the decoder ships with) at 15 fps,
+//! Capture is an `ffmpeg` child (the same FFmpeg the decoder ships with) at 20 fps,
 //! 480×270 RGB24, as the old viewfinder's `webcam.rs` does: DirectShow on Windows (the
 //! first video device that is not software, so this app's own virtual camera is never
 //! read back), V4L2 on Linux, AVFoundation on macOS. `PM_WEBCAM` (or `OPC_WEBCAM`) names a device.
@@ -12,7 +22,8 @@
 //! the box). Nothing is recorded or leaves the machine.
 //!
 //! On when the home setting says so (`desktop-app-v1.txt` `gestures`), with
-//! `--gestures`, or `PM_GESTURES=1` (`OPC_GESTURES=1`); `gestures_set` turns it on and off live.
+//! `--gestures`, or `PM_GESTURES=1` (`OPC_GESTURES=1`); `gestures_set`, `J` and
+//! `app_settings_set` turn it on and off live.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -20,12 +31,12 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use pm_controller::appsettings;
+use pm_controller::appsettings::{self, AppSettings, GestureSource};
 use pm_controller::hand::{pinch_ratio, pose_of, Holder, Sweep, HOLD, PINCH_OFF};
 use pm_controller::handnet::HandNet;
 use pm_controller::link::log_line;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::input::{post, InputMsg};
 
@@ -46,14 +57,29 @@ const SOFTWARE: [&str; 8] = [
     "manycam",
 ];
 
-/// `gestures_state`.
+/// `gestures_state` and `gestures://state`.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GesturesState {
+    /// Gestures are on (the setting), whichever source.
     pub on: bool,
+    /// `cameraFeed` or `webcam`.
+    pub source: Option<GestureSource>,
+    /// The webcam being read.
     pub device: Option<String>,
-    /// Why it is not running, as operator copy.
+    /// Why the webcam is not running, as operator copy.
     pub problem: Option<String>,
+}
+
+/// The settings last applied, and the app for `gestures://state`.
+fn applied() -> &'static Mutex<Option<AppSettings>> {
+    static APPLIED: OnceLock<Mutex<Option<AppSettings>>> = OnceLock::new();
+    APPLIED.get_or_init(|| Mutex::new(None))
+}
+
+fn app() -> &'static OnceLock<AppHandle> {
+    static APP: OnceLock<AppHandle> = OnceLock::new();
+    &APP
 }
 
 #[derive(Default)]
@@ -74,13 +100,87 @@ pub fn wanted() -> bool {
         || appsettings::load().gestures
 }
 
-pub fn start_if_wanted(_app: &AppHandle) {
-    if wanted() {
-        // The device listing runs ffmpeg once: off the main thread.
-        std::thread::spawn(|| {
-            set(true);
+/// At launch: the saved settings, with gestures on when the command line asked (T5).
+/// The device listing runs ffmpeg once: off the main thread.
+pub fn start_if_wanted(handle: &AppHandle) {
+    let _ = app().set(handle.clone());
+    let mut settings = appsettings::load();
+    settings.gestures |= wanted();
+    apply_soon(settings);
+}
+
+/// [`apply`] on its own thread (it may list devices and start ffmpeg).
+pub fn apply_soon(settings: AppSettings) {
+    let spawned = std::thread::Builder::new()
+        .name("pm-gestures-apply".to_string())
+        .spawn(move || {
+            apply(&settings);
         });
+    if let Err(error) = spawned {
+        log_line(
+            "gestures",
+            format_args!("could not apply the setting: {error}"),
+        );
     }
+}
+
+/// Makes what runs match `settings`, live: the webcam reader for the webcam source; the
+/// input thread for the rest (the camera's picture, the microphone, the map, the hand
+/// settings). One at a time. Returns what the web shows, and emits it.
+pub fn apply(settings: &AppSettings) -> GesturesState {
+    let Ok(mut last) = applied().lock() else {
+        return state();
+    };
+    let webcam = settings.gestures && settings.gesture_source == GestureSource::Webcam;
+    let running = slot()
+        .lock()
+        .map(|capture| capture.child.is_some())
+        .unwrap_or(false);
+    let was_webcam = last
+        .as_ref()
+        .is_some_and(|old| old.gestures && old.gesture_source == GestureSource::Webcam);
+    if !webcam && (running || was_webcam) {
+        set(false);
+    } else if webcam && (!running || !was_webcam) {
+        set(true);
+    }
+    if !webcam {
+        // A webcam problem means nothing once the webcam is not wanted.
+        if let Ok(mut capture) = slot().lock() {
+            capture.state.problem = None;
+            capture.state.device = None;
+        }
+    }
+    post(InputMsg::AppSettings(Box::new(*settings)));
+    *last = Some(*settings);
+    drop(last);
+    let state = state();
+    if let Some(app) = app().get() {
+        let _ = app.emit("gestures://state", &state);
+    }
+    state
+}
+
+/// `J`: gestures on or off, the source as set, remembered; says which, as the old
+/// viewfinder did.
+pub fn toggle() {
+    std::thread::spawn(|| {
+        let mut settings = appsettings::load();
+        settings.gestures = !settings.gestures;
+        appsettings::save(&settings);
+        apply(&settings);
+        let text = match (settings.gestures, settings.gesture_source) {
+            (false, _) => "Gestures off",
+            (true, GestureSource::CameraFeed) => "Gestures on: watching the camera's picture",
+            (true, GestureSource::Webcam) => "Gestures on: watching the PC webcam",
+        };
+        if let Some(app) = app().get() {
+            let _ = app.emit(
+                "camera://event",
+                serde_json::json!({ "type": "notice", "message": text, "tone": "info" }),
+            );
+        }
+    });
 }
 
 fn hidden(command: &mut Command) -> &mut Command {
@@ -170,7 +270,7 @@ fn input_args(ffmpeg: &PathBuf) -> Option<(Vec<String>, String)> {
                 "-f".into(),
                 "dshow".into(),
                 "-framerate".into(),
-                "15".into(),
+                "20".into(),
                 "-i".into(),
                 format!("video={device}"),
             ],
@@ -183,7 +283,7 @@ fn input_args(ffmpeg: &PathBuf) -> Option<(Vec<String>, String)> {
                 "-f".into(),
                 "avfoundation".into(),
                 "-framerate".into(),
-                "15".into(),
+                "20".into(),
                 "-i".into(),
                 device.clone(),
             ],
@@ -196,7 +296,7 @@ fn input_args(ffmpeg: &PathBuf) -> Option<(Vec<String>, String)> {
                 "-f".into(),
                 "v4l2".into(),
                 "-framerate".into(),
-                "15".into(),
+                "20".into(),
                 "-i".into(),
                 device.clone(),
             ],
@@ -205,8 +305,8 @@ fn input_args(ffmpeg: &PathBuf) -> Option<(Vec<String>, String)> {
     }
 }
 
-/// Starts or stops the capture. Returns what the operator should read.
-pub fn set(on: bool) -> GesturesState {
+/// Starts or stops the webcam capture. Returns what the operator should read.
+fn set(on: bool) -> GesturesState {
     stop();
     if !on {
         return state();
@@ -214,11 +314,8 @@ pub fn set(on: bool) -> GesturesState {
     let problem = |text: &str| {
         log_line("gestures", text);
         if let Ok(mut capture) = slot().lock() {
-            capture.state = GesturesState {
-                on: false,
-                device: None,
-                problem: Some(text.to_string()),
-            };
+            capture.state.device = None;
+            capture.state.problem = Some(text.to_string());
         }
         state()
     };
@@ -293,21 +390,18 @@ pub fn set(on: bool) -> GesturesState {
         .ok();
     if let Ok(mut capture) = slot().lock() {
         capture.child = Some(shared);
-        capture.state = GesturesState {
-            on: true,
-            device: Some(device),
-            problem: None,
-        };
+        capture.state.device = Some(device);
+        capture.state.problem = None;
     }
     state()
 }
 
 /// Stops the capture, if any.
 pub fn stop() {
-    let child = slot().lock().ok().and_then(|mut capture| {
-        capture.state.on = false;
-        capture.child.take()
-    });
+    let child = slot()
+        .lock()
+        .ok()
+        .and_then(|mut capture| capture.child.take());
     if let Some(child) = child {
         if let Ok(mut child) = child.lock() {
             if let Some(mut child) = child.take() {
@@ -319,14 +413,21 @@ pub fn stop() {
 }
 
 pub fn state() -> GesturesState {
-    slot()
+    let settings = applied().try_lock().ok().and_then(|last| *last);
+    let mut state = slot()
         .lock()
         .map(|capture| capture.state.clone())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(settings) = settings {
+        state.on = settings.gestures;
+        state.source = Some(settings.gesture_source);
+    }
+    state
 }
 
-/// `gestures_set {on}`: turns the webcam on or off now, and remembers it as the home
-/// setting does. The device listing and the spawn run off the main thread.
+/// `gestures_set {on}`: turns gestures on or off now, from whichever source is set, and
+/// remembers it as the home setting does. The device listing and the spawn run off the
+/// main thread.
 #[tauri::command]
 pub async fn gestures_set(on: bool) -> Result<GesturesState, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -335,7 +436,7 @@ pub async fn gestures_set(on: bool) -> Result<GesturesState, String> {
             settings.gestures = on;
             appsettings::save(&settings);
         }
-        set(on)
+        apply(&settings)
     })
     .await
     .map_err(|error| error.to_string())
@@ -344,4 +445,11 @@ pub async fn gestures_set(on: bool) -> Result<GesturesState, String> {
 #[tauri::command]
 pub fn gestures_state() -> GesturesState {
     state()
+}
+
+/// `hand_view_set {on}`: the hand view (`Y`) is showing; `vision://hands` goes out at up to
+/// 15 Hz while it is.
+#[tauri::command]
+pub fn hand_view_set(on: bool) {
+    post(InputMsg::HandView(on));
 }

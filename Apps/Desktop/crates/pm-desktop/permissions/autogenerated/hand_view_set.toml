@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hand-view-set"
+description = "Enables the hand_view_set command without any pre-configured scope."
+commands.allow = ["hand_view_set"]
+
+[[permission]]
+identifier = "deny-hand-view-set"
+description = "Denies the hand_view_set command without any pre-configured scope."
+commands.deny = ["hand_view_set"]
