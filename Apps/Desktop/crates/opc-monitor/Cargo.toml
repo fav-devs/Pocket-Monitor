@@ -29,12 +29,32 @@ raw-window-handle = "0.6"
 winit = "0.30"
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "wgpu"] }
 egui = "0.29"
-btleplug = "0.11"
 futures = "0.3"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 uuid = "1"
 gilrs = "0.11"
 cpal = "0.15"
+
+# The hand and face models (ONNX Runtime, DirectML on Windows) and the DPAPI-sealed home
+# Wi-Fi password are `pm-controller`'s, with their dependencies.
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+btleplug = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CoreBluetooth discovery errors could leave connect() pending forever in 0.11.
+btleplug = "=0.13.5"
+# btleplug collapses unsupported/unauthorized adapter states into Unknown.
+objc2-core-bluetooth = { version = "0.2.2", features = ["CBCentralManager", "CBManager"] }
+# The current Wi-Fi name, and the Location permission macOS requires to read it.
+objc2 = "0.5.2"
+objc2-core-location = { version = "0.2.2", features = ["CLLocationManager"] }
+objc2-core-wlan = { version = "0.2.2", features = ["CWInterface", "CWWiFiClient"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString"] }
+
+[features]
+# Keep a terminal attached on Windows, for reading eprintln output while developing.
+console = []
 
 [lints]
 workspace = true

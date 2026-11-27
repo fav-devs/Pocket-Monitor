@@ -42,7 +42,7 @@ pub fn log_line(tag: &str, message: impl std::fmt::Display) {
 #[derive(Debug)]
 pub enum FromCamera {
     /// The session opened.
-    Opened,
+    Opened(SocketAddr),
     /// A complete access unit, ready for the decoder.
     Picture(Vec<u8>),
     /// The camera said something about itself.
@@ -310,7 +310,7 @@ fn run(
             let message = match event {
                 SessionEvent::Opened => {
                     link_log!("camera accepted session; phase={:?}", session.phase());
-                    FromCamera::Opened
+                    FromCamera::Opened(session.remote())
                 }
                 SessionEvent::Picture(bytes) => {
                     if !saw_picture {

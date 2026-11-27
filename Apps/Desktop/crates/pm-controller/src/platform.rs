@@ -144,11 +144,13 @@ pub fn exe_dir() -> Option<PathBuf> {
 // ---- Moving over from the old folder ---------------------------------------------------
 
 /// Files kept in [`data_dir`] that an upgrade carries over: the remembered cameras (SoftAP,
-/// station, LAN) and the window's place.
+/// station, LAN), the home Wi-Fi (its password sealed to the same user) and the window's
+/// place.
 pub const MIGRATED_DATA_FILES: &[&str] = &[
     "desktop-camera-v1.txt",
     "desktop-station-v1.txt",
     "desktop-lan-camera-v1.txt",
+    "desktop-homewifi-v1.txt",
     "pocket-monitor-window-v1.txt",
 ];
 
@@ -367,11 +369,22 @@ pub fn log_dir_for(
 }
 
 /// Whether the executable sits in an installed copy: Inno's uninstaller is beside it, or
-/// it is under Program Files. Neither test names the folder, so a new install
-/// (`{autopf}\Pocket Monitor`), an upgraded one still in `{autopf}\OpenPocketCine` and
-/// one the operator put elsewhere all count.
+/// it is under Program Files, or it is inside a macOS app bundle (`….app/Contents/MacOS`,
+/// where a log written beside it would break the bundle's code-signing seal). None of
+/// the tests names the folder, so a new install (`{autopf}\Pocket Monitor`), an
+/// upgraded one still in `{autopf}\OpenPocketCine` and one the operator put elsewhere
+/// all count.
 pub fn looks_installed(exe_dir: &Path) -> bool {
     if exe_dir.join("unins000.exe").exists() {
+        return true;
+    }
+    if exe_dir.ends_with("Contents/MacOS")
+        && exe_dir
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::extension)
+            .is_some_and(|extension| extension == "app")
+    {
         return true;
     }
     let text = exe_dir.to_string_lossy().to_ascii_lowercase();
@@ -776,6 +789,12 @@ mod tests {
             "C:\\Program Files\\Pocket Monitor"
         )));
         assert!(!looks_installed(Path::new("D:\\tools\\PocketMonitor")));
+        // A macOS app bundle: never write beside the executable inside it.
+        assert!(looks_installed(Path::new(
+            "/Applications/Pocket Monitor.app/Contents/MacOS"
+        )));
+        assert!(!looks_installed(Path::new("/Users/op/src/target/release")));
+        assert!(!looks_installed(Path::new("/Users/op/Contents/MacOS")));
     }
 
     #[test]

@@ -1,7 +1,8 @@
-// A release operator build is a normal Windows app, not a terminal program. Startup,
-// connection and crash diagnostics still go to `opc-monitor.log` beside the executable.
+// Every Windows build is a normal app, not a terminal program, dev builds included.
+// Startup, connection and crash diagnostics go to `opc-monitor.log` beside the
+// executable. Build with `--features console` to get a terminal for eprintln output.
 #![cfg_attr(
-    all(target_os = "windows", not(debug_assertions)),
+    all(target_os = "windows", not(feature = "console")),
     windows_subsystem = "windows"
 )]
 
@@ -46,19 +47,23 @@ mod audio;
 mod ble_impl;
 #[cfg(opc_core_linked)]
 mod connect;
+#[cfg(opc_core_linked)]
+mod home;
 // The camera thread lives in `pm-controller`, shared with the Tauri app.
 #[cfg(opc_core_linked)]
 use pm_controller::link;
+#[cfg(target_os = "macos")]
+mod macwifi;
 #[cfg(opc_core_linked)]
 mod media;
+#[cfg(opc_core_linked)]
+mod mic;
 #[cfg(opc_core_linked)]
 mod station;
 #[cfg(opc_core_linked)]
 mod view;
 #[cfg(opc_core_linked)]
 mod webcam;
-#[cfg(opc_core_linked)]
-mod home;
 
 #[cfg(not(opc_core_linked))]
 const NO_CORE: &str = "this build has no Swift core linked, so it cannot open a camera. \
@@ -102,6 +107,13 @@ Viewfinder keys
 
   Z zebra      P peaking      L colour cube      M mirror      H hide the chrome
 
+  1 - 6        fly to gimbal preset      K    moves, presets and hand-control settings
+  J            gestures on / off         Y    hand view: see what the hand tracker sees
+
+Hands (gestures on): pinch and drag the right hand for the gimbal stick, the left for
+zoom (up in, down out); hold a peace sign 2.5 s to start or stop recording; open and
+close a hand three times to track your face.
+
 Two arrows at once pan diagonally. The gimbal keeps moving while a key is held and
 rests the moment it comes up.";
 
@@ -112,18 +124,26 @@ const SAVED_WIFI_FAST_PATH_TIMEOUT: std::time::Duration = std::time::Duration::f
 
 fn main() -> ExitCode {
     keep_timers_fast();
-    if std::env::args().any(|arg| arg == "--gestures")
-        || opc_monitor::appsettings::load().gestures
+    if std::env::args().any(|arg| arg == "--gestures") || opc_monitor::appsettings::load().gestures
     {
         std::env::set_var("OPC_GESTURES", "1");
     }
     // Write a startup log beside the exe so silent crashes leave evidence.
-    let log_path = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("opc-monitor.log")));
-    let mut log = log_path
-        .as_deref()
-        .and_then(|p| std::fs::File::create(p).ok());
+    let log_path = opc_monitor::logfile::path();
+    // Appended, not truncated: the connect screen and the viewfinder are separate
+    // processes, and a fresh viewfinder used to wipe what the connect screen had logged.
+    // Only a log past a megabyte starts over.
+    let mut log = log_path.as_deref().and_then(|p| {
+        let too_big = std::fs::metadata(p).is_ok_and(|m| m.len() > 1_000_000);
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true);
+        if too_big {
+            options.write(true).truncate(true);
+        } else {
+            options.append(true);
+        }
+        options.open(p).ok()
+    });
     macro_rules! log {
         ($($t:tt)*) => {
             if let Some(ref mut f) = log {
@@ -580,15 +600,13 @@ fn save_camera(camera: &SavedCamera) -> Result<(), String> {
 #[cfg(opc_core_linked)]
 fn log_connection(message: &str) {
     use std::io::Write;
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("opc-monitor.log"))
-            {
-                let _ = writeln!(file, "wifi: {message}");
-            }
+    if let Some(path) = opc_monitor::logfile::path() {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "wifi: {message}");
         }
     }
 }
@@ -821,9 +839,14 @@ mod lan_camera {
             let _ = std::fs::create_dir_all(folder);
         }
         let model = model.map(|m| m.to_string()).unwrap_or_default();
-        let _ = std::fs::write(path, format!("{ip}
+        let _ = std::fs::write(
+            path,
+            format!(
+                "{ip}
 {model}
-"));
+"
+            ),
+        );
     }
 
     pub fn forget() {

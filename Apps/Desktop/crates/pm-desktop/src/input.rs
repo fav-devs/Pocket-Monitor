@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use opc_camera::{Command, DumlFrame, SetOutcome, Status};
 use opc_ui::Key;
-use pm_controller::gesture::Gesture;
+use pm_controller::gesture::{Gesture, GestureMap};
 use pm_controller::gimbal::{DriveSource, StickSend, INPUT_TICK_SECONDS};
 use pm_controller::input::{LiveInput, Pose};
 use pm_controller::link::{log_line, FromCamera, LinkCommander};
@@ -115,6 +115,8 @@ pub(crate) enum InputMsg {
     Configure(InputConfig),
     Move(MoveOp),
     Gesture(Gesture),
+    /// The home screen's gesture map changed (`app_settings_set`).
+    GestureMap(GestureMap),
     /// Re-emit everything (a reloaded web view re-attaching).
     Resend,
     Stop,
@@ -143,7 +145,7 @@ pub fn observe(event: &FromCamera) {
             post(InputMsg::Frame(frame.clone()));
         }
         FromCamera::Set(outcome) => post(InputMsg::Set(outcome.clone())),
-        FromCamera::Opened => post(InputMsg::Opened),
+        FromCamera::Opened(_) => post(InputMsg::Opened),
         FromCamera::Lost(_) => post(InputMsg::Lost),
         _ => {}
     }
@@ -277,6 +279,7 @@ fn run(
         .unwrap_or_default();
     let mut live = LiveInput::new(&prefs).with_presets_at(presets::path_beside(&prefs_path));
     live.set_feel(sensitivity, tau);
+    live.set_gesture_map(pm_controller::appsettings::load().gesture_map);
     let mut ramp = prefs.ramp;
     let mut sensitivity = sensitivity;
     let mut app: Option<AppHandle> = None;
@@ -400,6 +403,7 @@ fn run(
                     MoveOp::PresetSeconds(seconds) => live.preset_seconds(seconds),
                 },
                 InputMsg::Gesture(gesture) => out.extend(live.gesture(gesture, at)),
+                InputMsg::GestureMap(map) => live.set_gesture_map(map),
                 InputMsg::Resend => {
                     tracking_view.forget();
                     input_view.forget();

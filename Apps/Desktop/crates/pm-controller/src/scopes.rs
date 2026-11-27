@@ -59,6 +59,32 @@ impl Default for ScopeSamples {
     }
 }
 
+/// The picture as a small RGB frame of `width * height` pixels, nearest-sampled, for
+/// things that read it rather than show it (gestures).
+pub fn small_rgb(picture: &OwnedPicture, width: usize, height: usize) -> Vec<u8> {
+    let view = picture.picture();
+    let mut out = vec![0u8; width * height * 3];
+    if view.width == 0 || view.height == 0 {
+        return out;
+    }
+    let (chroma_w, chroma_h) = view.chroma_size();
+    for y in 0..height {
+        let sy = (y * view.height as usize / height).min(view.height as usize - 1);
+        for x in 0..width {
+            let sx = (x * view.width as usize / width).min(view.width as usize - 1);
+            let code = view.luma[sy * view.luma_stride + sx];
+            let cx = (sx / 2).min(chroma_w as usize - 1);
+            let cy = (sy / 2).min(chroma_h as usize - 1);
+            let u = view.chroma_blue[cy * view.chroma_stride + cx];
+            let v = view.chroma_red[cy * view.chroma_stride + cx];
+            let (r, g, b) = rgb(code, u, v);
+            let at = (y * width + x) * 3;
+            out[at..at + 3].copy_from_slice(&[r, g, b]);
+        }
+    }
+    out
+}
+
 /// Limited-range BT.709 to 8-bit RGB, the way the feed pass converts the planes.
 fn rgb(y: u8, u: u8, v: u8) -> (u8, u8, u8) {
     let y = (f32::from(y) - 16.0) * (255.0 / 219.0);

@@ -147,6 +147,11 @@ fn main() {
         // The executable boundary: make the Swift facade link explicit, as opc-monitor does.
         println!("cargo:rustc-link-search=native={}", dir.display());
         println!("cargo:rustc-link-lib=dylib={LIB_NAME}");
+        // A dependency's rustc-link-arg does not reach this executable: dyld needs the
+        // facade's @rpath resolved here too (as opc-monitor's build script does).
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        }
         println!("cargo:rustc-cfg=opc_core_linked");
     }
     // `frontendDist` must exist for `generate_context!`, even before the first export.

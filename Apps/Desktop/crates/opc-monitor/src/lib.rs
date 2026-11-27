@@ -8,10 +8,12 @@
 // The chrome-free logic moved to `pm-controller` (docs/desktop-expo-port.md §3.4). The
 // paths stay the same here, so the shell, its tests and the binary build unchanged.
 pub use pm_controller::{
-    appsettings, assists, gesture, hand, homewifi, luts, moves, pad, prefs, presets, scopes, zoom,
+    appsettings, assists, clap, facenet, gesture, hand, handnet, homewifi, luts, moves, pad, prefs,
+    presets, scopes, zoom,
 };
 
 pub mod library;
+pub mod logfile;
 pub mod phone;
 pub mod sheets;
 pub mod shell;

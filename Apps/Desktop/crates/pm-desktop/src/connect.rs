@@ -123,8 +123,108 @@ impl BtleplugTransport {
         Ok(adapter)
     }
 
+    /// CoreBluetooth can deliver its first state update before the radio is ready, and
+    /// btleplug queues `start_scan` successfully even when macOS rejects that scan. Wait
+    /// for the radio, and say why when it will not come (opc-monitor's `ble_impl.rs`).
+    #[cfg(target_os = "macos")]
+    fn wait_for_bluetooth(&self, adapter: &Adapter) -> io::Result<()> {
+        use btleplug::api::CentralState;
+        use objc2_core_bluetooth::{
+            CBCentralManager, CBManager, CBManagerAuthorization, CBManagerState,
+        };
+
+        // A state-only observer preserves the native failure reason that btleplug
+        // maps to Unknown. It never scans, connects, or changes radio settings.
+        let observer = unsafe { CBCentralManager::new() };
+        self.rt.block_on(async {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                let state = adapter
+                    .adapter_state()
+                    .await
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                let native_state = unsafe { observer.state() };
+                let authorization = unsafe { CBManager::authorization_class() };
+                ble_log(format_args!(
+                    "Bluetooth state: {state:?}; native={native_state:?}; authorization={authorization:?}"
+                ));
+                if authorization == CBManagerAuthorization::Denied
+                    || authorization == CBManagerAuthorization::Restricted
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "Bluetooth access is blocked. Allow Pocket Monitor in macOS System Settings → Privacy & Security → Bluetooth, then reopen the app.",
+                    ));
+                }
+                if native_state == CBManagerState::Unsupported {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "macOS reports that this Bluetooth adapter does not support Bluetooth LE. Pocket Monitor needs Bluetooth LE to find the camera; use a macOS-compatible Bluetooth LE adapter or connect the camera to Wi-Fi using DJI Mimo, then connect by address.",
+                    ));
+                }
+                match state {
+                    CentralState::PoweredOn => return Ok(()),
+                    CentralState::PoweredOff => {
+                        return Err(io::Error::other(
+                            "Bluetooth is off. Turn it on in macOS System Settings, then scan again.",
+                        ));
+                    }
+                    _ if tokio::time::Instant::now() >= deadline => {
+                        return Err(io::Error::other(
+                            "macOS Bluetooth is not ready. Allow Pocket Monitor in System Settings → Privacy & Security → Bluetooth, then reopen the app. If access is already enabled, check that your Bluetooth adapter supports Bluetooth LE.",
+                        ));
+                    }
+                    _ => tokio::time::sleep(Duration::from_millis(250)).await,
+                }
+            }
+        })
+    }
+
+    /// CoreBluetooth drops its record of a peripheral after a disconnect, and pairing
+    /// disconnects on purpose before the operator types the home Wi-Fi. Retrieve the
+    /// peripheral by its id again so provisioning gets a live record.
+    #[cfg(target_os = "macos")]
+    fn refresh_peripheral(&mut self, address: &str, p: Peripheral) -> io::Result<Peripheral> {
+        use btleplug::api::RetrievePeripheralsOptions;
+        let adapter = self.get_adapter()?;
+        let id = p.id();
+        let refreshed = self.rt.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                adapter.retrieve_peripherals(RetrievePeripheralsOptions {
+                    identifiers: Some(vec![id.clone()]),
+                    services: None,
+                }),
+            )
+            .await
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Retrieving the camera timed out; scan again.",
+                )
+            })?
+            .map_err(|e| io::Error::other(e.to_string()))?
+            .into_iter()
+            .find(|candidate| candidate.id() == id)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Camera no longer available; scan again.",
+                )
+            })
+        })?;
+        self.found.insert(address.to_string(), refreshed.clone());
+        if let Ok(mut pending) = self.notifications.lock() {
+            pending.clear();
+        }
+        ble_log("refreshed CoreBluetooth peripheral");
+        Ok(refreshed)
+    }
+
     fn peripherals_after(&mut self, seconds: f64) -> io::Result<Vec<Peripheral>> {
         let adapter = self.get_adapter()?;
+        #[cfg(target_os = "macos")]
+        self.wait_for_bluetooth(&adapter)?;
         self.rt.block_on(async {
             // No service filter: WinRT often leaves the service out of the advert.
             adapter
@@ -221,7 +321,9 @@ impl BleTransport for BtleplugTransport {
                 "the camera is not in the last scan; scan again before connecting",
             )
         })?;
-        self.rt.block_on(async {
+        #[cfg(target_os = "macos")]
+        let p = self.refresh_peripheral(address, p)?;
+        let setup = async {
             p.connect()
                 .await
                 .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e.to_string()))?;
@@ -258,7 +360,35 @@ impl BleTransport for BtleplugTransport {
                 .map_err(|e| io::Error::other(format!("pairing arm write failed: {e}")))?;
             tokio::time::sleep(Duration::from_millis(100)).await;
             Ok::<(), io::Error>(())
-        })?;
+        };
+        #[cfg(not(target_os = "macos"))]
+        self.rt.block_on(setup)?;
+        // CoreBluetooth discovery errors could leave the connection pending forever:
+        // bound it, and cancel the native connection when it runs out.
+        #[cfg(target_os = "macos")]
+        {
+            let result = self.rt.block_on(async {
+                tokio::time::timeout(Duration::from_secs(30), setup)
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Bluetooth connection or service discovery timed out. Keep the camera awake and nearby, close DJI Mimo on your phone, approve any camera prompt, then scan and try again.",
+                        ))
+                    })
+            });
+            if let Err(error) = result {
+                ble_log(format_args!("connection setup failed: {error}"));
+                // Dropping the Rust future alone leaves CoreBluetooth trying in the
+                // background.
+                self.rt.block_on(async {
+                    let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+                });
+                self.found.clear();
+                self.adapter = None;
+                return Err(error);
+            }
+        }
         let listener = p.clone();
         let buffer = Arc::clone(&self.notifications);
         self.rt.spawn(async move {

@@ -52,10 +52,18 @@ export interface KnownCamera {
   host?: string | null;
 }
 
-/** `app_settings_get/set` (`desktop-app-v1.txt`). */
+/** `app_settings_get/set` (`desktop-app-v1.txt`). Send back what `get` returned, with
+ * changes laid over it: a field left out goes back to its default. */
 export interface DesktopAppSettings {
   gestures: boolean;
   openCameraAtLaunch: boolean;
+  /** Gesture key (`swipe_left`, `palm`, `two`, …) to action key (`nothing`, `recenter`,
+   * `flip`, `next_preset`, `previous_preset`, `stop`, `record`, `face_track`). */
+  gestureMap?: Record<string, string>;
+  gestureSource?: 'cameraFeed' | 'webcam';
+  handControl?: boolean;
+  stickIsRight?: boolean;
+  autoFaceTrack?: boolean;
 }
 
 /** `diagnostics_paths`. */

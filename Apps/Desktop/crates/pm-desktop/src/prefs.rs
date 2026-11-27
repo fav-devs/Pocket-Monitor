@@ -41,6 +41,7 @@ pub fn app_settings_set(settings: AppSettings) -> Result<AppSettings, String> {
     let _guard = WRITE.lock().map_err(|_| "settings are busy".to_string())?;
     appsettings::save_to(&appsettings::path(), &settings)
         .map_err(|error| format!("could not save the settings: {error}"))?;
+    crate::input::post(crate::input::InputMsg::GestureMap(settings.gesture_map));
     Ok(settings)
 }
 

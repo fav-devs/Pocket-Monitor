@@ -18,7 +18,7 @@ use opc_camera::{Command, SetOutcome, Status, TrackingPoll};
 use opc_ui::{next_frame_rate, next_resolution, Action, Controls, Countdown, Key, Stick};
 use serde::Serialize;
 
-use crate::gesture::Gesture;
+use crate::gesture::{Gesture, GestureAction, GestureMap};
 use crate::gimbal::{zoom_trigger_step, DriveSource, GimbalDrive, StickSend};
 use crate::moves::{can_send, MoveEngine, Program, Waypoint, MAX_DURATION, MIN_DURATION};
 use crate::pad::{PadAction, PadButton, REST as PAD_REST};
@@ -131,6 +131,8 @@ pub struct LiveInput {
     preset_cursor: Option<usize>,
     preset_followup: Option<(Waypoint, f64, f64)>,
     presets_path: Option<PathBuf>,
+    /// What each webcam gesture does (`desktop-app-v1.txt`, the home screen's map).
+    gesture_map: GestureMap,
     notices: Vec<Notice>,
     stick_log: Vec<StickSend>,
 }
@@ -173,6 +175,7 @@ impl LiveInput {
             preset_cursor: None,
             preset_followup: None,
             presets_path: None,
+            gesture_map: GestureMap::default(),
             notices: Vec::new(),
             stick_log: Vec::new(),
         }
@@ -193,6 +196,11 @@ impl LiveInput {
     /// The phones' 1…5 sensitivity and the ramp's time constant (0 off).
     pub fn set_feel(&mut self, sensitivity: u8, tau: f64) {
         self.drive.set_feel(sensitivity, tau);
+    }
+
+    /// What each gesture does, from the app settings' map.
+    pub fn set_gesture_map(&mut self, map: GestureMap) {
+        self.gesture_map = map;
     }
 
     pub fn set_countdown_seconds(&mut self, seconds: u32) {
@@ -985,34 +993,44 @@ impl LiveInput {
 
     // ── Webcam gestures (T4) ──────────────────────────────────────────────────
 
-    /// Up or a fist recentres; down or "two" flips; a palm stops (the take, tracking,
-    /// and the body's timed move); left, right and point step through the saved presets.
+    /// A gesture does what the app settings' [`GestureMap`] says, as the old
+    /// viewfinder's `Shell::gesture` does: recentre, flip, stop (the take's move,
+    /// tracking and the body's timed move), record, or step through the saved presets.
+    /// Face tracking needs a face finder on the camera's picture, which this controller
+    /// does not run: the gesture lets go of tracking when there is some, and says so
+    /// otherwise.
     pub fn gesture(&mut self, gesture: Gesture, now: f64) -> Vec<Command> {
-        match gesture {
-            Gesture::SwipeUp => {
+        match self.gesture_map.get(gesture) {
+            GestureAction::Nothing => Vec::new(),
+            GestureAction::Recenter => {
                 self.notice("GESTURE: RECENTRE", "info");
                 vec![Command::GimbalRecenter]
             }
-            Gesture::SwipeDown => {
+            GestureAction::Flip => {
                 self.notice("GESTURE: FLIP", "info");
                 vec![Command::GimbalFlip]
             }
-            Gesture::Fist => {
-                self.notice("HAND: RECENTRE", "info");
-                vec![Command::GimbalRecenter]
-            }
-            Gesture::Two => {
-                self.notice("HAND: FLIP", "info");
-                vec![Command::GimbalFlip]
-            }
-            Gesture::Palm => {
-                self.notice("HAND: STOP", "info");
+            GestureAction::Stop => {
+                self.notice("GESTURE: STOP", "info");
                 let mut out = self.move_stop();
                 out.extend(self.tracker.clear(now));
                 out.push(Command::GimbalTimedStop);
                 out
             }
-            Gesture::SwipeLeft | Gesture::SwipeRight | Gesture::Point => {
+            GestureAction::Record => {
+                self.notice("GESTURE: RECORD", "info");
+                vec![self.record_command()]
+            }
+            GestureAction::FaceTrack => {
+                if self.tracker.is_tracking() {
+                    self.notice("FACE TRACKING OFF", "info");
+                    self.tracker.clear(now)
+                } else {
+                    self.notice("FACE TRACKING NEEDS THE CAMERA'S PICTURE", "info");
+                    Vec::new()
+                }
+            }
+            action @ (GestureAction::NextPreset | GestureAction::PreviousPreset) => {
                 let filled: Vec<usize> = (0..presets::SLOTS)
                     .filter(|&i| self.presets.slots[i].is_some())
                     .collect();
@@ -1020,7 +1038,7 @@ impl LiveInput {
                     self.notice("NO PRESETS SAVED", "info");
                     return Vec::new();
                 }
-                let forward = gesture != Gesture::SwipeLeft;
+                let forward = action == GestureAction::NextPreset;
                 let next = match self.preset_cursor {
                     Some(at) if forward => filled.iter().copied().find(|&i| i > at),
                     Some(at) => filled.iter().rev().copied().find(|&i| i < at),

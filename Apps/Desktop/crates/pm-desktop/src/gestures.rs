@@ -1,9 +1,10 @@
-//! Webcam gestures (§1.T): the operator's webcam as tiny frames, read for swipes
-//! (`pm_controller::gesture`) and held hand poses (`pm_controller::hand`), mapped onto the
-//! gimbal by the input thread (`LiveInput::gesture`).
+//! Webcam gestures (§1.T): the operator's webcam read by the MediaPipe hand model
+//! (`pm_controller::handnet`) for sweeps and held poses (`pm_controller::hand`), mapped
+//! onto the gimbal by the input thread through the home screen's gesture map
+//! (`LiveInput::gesture`).
 //!
 //! Capture is an `ffmpeg` child (the same FFmpeg the decoder ships with) at 15 fps,
-//! 160×120 RGB24, as the old viewfinder's `webcam.rs` did: DirectShow on Windows (the
+//! 480×270 RGB24, as the old viewfinder's `webcam.rs` does: DirectShow on Windows (the
 //! first video device that is not software, so this app's own virtual camera is never
 //! read back), V4L2 on Linux, AVFoundation on macOS. `PM_WEBCAM` (or `OPC_WEBCAM`) names a device.
 //! `ffmpeg` is looked for beside the executable, on `PATH`, then in winget's
@@ -20,16 +21,17 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use pm_controller::appsettings;
-use pm_controller::gesture::{self, Gesture, Tracker};
-use pm_controller::hand::{self, Holder, Pose, HEIGHT, WIDTH};
+use pm_controller::hand::{pinch_ratio, pose_of, Holder, Sweep, HOLD, PINCH_OFF};
+use pm_controller::handnet::HandNet;
 use pm_controller::link::log_line;
 use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::input::{post, InputMsg};
 
-const GREY_W: usize = gesture::WIDTH;
-const GREY_H: usize = gesture::HEIGHT;
+/// The size ffmpeg scales the webcam to for the hand model.
+const WIDTH: usize = 480;
+const HEIGHT: usize = 270;
 
 /// Words that mark a software camera, never the operator's webcam. "openpocketcine" is
 /// the name an older install's virtual camera may still carry.
@@ -226,6 +228,17 @@ pub fn set(on: bool) -> GesturesState {
     let Some((args, device)) = input_args(&ffmpeg) else {
         return problem("No webcam found");
     };
+    // The model loads before the camera light comes on, so a failure is said at once.
+    let mut net = match HandNet::new() {
+        Ok(net) => net,
+        Err(error) => {
+            log_line(
+                "gestures",
+                format_args!("the hand model would not load: {error}"),
+            );
+            return problem("The hand-tracking model could not be loaded");
+        }
+    };
     let child = hidden(&mut Command::new(&ffmpeg))
         .args(["-loglevel", "quiet"])
         .args(&args)
@@ -248,31 +261,23 @@ pub fn set(on: bool) -> GesturesState {
     std::thread::Builder::new()
         .name("pm-gestures".to_string())
         .spawn(move || {
-            let mut tracker = Tracker::new(true);
+            let mut sweep = Sweep::new(true);
             let mut holder = Holder::default();
             let started = Instant::now();
             let mut frame = vec![0u8; WIDTH * HEIGHT * 3];
-            let mut grey = vec![0u8; GREY_W * GREY_H];
             while out.read_exact(&mut frame).is_ok() {
                 let now = started.elapsed().as_secs_f64();
-                for y in 0..GREY_H {
-                    for x in 0..GREY_W {
-                        let at = ((y * HEIGHT / GREY_H) * WIDTH + x * WIDTH / GREY_W) * 3;
-                        grey[y * GREY_W + x] = ((u16::from(frame[at])
-                            + u16::from(frame[at + 1])
-                            + u16::from(frame[at + 2]))
-                            / 3) as u8;
-                    }
-                }
-                let swipe = tracker.feed(&grey, now);
+                let hands = net.detect(&frame, WIDTH, HEIGHT);
+                // Sweeps and held poses come from a hand that is not pinching, as the
+                // old viewfinder's webcam reader does.
+                let hand = hands.iter().find(|hand| pinch_ratio(hand) > PINCH_OFF);
+                let swipe = sweep.feed(hand, now);
                 let held = holder
-                    .feed(hand::classify(&frame), now)
-                    .map(|pose| match pose {
-                        Pose::Fist => Gesture::Fist,
-                        Pose::Point => Gesture::Point,
-                        Pose::Two => Gesture::Two,
-                        Pose::Palm => Gesture::Palm,
-                    });
+                    .feed(hand.and_then(pose_of), now, HOLD)
+                    .map(|pose| pose.gesture());
+                if swipe.is_some() || held.is_some() {
+                    sweep.hold_off(now);
+                }
                 for gesture in swipe.into_iter().chain(held) {
                     post(InputMsg::Gesture(gesture));
                 }

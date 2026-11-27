@@ -359,7 +359,7 @@ fn run(
             changed = true;
             crate::input::observe(&event);
             match event {
-                FromCamera::Opened => {
+                FromCamera::Opened(_) => {
                     set_phase(snapshot, "live-start", Some("Waiting for live view".into()))
                 }
                 FromCamera::Picture(bytes) => {

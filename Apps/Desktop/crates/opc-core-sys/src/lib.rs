@@ -1066,3 +1066,18 @@ mod layout {
         assert_eq!(read_text(&field), "Pocket 4 Pro");
     }
 }
+
+unsafe extern "C" {
+    pub fn opc_relay_video_create() -> *mut std::ffi::c_void;
+    pub fn opc_relay_video_destroy(handle: *mut std::ffi::c_void);
+    pub fn opc_relay_video_frame(
+        handle: *mut std::ffi::c_void,
+        input: *const u8,
+        count: usize,
+        recording: u8,
+        keyframe: *mut u8,
+        out: *mut u8,
+        capacity: usize,
+    ) -> i64;
+    pub fn opc_relay_read_only_state(out: *mut u8, capacity: usize) -> i64;
+}

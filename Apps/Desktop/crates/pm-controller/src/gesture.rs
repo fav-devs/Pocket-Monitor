@@ -1,12 +1,12 @@
-//! Hand-wave gestures from a webcam, with no model and no network: frame differencing
-//! finds where things are moving, and a quick, mostly straight sweep of that motion is
-//! a swipe. Frames are small grey pictures; the camera capture lives in the binary.
-//!
-//! This reads big, deliberate hand sweeps held in front of the lens. It does not read
-//! finger poses (palm, fist, point): that needs a landmark model, which is a separate
-//! step.
+//! Hand-wave gestures from frame differencing, with no model: where things are moving,
+//! and a quick, mostly straight sweep of that motion is a swipe. Frames are small grey
+//! pictures. The viewfinder now reads hands with the landmark model in [`crate::handnet`]
+//! and [`crate::hand`]; this reader stays for pictures that model cannot be run on, and
+//! owns the [`Gesture`] names and the actions they map to.
 
 use std::collections::VecDeque;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Frame size the tracker works at.
 pub const WIDTH: usize = 64;
@@ -14,7 +14,10 @@ pub const HEIGHT: usize = 48;
 
 /// What the operator did, as they see it (the picture is mirrored, so a sweep to the
 /// operator's right is [`Gesture::SwipeRight`] here).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The web names each by its file key: `swipe_left`, `palm`, `face_track`, ….
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Gesture {
     SwipeLeft,
     SwipeRight,
@@ -25,6 +28,218 @@ pub enum Gesture {
     Fist,
     Point,
     Two,
+    /// Index and little finger out: the rock sign.
+    Horns,
+    /// Opening and closing a hand quickly, three times over.
+    FaceTrack,
+}
+
+impl Gesture {
+    pub const ALL: [Gesture; 10] = [
+        Gesture::SwipeLeft,
+        Gesture::SwipeRight,
+        Gesture::SwipeUp,
+        Gesture::SwipeDown,
+        Gesture::Palm,
+        Gesture::Fist,
+        Gesture::Point,
+        Gesture::Two,
+        Gesture::Horns,
+        Gesture::FaceTrack,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Gesture::SwipeLeft => "Swipe left",
+            Gesture::SwipeRight => "Swipe right",
+            Gesture::SwipeUp => "Swipe up",
+            Gesture::SwipeDown => "Swipe down",
+            Gesture::Palm => "Open palm",
+            Gesture::Fist => "Fist",
+            Gesture::Point => "One finger",
+            Gesture::Two => "Two fingers (peace sign)",
+            Gesture::Horns => "Rock sign",
+            Gesture::FaceTrack => "Open and close, three times",
+        }
+    }
+
+    /// How to make it.
+    pub fn how(self) -> &'static str {
+        match self {
+            Gesture::SwipeLeft => "Sweep your hand to your left, quickly, in view of the camera",
+            Gesture::SwipeRight => "Sweep your hand to your right, quickly",
+            Gesture::SwipeUp => "Sweep your hand upward",
+            Gesture::SwipeDown => "Sweep your hand downward",
+            Gesture::Palm => "Hold up an open hand, four fingers out, for about a second",
+            Gesture::Fist => "Hold up a closed fist for one second",
+            Gesture::Point => "Hold up one finger for one second",
+            Gesture::Two => "Hold up two fingers for one second",
+            Gesture::Horns => "Index and little finger out, the others folded, for about a second",
+            Gesture::FaceTrack => {
+                "Open your hand and close it to a fist, quickly, three times over"
+            }
+        }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|g| *g == self).unwrap_or(0)
+    }
+
+    /// The name in the settings file and in the web's JSON.
+    pub fn key(self) -> &'static str {
+        match self {
+            Gesture::SwipeLeft => "swipe_left",
+            Gesture::SwipeRight => "swipe_right",
+            Gesture::SwipeUp => "swipe_up",
+            Gesture::SwipeDown => "swipe_down",
+            Gesture::Palm => "palm",
+            Gesture::Fist => "fist",
+            Gesture::Point => "point",
+            Gesture::Two => "two",
+            Gesture::Horns => "horns",
+            Gesture::FaceTrack => "face_track",
+        }
+    }
+}
+
+/// What a gesture can be set to do. The web names each by its file key: `nothing`,
+/// `recenter`, `next_preset`, ….
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GestureAction {
+    Nothing,
+    Recenter,
+    Flip,
+    NextPreset,
+    PreviousPreset,
+    /// Stop a move or recall in flight and let go of tracking.
+    Stop,
+    /// Start or stop recording. Held longer than the others, so it is never an accident.
+    Record,
+    /// Start tracking the face the camera sees, or stop tracking.
+    FaceTrack,
+}
+
+impl GestureAction {
+    pub const ALL: [GestureAction; 8] = [
+        GestureAction::Nothing,
+        GestureAction::Recenter,
+        GestureAction::Flip,
+        GestureAction::NextPreset,
+        GestureAction::PreviousPreset,
+        GestureAction::Stop,
+        GestureAction::Record,
+        GestureAction::FaceTrack,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GestureAction::Nothing => "Do nothing",
+            GestureAction::Recenter => "Recentre the gimbal",
+            GestureAction::Flip => "Flip (selfie)",
+            GestureAction::NextPreset => "Next preset",
+            GestureAction::PreviousPreset => "Previous preset",
+            GestureAction::Stop => "Stop everything",
+            GestureAction::Record => "Start / stop recording (hold 2.5 s)",
+            GestureAction::FaceTrack => "Face tracking on / off",
+        }
+    }
+
+    /// The name in the settings file and in the web's JSON.
+    pub fn key(self) -> &'static str {
+        match self {
+            GestureAction::Nothing => "nothing",
+            GestureAction::Recenter => "recenter",
+            GestureAction::Flip => "flip",
+            GestureAction::NextPreset => "next_preset",
+            GestureAction::PreviousPreset => "previous_preset",
+            GestureAction::Stop => "stop",
+            GestureAction::Record => "record",
+            GestureAction::FaceTrack => "face_track",
+        }
+    }
+}
+
+/// Which action each gesture does.
+///
+/// In JSON it is an object from gesture key to action key, every gesture listed:
+/// `{"swipe_left":"previous_preset","palm":"stop",…}`. Reading one starts from the
+/// defaults, so a gesture the object leaves out keeps its default, and an unknown
+/// gesture or action is ignored, as the file's reader does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GestureMap([GestureAction; 10]);
+
+impl Serialize for GestureMap {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(Gesture::ALL.len()))?;
+        for gesture in Gesture::ALL {
+            map.serialize_entry(gesture.key(), self.get(gesture).key())?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for GestureMap {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let entries = std::collections::BTreeMap::<String, String>::deserialize(deserializer)?;
+        let mut map = Self::default();
+        for (gesture, action) in &entries {
+            map.read_line(&format!("gesture.{gesture}={action}"));
+        }
+        Ok(map)
+    }
+}
+
+impl Default for GestureMap {
+    fn default() -> Self {
+        let mut map = Self([GestureAction::Nothing; 10]);
+        map.set(Gesture::SwipeLeft, GestureAction::PreviousPreset);
+        map.set(Gesture::SwipeRight, GestureAction::NextPreset);
+        // Raising and lowering a hand reads as a vertical sweep, so those do nothing
+        // until the operator chooses otherwise.
+        map.set(Gesture::Palm, GestureAction::Stop);
+        map.set(Gesture::Fist, GestureAction::Recenter);
+        map.set(Gesture::Point, GestureAction::NextPreset);
+        // Recording is the one to never trigger by accident: a peace sign, held.
+        map.set(Gesture::Two, GestureAction::Record);
+        map.set(Gesture::Horns, GestureAction::Flip);
+        map.set(Gesture::FaceTrack, GestureAction::FaceTrack);
+        map
+    }
+}
+
+impl GestureMap {
+    pub fn get(&self, gesture: Gesture) -> GestureAction {
+        self.0[gesture.index()]
+    }
+
+    pub fn set(&mut self, gesture: Gesture, action: GestureAction) {
+        self.0[gesture.index()] = action;
+    }
+
+    /// One `gesture.NAME=action` line each.
+    pub fn to_lines(&self) -> String {
+        Gesture::ALL
+            .iter()
+            .map(|g| format!("gesture.{}={}\n", g.key(), self.get(*g).key()))
+            .collect()
+    }
+
+    /// Reads one line of [`Self::to_lines`]; anything else is ignored.
+    pub fn read_line(&mut self, line: &str) {
+        let Some((key, value)) = line
+            .strip_prefix("gesture.")
+            .and_then(|rest| rest.split_once('='))
+        else {
+            return;
+        };
+        let gesture = Gesture::ALL.iter().find(|g| g.key() == key);
+        let action = GestureAction::ALL.iter().find(|a| a.key() == value);
+        if let (Some(gesture), Some(action)) = (gesture, action) {
+            self.set(*gesture, *action);
+        }
+    }
 }
 
 /// Per-pixel brightness change that counts as motion.
@@ -168,6 +383,59 @@ mod tests {
             now += 0.05;
         }
         seen
+    }
+
+    #[test]
+    fn the_map_survives_its_lines_and_ignores_junk() {
+        let mut map = GestureMap::default();
+        map.set(Gesture::Fist, GestureAction::Record);
+        map.set(Gesture::SwipeUp, GestureAction::Nothing);
+        let mut read = GestureMap::default();
+        for line in map.to_lines().lines() {
+            read.read_line(line);
+        }
+        read.read_line("gesture.palm=launch_missiles");
+        read.read_line("gesture.unknown=flip");
+        read.read_line("nonsense");
+        assert_eq!(read, map);
+        assert_eq!(
+            GestureMap::default().get(Gesture::Palm),
+            GestureAction::Stop
+        );
+    }
+
+    #[test]
+    fn the_web_reads_and_writes_the_map_as_gesture_to_action_names() {
+        let mut map = GestureMap::default();
+        map.set(Gesture::Fist, GestureAction::Record);
+        let json = serde_json::to_value(map).unwrap();
+        let object = json.as_object().expect("an object");
+        assert_eq!(object.len(), Gesture::ALL.len(), "every gesture is listed");
+        assert_eq!(json["fist"], "record");
+        assert_eq!(json["swipe_left"], "previous_preset");
+        assert_eq!(json["face_track"], "face_track");
+        assert_eq!(serde_json::from_value::<GestureMap>(json).unwrap(), map);
+
+        // A partial object keeps the defaults; strangers are ignored.
+        let read: GestureMap =
+            serde_json::from_str(r#"{"palm":"flip","horns":"launch_missiles","wave":"stop"}"#)
+                .unwrap();
+        let mut want = GestureMap::default();
+        want.set(Gesture::Palm, GestureAction::Flip);
+        assert_eq!(read, want);
+        assert!(serde_json::from_str::<GestureMap>("[1,2]").is_err());
+
+        // The enums on their own carry the same names as the file.
+        for gesture in Gesture::ALL {
+            assert_eq!(serde_json::to_value(gesture).unwrap(), gesture.key());
+            assert_eq!(
+                serde_json::from_value::<Gesture>(gesture.key().into()).unwrap(),
+                gesture
+            );
+        }
+        for action in GestureAction::ALL {
+            assert_eq!(serde_json::to_value(action).unwrap(), action.key());
+        }
     }
 
     #[test]

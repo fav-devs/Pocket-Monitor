@@ -68,6 +68,55 @@ impl SavedStation {
     }
 }
 
+/// The operator's home network as kept for next time: the name, and the password only
+/// as the operating system sealed it for this user (never plain text on disk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeNetwork {
+    pub ssid: String,
+    /// The sealed password; empty when this platform cannot seal one.
+    pub sealed_password: Vec<u8>,
+}
+
+/// The format tag, as [`HEADER`].
+const HOME_HEADER: &str = "openpocketcine-desktop-homewifi-v1";
+
+impl HomeNetwork {
+    pub fn to_text(&self) -> String {
+        let sealed: String = self
+            .sealed_password
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        format!("{HOME_HEADER}\nssid={}\nsealed={sealed}\n", self.ssid)
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        if lines.next()? != HOME_HEADER {
+            return None;
+        }
+        let mut ssid = String::new();
+        let mut sealed = Vec::new();
+        for line in lines {
+            if let Some(name) = line.strip_prefix("ssid=") {
+                ssid = name.to_string();
+            } else if let Some(hex) = line.strip_prefix("sealed=") {
+                if hex.len() % 2 != 0 || !hex.is_ascii() {
+                    return None;
+                }
+                sealed = (0..hex.len() / 2)
+                    .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16))
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+            }
+        }
+        (!ssid.is_empty()).then_some(Self {
+            ssid,
+            sealed_password: sealed,
+        })
+    }
+}
+
 /// Which bodies want video mode selected before they join (Pocket 4 family).
 pub fn wants_video_mode(model_id: Option<i32>) -> bool {
     matches!(model_id, Some(0x0021 | 0x0022))
@@ -86,6 +135,8 @@ pub fn networks_from_ipconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
     let mut address: Option<Ipv4Addr> = None;
     let mut mask: Option<Ipv4Addr> = None;
     let mut gateway = false;
+    // The gateways are listed over several lines, the IPv6 one first on many machines.
+    let mut in_gateways = false;
     let value = |line: &str| -> Option<String> {
         line.split_once(':')
             .map(|(_, v)| v.trim().to_string())
@@ -101,15 +152,25 @@ pub fn networks_from_ipconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
             address = None;
             mask = None;
             gateway = false;
+            in_gateways = false;
             continue;
         }
+        // Another gateway for the adapter above: an address with no label in front of it.
+        if in_gateways && !trimmed.is_empty() && !trimmed.contains(" : ") {
+            if trimmed.parse::<Ipv4Addr>().is_ok() {
+                gateway = true;
+            }
+            continue;
+        }
+        in_gateways = false;
         if trimmed.starts_with("IPv4 Address") {
             address =
                 value(trimmed).and_then(|v| v.trim_end_matches("(Preferred)").trim().parse().ok());
         } else if trimmed.starts_with("Subnet Mask") {
             mask = value(trimmed).and_then(|v| v.parse().ok());
         } else if trimmed.starts_with("Default Gateway") {
-            gateway = value(trimmed).is_some_and(|v| v.parse::<Ipv4Addr>().is_ok());
+            in_gateways = true;
+            gateway |= value(trimmed).is_some_and(|v| v.parse::<Ipv4Addr>().is_ok());
         }
     }
     if let (Some(a), Some(m), true) = (address, mask, gateway) {
@@ -144,6 +205,71 @@ pub fn networks_from_ip_addr(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
             Some((address, mask))
         })
         .collect()
+}
+
+/// Active broadcast IPv4 interfaces in macOS `ifconfig -a` output.
+/// macOS prints masks in hexadecimal; loopback and point-to-point VPNs are
+/// excluded so camera discovery searches the local LAN rather than tunnels.
+pub fn networks_from_ifconfig(text: &str) -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    let mut networks = Vec::new();
+    let mut usable = false;
+    for line in text.lines() {
+        if !line.starts_with(char::is_whitespace) && line.contains(": flags=") {
+            let flags = line
+                .split_once('<')
+                .and_then(|(_, rest)| rest.split_once('>'));
+            usable = flags.is_some_and(|(flags, _)| {
+                let flags: Vec<_> = flags.split(',').collect();
+                flags.contains(&"UP")
+                    && flags.contains(&"RUNNING")
+                    && flags.contains(&"BROADCAST")
+                    && !flags.contains(&"LOOPBACK")
+                    && !flags.contains(&"POINTOPOINT")
+            });
+            continue;
+        }
+        if !usable {
+            continue;
+        }
+        let words: Vec<_> = line.split_whitespace().collect();
+        if words.first() != Some(&"inet") {
+            continue;
+        }
+        let Some(address) = words.get(1).and_then(|s| s.parse::<Ipv4Addr>().ok()) else {
+            continue;
+        };
+        if address.is_unspecified()
+            || address.is_loopback()
+            || address.is_link_local()
+            || address.is_multicast()
+            || address.is_broadcast()
+        {
+            continue;
+        }
+        let Some(mask_text) = words
+            .windows(2)
+            .find(|pair| pair[0] == "netmask")
+            .map(|pair| pair[1])
+        else {
+            continue;
+        };
+        let mask = if let Some(hex) = mask_text.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16).ok().map(Ipv4Addr::from)
+        } else {
+            mask_text.parse::<Ipv4Addr>().ok()
+        };
+        let Some(mask) = mask else {
+            continue;
+        };
+        let host_bits = !u32::from(mask);
+        if u32::from(mask) == 0 || host_bits & host_bits.wrapping_add(1) != 0 {
+            continue;
+        }
+        if !networks.contains(&(address, mask)) {
+            networks.push((address, mask));
+        }
+    }
+    networks
 }
 
 /// The SSID in `netsh wlan show interfaces` output, if the machine is on Wi-Fi.
@@ -336,6 +462,125 @@ pub fn forget(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
 }
 
+// ---- The home Wi-Fi the operator asked to keep ----------------------------------------
+
+/// `desktop-homewifi-v1.txt`, beside the station file: the home network's name and its
+/// password sealed to this user. The password itself is never written in the clear.
+pub fn home_path() -> PathBuf {
+    crate::platform::data_dir().join("desktop-homewifi-v1.txt")
+}
+
+/// The network the operator asked to keep, with its password when it could be read back
+/// (an empty password otherwise: other platforms keep the name only, and a file sealed
+/// for another Windows user does not open).
+pub fn load_home() -> Option<(String, String)> {
+    let home = HomeNetwork::parse(&std::fs::read_to_string(home_path()).ok()?)?;
+    let password = if home.sealed_password.is_empty() {
+        String::new()
+    } else {
+        unseal_password(&home.sealed_password)
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
+    };
+    Some((home.ssid, password))
+}
+
+/// Keeps the network for next time. Where the password cannot be sealed only the name is
+/// kept, and the operator is asked for the password again.
+pub fn save_home(ssid: &str, password: &str) -> Result<(), String> {
+    let home = HomeNetwork {
+        ssid: ssid.to_string(),
+        sealed_password: if password.is_empty() {
+            Vec::new()
+        } else {
+            seal_password(password.as_bytes()).unwrap_or_default()
+        },
+    };
+    write_creating(&home_path(), &home.to_text())
+}
+
+pub fn forget_home() {
+    forget(&home_path());
+}
+
+/// Seals `plain` to this Windows user with DPAPI (`CryptProtectData`).
+#[cfg(windows)]
+pub fn seal_password(plain: &[u8]) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: u32::try_from(plain.len()).ok()?,
+        pbData: plain.as_ptr().cast_mut(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    // SAFETY: `input` points at `plain` for the call; on success the system allocates
+    // `output`, which is copied out and then freed.
+    unsafe {
+        let ok = CryptProtectData(
+            &input,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            &mut output,
+        );
+        if ok == 0 || output.pbData.is_null() {
+            return None;
+        }
+        let sealed = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        LocalFree(output.pbData.cast());
+        Some(sealed)
+    }
+}
+
+/// Opens what [`seal_password`] sealed (`CryptUnprotectData`).
+#[cfg(windows)]
+pub fn unseal_password(sealed: &[u8]) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: u32::try_from(sealed.len()).ok()?,
+        pbData: sealed.as_ptr().cast_mut(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    // SAFETY: as in `seal_password`.
+    unsafe {
+        let ok = CryptUnprotectData(
+            &input,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            &mut output,
+        );
+        if ok == 0 || output.pbData.is_null() {
+            return None;
+        }
+        let plain = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        LocalFree(output.pbData.cast());
+        Some(plain)
+    }
+}
+
+// Other platforms keep the name only; the password is asked for each time.
+#[cfg(not(windows))]
+pub fn seal_password(_plain: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn unseal_password(_sealed: &[u8]) -> Option<Vec<u8>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +609,35 @@ mod tests {
             "bad hex is not an identity"
         );
         assert_eq!(SavedStation::parse(&format!("{HEADER}\nssid=Home\n")), None);
+    }
+
+    #[test]
+    fn a_home_network_keeps_its_name_and_only_a_sealed_password() {
+        let home = HomeNetwork {
+            ssid: "Home Net".into(),
+            sealed_password: vec![1, 2, 0xab],
+        };
+        let text = home.to_text();
+        assert!(!text.contains("hunter2"));
+        assert_eq!(HomeNetwork::parse(&text), Some(home));
+        assert_eq!(HomeNetwork::parse("nope\nssid=x\n"), None);
+        assert_eq!(HomeNetwork::parse(&format!("{HOME_HEADER}\nssid=\n")), None);
+    }
+
+    #[test]
+    fn a_password_is_sealed_only_where_the_system_can_seal_it() {
+        #[cfg(windows)]
+        {
+            let sealed = seal_password(b"hunter2").expect("DPAPI seals for this user");
+            assert!(!sealed.windows(7).any(|w| w == b"hunter2"));
+            assert_eq!(unseal_password(&sealed).as_deref(), Some(&b"hunter2"[..]));
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(seal_password(b"hunter2"), None);
+            assert_eq!(unseal_password(&[1, 2, 3]), None);
+        }
+        assert!(home_path().ends_with("desktop-homewifi-v1.txt"));
     }
 
     #[test]
@@ -410,6 +684,28 @@ Ethernet adapter vEthernet (WSL):
     }
 
     #[test]
+    fn an_ipv6_gateway_listed_first_does_not_hide_the_ipv4_one() {
+        let text = "Wireless LAN adapter Wi-Fi:
+
+   IPv4 Address. . . . . . . . . . . : 10.0.0.205
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : fe80::e2db:d1ff:fef8:15ed%22
+                                       10.0.0.1
+
+Ethernet adapter Bluetooth Network Connection:
+
+   Media State . . . . . . . . . . . : Media disconnected
+";
+        assert_eq!(
+            networks_from_ipconfig(text),
+            [(
+                Ipv4Addr::new(10, 0, 0, 205),
+                Ipv4Addr::new(255, 255, 255, 0)
+            )]
+        );
+    }
+
+    #[test]
     fn ip_addr_yields_every_interface_but_loopback() {
         let text = "\
 1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever preferred_lft forever
@@ -419,6 +715,50 @@ Ethernet adapter vEthernet (WSL):
             networks_from_ip_addr(text),
             [(Ipv4Addr::new(10, 0, 0, 7), Ipv4Addr::new(255, 255, 252, 0))]
         );
+    }
+
+    #[test]
+    fn macos_ifconfig_reads_active_lans_and_skips_loopback_vpn_and_down_interfaces() {
+        let text = "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+    inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    inet6 fe80::1%en0 prefixlen 64
+    inet 10.0.0.58 netmask 0xffffff00 broadcast 10.0.0.255
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
+    inet 100.64.0.2 --> 100.64.0.2 netmask 0xffffffff
+en1: flags=8862<BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    inet 192.168.1.3 netmask 0xffffff00 broadcast 192.168.1.255
+";
+        assert_eq!(
+            networks_from_ifconfig(text),
+            [(Ipv4Addr::new(10, 0, 0, 58), Ipv4Addr::new(255, 255, 255, 0))]
+        );
+    }
+
+    #[test]
+    fn macos_ifconfig_keeps_alias_networks_and_rejects_malformed_and_unusable_addresses() {
+        let text = "en0: flags=8863<UP,BROADCAST,RUNNING,MULTICAST> mtu 1500
+    inet 10.1.0.7 netmask 0xfffffc00 broadcast 10.1.3.255
+    inet 192.168.50.7 netmask 255.255.255.0
+    inet 192.168.50.7 netmask 0xffffff00
+    inet 10.2.0.7 netmask 0xff00ff00
+    inet 10.3.0.7 netmask 0xnothex
+    inet 10.4.0.7
+    inet 169.254.10.7 netmask 0xffff0000
+    inet 0.0.0.0 netmask 0xffffff00
+    inet 224.0.0.1 netmask 0xffffff00
+";
+        assert_eq!(
+            networks_from_ifconfig(text),
+            [
+                (Ipv4Addr::new(10, 1, 0, 7), Ipv4Addr::new(255, 255, 252, 0)),
+                (
+                    Ipv4Addr::new(192, 168, 50, 7),
+                    Ipv4Addr::new(255, 255, 255, 0)
+                ),
+            ]
+        );
+        assert!(networks_from_ifconfig("ifconfig failed").is_empty());
     }
 
     #[test]

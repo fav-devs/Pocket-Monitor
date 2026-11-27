@@ -17,22 +17,25 @@ use opc_camera::{
     lan, pair_approval_ack, pair_set_pin, BleTransport, Command, DumlFrame, NotificationAssembler,
 };
 use opc_monitor::homewifi::{
-    allows_missing_role_query, networks_from_ip_addr, networks_from_ipconfig, ssid_from_netsh,
-    wants_video_mode, SavedStation,
+    allows_missing_role_query, networks_from_ip_addr, networks_from_ipconfig, wants_video_mode,
+    SavedStation,
 };
 
 fn log(message: &str) {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("opc-monitor.log"))
-            {
-                let _ = writeln!(file, "station: {message}");
-            }
+    if let Some(path) = opc_monitor::logfile::path() {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "station: {message}");
         }
     }
+}
+
+/// A line in the log for the connect screen's own decisions.
+pub fn note(message: &str) {
+    log(message);
 }
 
 // ---- The file ---------------------------------------------------------------
@@ -64,6 +67,23 @@ pub fn forget() {
     }
 }
 
+// ---- The home Wi-Fi the operator asked to keep ------------------------------
+//
+// The file and the DPAPI sealing are `pm-controller`'s, shared with the Tauri app.
+
+/// The network the operator asked to keep, with its password when it could be read back.
+pub fn home_load() -> Option<(String, String)> {
+    pm_controller::homewifi::load_home()
+}
+
+pub fn home_save(ssid: &str, password: &str) -> Result<(), String> {
+    pm_controller::homewifi::save_home(ssid, password)
+}
+
+pub fn home_forget() {
+    pm_controller::homewifi::forget_home();
+}
+
 // ---- This machine's networks ------------------------------------------------
 
 #[cfg(target_os = "windows")]
@@ -87,6 +107,18 @@ pub fn local_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
             .output()
             .map(|output| networks_from_ipconfig(&String::from_utf8_lossy(&output.stdout)))
             .unwrap_or_default()
+    } else if cfg!(target_os = "macos") {
+        tool("/sbin/ifconfig")
+            .arg("-a")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                opc_monitor::homewifi::networks_from_ifconfig(&String::from_utf8_lossy(
+                    &output.stdout,
+                ))
+            })
+            .unwrap_or_default()
     } else {
         tool("ip")
             .args(["-o", "-4", "addr"])
@@ -97,13 +129,22 @@ pub fn local_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
 }
 
 /// The Wi-Fi this machine is on, to offer as the network the camera should join.
+#[cfg(target_os = "macos")]
+pub fn current_ssid() -> Option<String> {
+    crate::macwifi::current_ssid()
+}
+
+/// The Wi-Fi this machine is on, to offer as the network the camera should join.
+#[cfg(not(target_os = "macos"))]
 pub fn current_ssid() -> Option<String> {
     if cfg!(target_os = "windows") {
         tool("netsh")
             .args(["wlan", "show", "interfaces"])
             .output()
             .ok()
-            .and_then(|output| ssid_from_netsh(&String::from_utf8_lossy(&output.stdout)))
+            .and_then(|output| {
+                opc_monitor::homewifi::ssid_from_netsh(&String::from_utf8_lossy(&output.stdout))
+            })
     } else {
         tool("iwgetid")
             .arg("-r")
@@ -121,12 +162,37 @@ const PROBE_PARALLEL: usize = 32;
 const PROBE_MOST: usize = 8;
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(6);
 
+/// How long the search keeps trying: a camera that has just joined needs a moment to be
+/// given an address, and its datalink a moment more to start.
+const SEARCH_FOR: Duration = Duration::from_secs(45);
+
 /// Where the camera with this identity answers: its last address first, then every
-/// host on this machine's networks that has the poke port open.
+/// host on this machine's networks that has the poke port open. It keeps looking for
+/// [`SEARCH_FOR`]. If no host reports exactly this identity but exactly one camera
+/// opens a session, that is the one: the Wi-Fi name it reports can change once it is
+/// on the operator's network.
 pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr> {
+    let started = Instant::now();
+    let mut round = 0;
+    loop {
+        round += 1;
+        if let Some(found) = search_once(identity, last, round) {
+            return Some(found);
+        }
+        if started.elapsed() >= SEARCH_FOR {
+            log("gave up looking for the camera");
+            return None;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn search_once(identity: &[u8], last: Option<Ipv4Addr>, round: u32) -> Option<SocketAddr> {
     if let Some(address) = last {
         let candidate = SocketAddr::from((address, lan::DATALINK_PORT));
-        log(&format!("trying the last address {candidate}"));
+        log(&format!(
+            "round {round}: trying the last address {candidate}"
+        ));
         if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
             return Some(candidate);
         }
@@ -135,6 +201,8 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
     if networks.is_empty() {
         log("no IPv4 network to search");
     }
+    // Cameras that opened a session but reported a different name.
+    let mut others = Vec::new();
     for (address, mask) in networks {
         let Some(hosts) = lan::subnet_hosts(address, mask) else {
             log(&format!(
@@ -142,7 +210,10 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
             ));
             continue;
         };
-        log(&format!("searching {} hosts around {address}", hosts.len()));
+        log(&format!(
+            "round {round}: searching {} hosts around {address}",
+            hosts.len()
+        ));
         let hits = lan::probe_hosts(
             &hosts,
             lan::POKE_PORT,
@@ -152,14 +223,28 @@ pub fn find_camera(identity: &[u8], last: Option<Ipv4Addr>) -> Option<SocketAddr
         );
         for hit in hits {
             let candidate = SocketAddr::from((hit, lan::DATALINK_PORT));
-            if lan::identity_matches(candidate, identity, VERIFY_TIMEOUT) {
-                log(&format!("camera found at {candidate}"));
-                return Some(candidate);
+            match lan::read_identity(candidate, VERIFY_TIMEOUT) {
+                Some(reported) if reported == identity => {
+                    log(&format!("camera found at {candidate}"));
+                    return Some(candidate);
+                }
+                Some(reported) => {
+                    log(&format!(
+                        "{candidate} is a camera but reports {} bytes, not the {} expected",
+                        reported.len(),
+                        identity.len()
+                    ));
+                    others.push(candidate);
+                }
+                None => log(&format!(
+                    "{candidate} answers the poke but opened no session"
+                )),
             }
-            log(&format!(
-                "{candidate} answers the poke but is not this camera"
-            ));
         }
+    }
+    if let [only] = others.as_slice() {
+        log(&format!("taking {only}: the one camera on the network"));
+        return Some(*only);
     }
     None
 }

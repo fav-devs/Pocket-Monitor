@@ -9,8 +9,10 @@ layout(push_constant) uniform PC {
     float uvMode;
 } pc;
 
-// Catmull-Rom through nine bilinear taps. Bilinear alone turns a 720p feed into soft
-// mush at 1080p and beyond; this keeps edges crisp without the ringing of Lanczos.
+// Catmull-Rom through five bilinear taps (the corner taps carry almost no weight and
+// are dropped). Bilinear alone turns a 720p feed into soft mush at 1080p and beyond;
+// this keeps edges crisp without the ringing of Lanczos. Five fetches rather than
+// nine matters at fullscreen on an integrated GPU, where every output pixel pays.
 vec4 catmullRom(vec2 uv) {
     vec2 size = vec2(textureSize(uTex, 0));
     vec2 position = uv * size;
@@ -24,17 +26,18 @@ vec4 catmullRom(vec2 uv) {
     vec2 t0 = (centre - 1.0) / size;
     vec2 t3 = (centre + 2.0) / size;
     vec2 t12 = (centre + w2 / w12) / size;
+    float k0 = w12.x * w0.y;
+    float k1 = w0.x * w12.y;
+    float k2 = w12.x * w12.y;
+    float k3 = w3.x * w12.y;
+    float k4 = w12.x * w3.y;
     vec4 color =
-        texture(uTex, vec2(t0.x, t0.y)) * (w0.x * w0.y) +
-        texture(uTex, vec2(t12.x, t0.y)) * (w12.x * w0.y) +
-        texture(uTex, vec2(t3.x, t0.y)) * (w3.x * w0.y) +
-        texture(uTex, vec2(t0.x, t12.y)) * (w0.x * w12.y) +
-        texture(uTex, vec2(t12.x, t12.y)) * (w12.x * w12.y) +
-        texture(uTex, vec2(t3.x, t12.y)) * (w3.x * w12.y) +
-        texture(uTex, vec2(t0.x, t3.y)) * (w0.x * w3.y) +
-        texture(uTex, vec2(t12.x, t3.y)) * (w12.x * w3.y) +
-        texture(uTex, vec2(t3.x, t3.y)) * (w3.x * w3.y);
-    return clamp(color, 0.0, 1.0);
+        texture(uTex, vec2(t12.x, t0.y)) * k0 +
+        texture(uTex, vec2(t0.x, t12.y)) * k1 +
+        texture(uTex, vec2(t12.x, t12.y)) * k2 +
+        texture(uTex, vec2(t3.x, t12.y)) * k3 +
+        texture(uTex, vec2(t12.x, t3.y)) * k4;
+    return clamp(color / (k0 + k1 + k2 + k3 + k4), 0.0, 1.0);
 }
 
 void main() {

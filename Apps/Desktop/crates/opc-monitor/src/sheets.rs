@@ -70,6 +70,8 @@ pub struct SetupInfo {
     pub chrome_visible: bool,
     /// What the virtual camera is doing: "Off", where it writes, or why it cannot.
     pub vcam: String,
+    pub sharing: String,
+    pub sharing_active: bool,
     /// The platform camera component: installed, not, or being worked on.
     pub component: opc_vcam::ComponentReport,
     /// The phone whose shared feed this is, when the source is a phone.
@@ -109,6 +111,14 @@ pub enum Pick {
     MoveResume,
     /// Gimbal presets: keep the live pose in a slot, fly to it, empty it, and how long a recall takes.
     PresetSave(usize),
+    /// Gesture control: off, or reading the camera's picture or the PC's webcam.
+    Gestures(Option<crate::appsettings::GestureSource>),
+    /// Pinch-and-drag hand control of the gimbal and zoom, on or off.
+    HandControl(bool),
+    /// The stick is the right hand (true) or the left (false).
+    StickHand(bool),
+    /// Track a face by itself, on or off.
+    AutoFace(bool),
     PresetGo(usize),
     PresetClear(usize),
     PresetSeconds(f64),
@@ -156,6 +166,7 @@ pub enum Pick {
     ShowPart(Part, bool),
     ClearCache,
     Diagnostics,
+    SharePreview(bool),
     /// The virtual camera: 0 off, 1 device, 2 stream.
     Vcam(u8),
     /// The camera carries the clean picture (true) or the assists too.
@@ -186,6 +197,10 @@ pub struct Context<'a> {
     pub lut_choice: &'a LutChoice,
     pub program: &'a Program,
     pub presets: &'a crate::presets::Presets,
+    pub gestures: Option<crate::appsettings::GestureSource>,
+    pub hand_control: bool,
+    pub stick_is_right: bool,
+    pub auto_face: bool,
     /// The body's live pose, if it has reported one.
     pub live_pose: Option<Waypoint>,
     pub move_running: bool,
@@ -698,6 +713,36 @@ fn moves(context: Context) -> Built {
             .option(label, slot.is_some(), Pick::Nothing);
         rows.push(row);
     }
+    use crate::appsettings::GestureSource;
+    rows.push(
+        RowBuilder::new("Gestures (key J)")
+            .option("Off", context.gestures.is_none(), Pick::Gestures(None))
+            .option(
+                "Camera picture",
+                context.gestures == Some(GestureSource::CameraFeed),
+                Pick::Gestures(Some(GestureSource::CameraFeed)),
+            )
+            .option(
+                "PC webcam",
+                context.gestures == Some(GestureSource::Webcam),
+                Pick::Gestures(Some(GestureSource::Webcam)),
+            ),
+    );
+    rows.push(
+        RowBuilder::new("Hand control (pinch and drag)")
+            .option("Off", !context.hand_control, Pick::HandControl(false))
+            .option("On", context.hand_control, Pick::HandControl(true)),
+    );
+    rows.push(
+        RowBuilder::new("Stick hand (the other zooms)")
+            .option("Right", context.stick_is_right, Pick::StickHand(true))
+            .option("Left", !context.stick_is_right, Pick::StickHand(false)),
+    );
+    rows.push(
+        RowBuilder::new("Face tracking by itself")
+            .option("Off", !context.auto_face, Pick::AutoFace(false))
+            .option("On", context.auto_face, Pick::AutoFace(true)),
+    );
     assemble("MOVES", &[], 0, rows)
 }
 
@@ -1253,6 +1298,21 @@ fn system_rows(context: Context) -> Vec<RowBuilder> {
         readout("App version", env!("CARGO_PKG_VERSION")),
         readout("Protocol", "OpenPocketViewCore through the desktop facade"),
         readout("Renderer", &context.setup.renderer),
+        RowBuilder::new("Share this feed")
+            .option(
+                "Off",
+                !context.setup.sharing_active,
+                Pick::SharePreview(false),
+            )
+            .option("On", context.setup.sharing_active, Pick::SharePreview(true)),
+        readout(
+            "Preview sharing",
+            if context.setup.sharing.is_empty() {
+                "Off"
+            } else {
+                &context.setup.sharing
+            },
+        ),
         RowBuilder::new("Diagnostics").option("Write a report", false, Pick::Diagnostics),
         RowBuilder::placeholder("Source", "github.com/fav-devs/Pocket-Monitor"),
         RowBuilder::placeholder("Licenses", "Apache 2.0 · THIRD-PARTY-NOTICES.md"),
@@ -1345,6 +1405,10 @@ mod tests {
             lut_choice: &CHOICE,
             program: PROGRAM.get_or_init(Program::default),
             presets: PRESETS.get_or_init(crate::presets::Presets::default),
+            gestures: None,
+            hand_control: true,
+            stick_is_right: true,
+            auto_face: false,
             live_pose: Some(Waypoint {
                 yaw: 12.0,
                 pitch: -3.0,
@@ -1439,7 +1503,8 @@ mod tests {
         );
         assert_eq!(output.pick(7, 0), Some(&Pick::OpenStream));
         let system = build(SheetKind::Settings, TAB_SYSTEM, context(&status));
-        assert_eq!(system.pick(3, 0), Some(&Pick::Diagnostics));
+        assert_eq!(system.pick(3, 1), Some(&Pick::SharePreview(true)));
+        assert_eq!(system.pick(5, 0), Some(&Pick::Diagnostics));
     }
 
     static PROGRAM: std::sync::OnceLock<Program> = std::sync::OnceLock::new();
@@ -1512,7 +1577,11 @@ mod tests {
                 "Preset 3 (key 3)",
                 "Preset 4 (key 4)",
                 "Preset 5 (key 5)",
-                "Preset 6 (key 6)"
+                "Preset 6 (key 6)",
+                "Gestures (key J)",
+                "Hand control (pinch and drag)",
+                "Stick hand (the other zooms)",
+                "Face tracking by itself"
             ]
         );
         assert_eq!(built.pick(9, 0), Some(&Pick::PresetSave(0)));

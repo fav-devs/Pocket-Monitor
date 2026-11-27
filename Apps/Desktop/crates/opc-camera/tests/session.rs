@@ -325,8 +325,9 @@ fn an_operator_command_reaches_the_camera() {
 
 #[test]
 fn a_camera_that_never_answers_is_reported_rather_than_hung() {
-    // Nothing is listening on this port.
-    let dead = SocketAddr::from((Ipv4Addr::LOCALHOST, 1));
+    // Keep the port open without replying so the OS does not reject the datagram.
+    let silent_camera = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("a silent camera socket");
+    let dead = silent_camera.local_addr().expect("the camera address");
     let mut session = CameraSession::connect_to(dead, 0x1234, 0x0100).expect("a session");
 
     let events = run_until(&mut session, Duration::from_secs(15), |events| {
@@ -498,9 +499,16 @@ fn opening_a_session_subscribes_for_the_pushes_the_hud_needs() {
 
     // `0x00/0x99` is the subscribe opcode; the camera only sends its available-value
     // lists to a subscriber.
-    let commands = camera.seen().commands;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let commands = loop {
+        let commands = camera.seen().commands;
+        if commands.contains(&(0x00, 0x99)) || Instant::now() >= deadline {
+            break commands;
+        }
+        session.poll().expect("polling should not fail");
+    };
     assert!(
-        commands.iter().any(|(set, id)| *set == 0x00 && *id == 0x99),
+        commands.contains(&(0x00, 0x99)),
         "a session should subscribe on open, saw {commands:?}"
     );
 }

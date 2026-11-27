@@ -18,5 +18,14 @@ opc-vcam = { path = "../opc-vcam" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Hand tracking models run through ONNX Runtime: on the GPU through DirectML on Windows.
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.10", features = ["directml"] }
+# Seals the saved home Wi-Fi password to this Windows user (DPAPI).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[target.'cfg(not(windows))'.dependencies]
+ort = "=2.0.0-rc.10"
+
 [lints]
 workspace = true

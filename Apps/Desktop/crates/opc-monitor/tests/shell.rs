@@ -2015,18 +2015,19 @@ fn presets_are_saved_from_the_live_pose_and_recalled_by_key_or_swipe() {
             duration_tenths: 40
         }]
     );
-    // A swipe right steps on to slot 2; up recentres; down flips.
+    // A swipe right steps on to slot 2; a fist recentres; the rock sign flips; raising or
+    // lowering a hand does nothing.
     let next = sent(&shell.gesture(Gesture::SwipeRight, 5.0));
     assert!(matches!(
         next.as_slice(),
         [Command::GimbalTimedTarget { yaw_tenth: 600, .. }]
     ));
     assert_eq!(
-        sent(&shell.gesture(Gesture::SwipeUp, 9.0)),
+        sent(&shell.gesture(Gesture::Fist, 9.0)),
         [Command::GimbalRecenter]
     );
     assert_eq!(
-        sent(&shell.gesture(Gesture::SwipeDown, 13.0)),
+        sent(&shell.gesture(Gesture::Horns, 13.0)),
         [Command::GimbalFlip]
     );
 }
@@ -2079,4 +2080,118 @@ fn a_far_preset_goes_in_two_halves_and_a_palm_stops_it() {
     assert!(!sent(&shell.tick(14.0))
         .iter()
         .any(|c| matches!(c, Command::GimbalTimedTarget { .. })));
+}
+
+#[test]
+fn j_turns_gestures_on_and_off_in_the_viewfinder() {
+    use opc_monitor::appsettings::GestureSource;
+    let mut shell = framed();
+    assert_eq!(shell.gestures(), None);
+    assert!(shell.press(Key::Char('j'), 0.0).is_empty());
+    assert_eq!(shell.gestures(), Some(GestureSource::CameraFeed));
+    assert!(shell.press(Key::Char('J'), 1.0).is_empty());
+    assert_eq!(shell.gestures(), None);
+}
+
+#[test]
+fn y_shows_the_hand_view_in_the_viewfinder() {
+    let mut shell = framed();
+    assert!(!shell.hand_overlay());
+    assert!(shell.press(Key::Char('y'), 0.0).is_empty());
+    assert!(shell.hand_overlay());
+    assert!(shell.press(Key::Char('Y'), 1.0).is_empty());
+    assert!(!shell.hand_overlay());
+}
+
+#[test]
+fn raising_or_lowering_a_hand_never_flips_the_camera() {
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    use opc_monitor::gesture::Gesture;
+    for gesture in [Gesture::SwipeUp, Gesture::SwipeDown] {
+        assert!(sent(&shell.gesture(gesture, 1.0)).is_empty());
+    }
+}
+
+#[test]
+fn recording_by_gesture_takes_a_long_hold_and_the_rest_a_short_one() {
+    use opc_monitor::gesture::Gesture;
+    let mut shell = framed();
+    assert!(
+        shell.gesture_hold_seconds(Gesture::Two) >= 2.0,
+        "the peace sign records"
+    );
+    assert!(shell.gesture_hold_seconds(Gesture::Fist) < 1.5);
+    shell.set_phase(opc_ui::Phase::Live);
+    assert_eq!(
+        sent(&shell.gesture(Gesture::Two, 1.0)),
+        [Command::RecordStart]
+    );
+    // While the hold is part-way, the top bar says what it is about to do.
+    shell.gesture_progress(Gesture::Two, 0.5);
+    assert!(
+        shell.notice(1.1).contains("RECORD"),
+        "{}",
+        shell.notice(1.1)
+    );
+    shell.gesture_progress(Gesture::Fist, 0.5);
+}
+
+#[test]
+fn a_pinching_hand_drives_the_stick_and_the_other_the_zoom() {
+    use opc_monitor::hand::Control;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    shell.set_model(Some(0x22));
+    shell.set_status(Status {
+        zoom_hundredths: Some(100),
+        ..Status::default()
+    });
+    shell.press(Key::Char('j'), 0.0);
+    // A throw to the right goes out as a stick command, and letting go rests it.
+    let out = shell.hand_control(Control::Stick { x: 0.8, y: 0.0 }, 0.05, 1.0);
+    assert!(!sent(&out).is_empty());
+    let out = shell.hand_control(Control::StickEnd, 0.05, 1.1);
+    assert!(!sent(&out).is_empty(), "the stick is rested");
+    assert!(sent(&shell.hand_control(Control::StickEnd, 0.05, 1.2)).is_empty());
+    // Zooming in for a while sends zoom commands.
+    let mut zooming = 0;
+    for step in 0..20 {
+        let out = shell.hand_control(
+            Control::Zoom { rate: 1.0 },
+            0.05,
+            2.0 + f64::from(step) * 0.05,
+        );
+        zooming += sent(&out).len();
+    }
+    assert!(zooming > 0, "zooming in sends commands");
+    // With gestures off, a hand controls nothing.
+    shell.press(Key::Char('j'), 5.0);
+    assert!(sent(&shell.hand_control(Control::Stick { x: 1.0, y: 0.0 }, 0.05, 6.0)).is_empty());
+}
+
+#[test]
+fn the_face_gesture_asks_for_a_face_and_a_second_one_stops_tracking() {
+    use opc_monitor::gesture::Gesture;
+    let mut shell = framed();
+    shell.set_phase(opc_ui::Phase::Live);
+    assert!(!shell.take_face_request());
+    assert!(shell.gesture(Gesture::FaceTrack, 1.0).is_empty());
+    assert!(
+        shell.take_face_request(),
+        "the reader is asked to find a face"
+    );
+    assert!(!shell.take_face_request(), "once");
+    // A face found goes to the camera as a tracking box and the shell then follows it.
+    let out = shell.track_region((0.4, 0.2, 0.2, 0.3), 2.0);
+    assert!(
+        matches!(sent(&out).as_slice(), [Command::TrackSet { .. }]),
+        "{:?}",
+        sent(&out)
+    );
+    assert!(shell.is_tracking());
+    // Doing the gesture again lets go.
+    let out = shell.gesture(Gesture::FaceTrack, 3.0);
+    assert_eq!(sent(&out), [Command::TrackClear]);
+    assert!(!shell.is_tracking());
 }

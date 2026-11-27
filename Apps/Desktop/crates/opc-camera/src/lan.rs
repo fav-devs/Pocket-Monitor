@@ -80,21 +80,22 @@ pub fn probe_hosts(
 /// Opens a datalink to `address` and asks the camera there for its Wi-Fi identity. True
 /// when it matches `identity`; false when it answers with another, or not at all.
 pub fn identity_matches(address: SocketAddr, identity: &[u8], timeout: Duration) -> bool {
+    read_identity(address, timeout).is_some_and(|reported| reported == identity)
+}
+
+/// What the camera at `address` answers to the Wi-Fi name query, if it opens a session.
+pub fn read_identity(address: SocketAddr, timeout: Duration) -> Option<Vec<u8>> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.subsec_nanos())
         .unwrap_or(1);
     let session_id = (nanos & 0xFFFF) as u16 | 1;
     let base_seq = ((nanos >> 8) & 0xFFF8) as u16;
-    let Ok(mut session) = CameraSession::connect_to(address, session_id, base_seq) else {
-        return false;
-    };
+    let mut session = CameraSession::connect_to(address, session_id, base_seq).ok()?;
     let deadline = Instant::now() + timeout;
     let mut asked = false;
     while Instant::now() < deadline {
-        let Ok(events) = session.poll() else {
-            return false;
-        };
+        let events = session.poll().ok()?;
         for event in events {
             match event {
                 SessionEvent::Opened if !asked => {
@@ -102,15 +103,15 @@ pub fn identity_matches(address: SocketAddr, identity: &[u8], timeout: Duration)
                     session.send(Command::GetWifiSsid);
                 }
                 SessionEvent::Frame(frame) if (frame.cmd_set, frame.cmd_id) == (0x07, 0x07) => {
-                    return frame.payload == identity;
+                    return Some(frame.payload);
                 }
-                SessionEvent::Unreachable => return false,
+                SessionEvent::Unreachable => return None,
                 _ => {}
             }
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    false
+    None
 }
 
 #[cfg(test)]

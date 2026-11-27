@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 use opc_camera::Command;
 use opc_camera::Recovery;
 use opc_chrome::Screen;
-use opc_decode::OwnedPicture;
-use pm_controller::decode::{fresh_session, Decoded, LiveDecoder, READY_LIMIT};
+use opc_decode::{Codec, OwnedPicture};
 use opc_monitor::phone::{self, FromPhone, PhoneLink, PhoneTarget, Proxy};
 use opc_monitor::sheets::PhoneControl;
 use opc_render::{write_png, FeedRenderer, Lut, Presented};
 use opc_vcam::{ComponentReport, VirtualCamera};
+use pm_controller::decode::{codec_of, fresh_session, Decoded, LiveDecoder, READY_LIMIT};
 
 use crate::media::MediaDriver;
 use opc_monitor::luts;
@@ -91,7 +91,16 @@ struct View {
     last_scope_at: f64,
     /// A game controller, when the platform offers one.
     pad: Option<gilrs::Gilrs>,
-    gestures: Option<std::sync::mpsc::Receiver<opc_monitor::gesture::Gesture>>,
+    gestures: Option<crate::webcam::Webcam>,
+    feed_gestures: Option<FeedGestures>,
+    /// A webcam was asked for since gestures last pointed at it.
+    webcam_tried: bool,
+    /// Listens for the double clap while gestures are on.
+    clap_mic: Option<crate::mic::ClapMic>,
+    clap_tried: bool,
+    /// Whether the chrome was showing, and which redraw, when the renderer last got it.
+    overlay_key: (bool, u64),
+    render_stats: (u32, Duration, Instant),
     last_pad_at: f64,
     /// Where the camera is, for a reconnect.
     remote: Option<std::net::SocketAddr>,
@@ -103,6 +112,9 @@ struct View {
     camera_id: String,
     /// The viewfinder as a camera for other apps, while the operator has it on.
     vcam: Option<VirtualCamera>,
+    sharing: Option<opc_relay::host::Host>,
+    sharing_recording: bool,
+    active_camera: Option<std::net::SocketAddr>,
     /// When the camera last took a frame, and when its readout was last refreshed.
     last_vcam_at: f64,
     last_vcam_status_at: f64,
@@ -131,12 +143,11 @@ impl View {
                 Intent::Media(action) => {
                     let now = self.now();
                     let camera_id = self.camera_id.clone();
-                    for command in self.media.action(&mut self.shell, action, &camera_id, now) {
-                        self.send(command);
-                    }
+                    self.media_action(action, &camera_id, now);
                 }
                 Intent::Reconnect => self.reconnect(),
                 Intent::Diagnostics => self.write_diagnostics(),
+                Intent::SharePreview(enabled) => self.share_preview(enabled),
                 Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
                 Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
                 Intent::OpenUrl(url) => self.open_url(&url),
@@ -214,6 +225,10 @@ impl View {
 
     /// Tears the datalink down and opens a fresh one, as the Link tab asks.
     fn reconnect(&mut self) {
+        self.active_camera = None;
+        if self.sharing.is_some() {
+            self.stop_sharing("Sharing stopped when the camera reconnected");
+        }
         self.link = match self.phone.clone() {
             Some(target) => Feed::Phone(PhoneLink::open(target)),
             None => {
@@ -304,10 +319,7 @@ impl View {
     fn write_diagnostics(&mut self) {
         let now = self.now();
         let mut text = self.shell.diagnostics_text(now);
-        text.push_str(&format!(
-            "decoder {:?}\n",
-            self.live.codec()
-        ));
+        text.push_str(&format!("decoder {:?}\n", self.live.codec()));
         let folder = opc_monitor::prefs::path()
             .parent()
             .map_or_else(|| PathBuf::from("."), |p| p.to_path_buf());
@@ -335,12 +347,11 @@ impl View {
                 Intent::Send(command) => self.send(command),
                 Intent::Media(action) => {
                     let camera_id = self.camera_id.clone();
-                    for command in self.media.action(&mut self.shell, action, &camera_id, now) {
-                        self.send(command);
-                    }
+                    self.media_action(action, &camera_id, now);
                 }
                 Intent::Reconnect => self.reconnect(),
                 Intent::Diagnostics => self.write_diagnostics(),
+                Intent::SharePreview(enabled) => self.share_preview(enabled),
                 Intent::ComponentInstall => self.start_component_job(opc_vcam::install::install),
                 Intent::ComponentRemove => self.start_component_job(opc_vcam::install::remove),
                 Intent::OpenUrl(url) => self.open_url(&url),
@@ -402,7 +413,7 @@ impl View {
                 }
                 FromPhone::Joined(info) => {
                     self.shell
-                        .set_link_info(&format!("Phone relay · {}", info.host));
+                        .set_link_info(&format!("Shared feed · {}", info.host));
                     self.shell.set_phone(Some(info));
                     self.shell.set_phase(Phase::Waiting);
                 }
@@ -426,8 +437,55 @@ impl View {
         }
     }
 
+    fn media_action(&mut self, action: opc_monitor::MediaAction, camera_id: &str, now: f64) {
+        let commands = self.media.action(&mut self.shell, action, camera_id, now);
+        if self.media.is_active() && self.sharing.is_some() {
+            self.stop_sharing("Sharing stopped for camera playback");
+        }
+        for command in commands {
+            self.send(command);
+        }
+    }
+
+    fn share_preview(&mut self, enabled: bool) {
+        if !enabled {
+            self.stop_sharing("Off");
+            return;
+        }
+        if self.sharing.is_some() {
+            return;
+        }
+        if self.phone.is_some()
+            || self.media.is_active()
+            || !matches!(self.shell.phase(), Phase::Live)
+            || self.live.codec() != Some(Codec::Hevc)
+        {
+            self.stop_sharing("Open a live HEVC camera feed to share it");
+            return;
+        }
+        let Some(camera) = self.active_camera else {
+            self.stop_sharing("Open a live camera feed to share it");
+            return;
+        };
+        match opc_relay::host::Host::start(camera) {
+            Ok(host) => {
+                self.sharing = Some(host);
+                self.shell.set_sharing(true, "On · View only");
+            }
+            Err(error) => self.stop_sharing(&format!("Could not start sharing: {error}")),
+        }
+    }
+
+    fn stop_sharing(&mut self, status: &str) {
+        self.sharing = None;
+        self.shell.set_sharing(false, status);
+    }
+
     /// Takes everything the camera thread has posted.
     fn pump_camera(&mut self) {
+        if let Some(error) = self.sharing.as_ref().and_then(opc_relay::host::Host::error) {
+            self.stop_sharing(&format!("Sharing stopped: {error}"));
+        }
         let events = match &self.link {
             Feed::Camera(link) => link.drain(),
             Feed::Phone(link) => {
@@ -438,13 +496,35 @@ impl View {
         };
         for event in events {
             match event {
-                FromCamera::Opened => {
+                FromCamera::Opened(address) => {
+                    self.active_camera = Some(address);
+                    if self.sharing.is_some() {
+                        self.stop_sharing("Sharing stopped when the camera reconnected");
+                    }
                     self.shell.set_phase(Phase::Waiting);
                     self.placeholder_presented = false;
                 }
-                // The depacketizer hands over whole access units, so the first NAL
-                // type is enough to know a keyframe; `LiveDecoder::push` reads it.
-                FromCamera::Picture(bytes) => self.live.push(bytes),
+                FromCamera::Picture(bytes) => {
+                    if self.sharing.is_some() {
+                        if self.media.is_active() || codec_of(&bytes) == Some(Codec::H264) {
+                            self.stop_sharing("Sharing stopped when the live HEVC feed changed");
+                        } else if self
+                            .sharing
+                            .as_ref()
+                            .is_some_and(|host| !host.offer(&bytes, self.sharing_recording))
+                        {
+                            let error =
+                                self.sharing.as_ref().and_then(opc_relay::host::Host::error);
+                            self.stop_sharing(&error.map_or_else(
+                                || "Sharing stopped because the relay fell behind".into(),
+                                |error| format!("Sharing stopped: {error}"),
+                            ));
+                        }
+                    }
+                    // The depacketizer hands over whole access units, so the first NAL
+                    // type is enough to know a keyframe; `LiveDecoder::push` reads it.
+                    self.live.push(bytes);
+                }
                 FromCamera::Frame(frame) => {
                     let now = self.now();
                     if (frame.cmd_set, frame.cmd_id) == (0x02, 0xA5) {
@@ -461,6 +541,10 @@ impl View {
                 }
                 FromCamera::Set(outcome) => self.shell.note_set(outcome),
                 FromCamera::Status(status) => {
+                    self.sharing_recording = status.is_recording;
+                    if status.in_playback && self.sharing.is_some() {
+                        self.stop_sharing("Sharing stopped for camera playback");
+                    }
                     self.media.status(status.in_playback);
                     self.shell.set_status(*status);
                     self.placeholder_presented = false;
@@ -477,6 +561,10 @@ impl View {
                     }
                 }
                 FromCamera::Lost(reason) => {
+                    self.active_camera = None;
+                    if self.sharing.is_some() {
+                        self.stop_sharing("Sharing stopped when the camera disconnected");
+                    }
                     self.shell.set_phase(Phase::Failed(reason));
                     self.placeholder_presented = false;
                 }
@@ -555,12 +643,98 @@ impl View {
         self.sample_scopes();
     }
 
-    /// Webcam gestures, as they arrive.
+    /// Gestures, from the PC's webcam or from the camera's own picture.
     fn poll_gestures(&mut self, now: f64) {
-        let Some(receiver) = self.gestures.as_ref() else {
-            return;
-        };
-        let seen: Vec<_> = receiver.try_iter().collect();
+        use opc_monitor::appsettings::GestureSource;
+        // The viewfinder's switch decides what runs: start or stop to match.
+        let wanted = self.shell.gestures();
+        if wanted != Some(GestureSource::Webcam) && self.gestures.is_some() {
+            self.gestures = None;
+        }
+        if wanted == Some(GestureSource::Webcam) && self.gestures.is_none() {
+            // `start` finds a webcam or says why not; ask once per switch.
+            if !self.webcam_tried {
+                self.webcam_tried = true;
+                self.gestures = crate::webcam::start();
+            }
+        } else if wanted != Some(GestureSource::Webcam) {
+            self.webcam_tried = false;
+        }
+        if wanted == Some(GestureSource::CameraFeed) {
+            self.feed_gestures.get_or_insert_with(FeedGestures::new);
+        } else {
+            self.feed_gestures = None;
+        }
+        // A double clap resets the gimbal, whatever the picture shows.
+        if wanted.is_some() {
+            if self.clap_mic.is_none() && !self.clap_tried {
+                self.clap_tried = true;
+                self.clap_mic = crate::mic::ClapMic::open();
+            }
+        } else {
+            self.clap_mic = None;
+            self.clap_tried = false;
+        }
+        if self.clap_mic.as_ref().is_some_and(|mic| mic.take()) {
+            for intent in self.shell.clap(now) {
+                if let Intent::Send(command) = intent {
+                    self.send(command);
+                }
+            }
+        }
+        let mut seen: Vec<opc_monitor::gesture::Gesture> = Vec::new();
+        if let Some(webcam) = self.gestures.as_ref() {
+            seen.extend(webcam.receiver.try_iter());
+        }
+        let mut controls = Vec::new();
+        let mut dt = 0.0;
+        if let (Some(feed), Some(picture)) = (self.feed_gestures.as_mut(), self.latest.as_ref()) {
+            let pose = opc_monitor::moves::Waypoint::from_status(self.shell.status());
+            let holds: Vec<(opc_monitor::gesture::Gesture, f64)> =
+                opc_monitor::gesture::Gesture::ALL
+                    .iter()
+                    .map(|gesture| (*gesture, self.shell.gesture_hold_seconds(*gesture)))
+                    .collect();
+            let tuning = Tuning {
+                holds: &holds,
+                stick_is_right: self.shell.stick_is_right(),
+                hand_control: self.shell.hand_control_on(),
+                face_requested: self.shell.take_face_request(),
+                auto_face: self.shell.auto_face(),
+                tracking: self.shell.is_tracking(),
+            };
+            let out = feed.read(picture, pose, now, &tuning);
+            seen.extend(out.gestures);
+            controls = out.controls;
+            dt = out.dt;
+            if let Some((gesture, fraction)) = out.progress {
+                self.shell.gesture_progress(gesture, fraction);
+            }
+            if let Some(rect) = out.face {
+                self.shell.say("FACE TRACKING");
+                for intent in self.shell.track_region(rect, now) {
+                    if let Intent::Send(command) = intent {
+                        self.send(command);
+                    }
+                }
+            }
+            if out.no_face {
+                self.shell.say("NO FACE FOUND");
+            }
+        }
+        if self.shell.hand_overlay() {
+            match self.feed_gestures.as_ref() {
+                Some(feed) => self.shell.set_hand(&feed.status, feed.scene(now)),
+                None => self.shell.set_hand("", None),
+            }
+        }
+        for control in controls {
+            for intent in self.shell.hand_control(control, dt, now) {
+                if let Intent::Send(command) = intent {
+                    self.send(command);
+                }
+            }
+        }
         for gesture in seen {
             for intent in self.shell.gesture(gesture, now) {
                 if let Intent::Send(command) = intent {
@@ -705,6 +879,29 @@ impl View {
     }
 
     fn draw(&mut self) {
+        let started = Instant::now();
+        self.draw_frame();
+        self.note_render_time(started.elapsed());
+    }
+
+    /// Once a second, how many frames were drawn and what each cost, in the log: what
+    /// to read when fullscreen is slower than a window.
+    fn note_render_time(&mut self, spent: Duration) {
+        self.render_stats.0 += 1;
+        self.render_stats.1 += spent;
+        if self.render_stats.2.elapsed() >= Duration::from_secs(1) {
+            let (draws, total, _) = self.render_stats;
+            let size = self.window.as_ref().map(|w| w.inner_size());
+            diagnostic(format_args!(
+                "render: {draws} draws/s, {:.2} ms each on the CPU, window {:?}",
+                total.as_secs_f64() * 1000.0 / f64::from(draws.max(1)),
+                size.map(|s| (s.width, s.height))
+            ));
+            self.render_stats = (0, Duration::ZERO, Instant::now());
+        }
+    }
+
+    fn draw_frame(&mut self) {
         self.pump_camera();
         self.decode();
         let now = self.now();
@@ -746,9 +943,16 @@ impl View {
             self.shell.set_phase(Phase::Live);
         }
 
-        match self.shell.chrome(now) {
-            Some(chrome) => renderer.set_overlay(chrome),
-            None => renderer.clear_overlay(),
+        // Hand the chrome over only when it was redrawn: comparing a fullscreen 4K
+        // buffer pixel by pixel every frame costs more than the frame itself.
+        let visible = self.shell.chrome(now).is_some();
+        let key = (visible, self.shell.chrome_generation());
+        if key != self.overlay_key {
+            self.overlay_key = key;
+            match self.shell.chrome(now) {
+                Some(chrome) => renderer.set_overlay(chrome),
+                None => renderer.clear_overlay(),
+            }
         }
 
         let picture = latest.picture();
@@ -992,10 +1196,26 @@ impl ApplicationHandler for View {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.sync_repair_blocked();
-        if self.latest.is_some()
+        let active = self.latest.is_some()
             || self.media.is_active()
-            || self.shell.screen() != Screen::Viewfinder
-        {
+            || self.shell.screen() != Screen::Viewfinder;
+        if cfg!(target_os = "macos") {
+            // A redraw request wakes the loop at once here, so asking on every pass
+            // spins a core. Ask only when a frame is due. Frames also collect the
+            // camera link's events, so they continue slowly with no picture.
+            let interval = Duration::from_millis(if active { 16 } else { 33 });
+            let now = Instant::now();
+            let mut due = self.last_draw + interval;
+            if now >= due {
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
+                due = now + interval;
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(due));
+            return;
+        }
+        if active {
             // Present at display rate, not as fast as a core can spin. The camera and
             // ACK pump run on their own thread; 60 Hz keeps 25/30/50 fps streams fresh
             // while leaving CPU/GPU room for decode and Vulkan.
@@ -1050,7 +1270,13 @@ pub fn run(options: Options) -> Result<(), String> {
             .map_err(|error| eprintln!("no game controller support: {error}"))
             .ok(),
         last_pad_at: f64::NEG_INFINITY,
-        gestures: crate::webcam::wanted().then(crate::webcam::start).flatten(),
+        gestures: None,
+        feed_gestures: None,
+        webcam_tried: false,
+        clap_mic: None,
+        clap_tried: false,
+        overlay_key: (false, u64::MAX),
+        render_stats: (0, Duration::ZERO, Instant::now()),
         remote: options.remote,
         phone: options.phone.clone(),
         model_id: options.model_id,
@@ -1076,6 +1302,9 @@ pub fn run(options: Options) -> Result<(), String> {
         pointer_control: false,
         started: Instant::now(),
         vcam: None,
+        sharing: None,
+        sharing_recording: false,
+        active_camera: None,
         last_vcam_at: f64::NEG_INFINITY,
         last_vcam_status_at: f64::NEG_INFINITY,
         component_job: None,
@@ -1084,7 +1313,7 @@ pub fn run(options: Options) -> Result<(), String> {
     match &options.phone {
         Some(target) => {
             view.shell
-                .set_link_info(&format!("Phone relay · {}", target.name));
+                .set_link_info(&format!("Shared feed · {}", target.name));
             view.shell.set_phone(Some(opc_monitor::sheets::PhoneInfo {
                 host: target.name.clone(),
                 ..Default::default()
@@ -1117,4 +1346,283 @@ pub fn run(options: Options) -> Result<(), String> {
     event_loop
         .run_app(&mut view)
         .map_err(|error| format!("the window closed unexpectedly: {error}"))
+}
+
+/// What the picture reader needs to know from the shell each time.
+struct Tuning<'a> {
+    /// How long each gesture has to be held.
+    holds: &'a [(opc_monitor::gesture::Gesture, f64)],
+    stick_is_right: bool,
+    hand_control: bool,
+    /// A gesture asked for the face to be tracked.
+    face_requested: bool,
+    auto_face: bool,
+    /// The camera already has something to follow.
+    tracking: bool,
+}
+
+/// What one look at the picture came to.
+#[derive(Default)]
+struct Looked {
+    gestures: Vec<opc_monitor::gesture::Gesture>,
+    controls: Vec<opc_monitor::hand::Control>,
+    /// Seconds since the controls were last read, for the zoom rate.
+    dt: f64,
+    /// A held pose part-way to firing.
+    progress: Option<(opc_monitor::gesture::Gesture, f32)>,
+    /// A face to track, as left, top, width, height of the picture.
+    face: Option<(f64, f64, f64, f64)>,
+    /// A face was asked for and none was found.
+    no_face: bool,
+}
+
+/// Gestures read from the camera's own picture: the operator stands in front of the
+/// lens. The hand and face models run on their own thread, so the picture never waits
+/// for them. The gimbal moving shifts the whole scene, so sweeps are ignored while it
+/// moves and for a moment after; held poses and pinches do not depend on that.
+struct FeedGestures {
+    worker: opc_monitor::handnet::HandWorker,
+    holder: opc_monitor::hand::Holder,
+    sweep: opc_monitor::hand::Sweep,
+    pulse: opc_monitor::hand::Pulse,
+    controls: opc_monitor::hand::Controls,
+    last_sent: f64,
+    last_read: f64,
+    last_pose: Option<(f64, f64)>,
+    moving_until: f64,
+    /// What the hands were doing at the last reading.
+    scene: Option<opc_monitor::hand::HandScene>,
+    /// What the model runs on and how long it takes, for the hand view.
+    status: String,
+    provider: &'static str,
+    /// A face is wanted until this time (a gesture asked for it).
+    face_wanted_until: Option<f64>,
+    /// When a face was first seen, for tracking one by itself.
+    face_seen_since: Option<f64>,
+    /// No face is started by itself before this time.
+    face_rest_until: f64,
+    last_face_ask: f64,
+}
+
+impl FeedGestures {
+    fn new() -> Self {
+        Self {
+            worker: opc_monitor::handnet::HandWorker::start(),
+            holder: opc_monitor::hand::Holder::default(),
+            sweep: opc_monitor::hand::Sweep::new(true),
+            pulse: opc_monitor::hand::Pulse::default(),
+            controls: opc_monitor::hand::Controls::new(true),
+            last_sent: f64::NEG_INFINITY,
+            last_read: f64::NEG_INFINITY,
+            last_pose: None,
+            moving_until: 0.0,
+            scene: None,
+            status: "loading the hand model".to_string(),
+            provider: "",
+            face_wanted_until: None,
+            face_seen_since: None,
+            face_rest_until: 0.0,
+            last_face_ask: f64::NEG_INFINITY,
+        }
+    }
+
+    /// What the hand view should draw.
+    fn scene(&self, _now: f64) -> Option<opc_monitor::hand::HandScene> {
+        self.scene.clone()
+    }
+
+    /// The box to give the camera for a face: the head with some shoulders, inside the
+    /// picture.
+    fn face_box(face: &opc_monitor::facenet::Face) -> (f64, f64, f64, f64) {
+        let (cx, cy) = (
+            f64::from(face.x + face.width / 2.0),
+            f64::from(face.y + face.height / 2.0),
+        );
+        let (w, h) = (f64::from(face.width) * 2.0, f64::from(face.height) * 2.4);
+        let x = (cx - w / 2.0).clamp(0.0, 1.0 - w.min(1.0));
+        let y = (cy - h * 0.4).clamp(0.0, 1.0 - h.min(1.0));
+        (x, y, w.min(1.0), h.min(1.0))
+    }
+
+    fn read(
+        &mut self,
+        picture: &opc_decode::OwnedPicture,
+        pose: Option<opc_monitor::moves::Waypoint>,
+        now: f64,
+        tuning: &Tuning<'_>,
+    ) -> Looked {
+        use opc_monitor::gesture::Gesture;
+        use opc_monitor::handnet::Update;
+
+        let mut looked = Looked::default();
+        if let Some(pose) = pose {
+            if let Some((yaw, pitch)) = self.last_pose {
+                if (pose.yaw - yaw).abs() > 0.3 || (pose.pitch - pitch).abs() > 0.3 {
+                    self.moving_until = now + 1.0;
+                }
+            }
+            self.last_pose = Some((pose.yaw, pose.pitch));
+        }
+        self.controls.stick_is_right = tuning.stick_is_right;
+        if tuning.face_requested {
+            self.face_wanted_until = Some(now + 3.0);
+        }
+        let want_faces = self.face_wanted_until.is_some()
+            || (tuning.auto_face && !tuning.tracking && now >= self.face_rest_until);
+        // Offer a frame at about 20 a second; one is dropped if the models are still
+        // busy. Faces are asked for at a few a second, not every frame.
+        if now - self.last_sent >= 1.0 / 20.0 && picture.width > 0 && picture.height > 0 {
+            let ask_faces = want_faces && now - self.last_face_ask >= 0.25;
+            let width = 480usize;
+            let height = ((width as u64 * u64::from(picture.height) / u64::from(picture.width))
+                as usize)
+                .max(2);
+            let rgb = opc_monitor::scopes::small_rgb(picture, width, height);
+            if self.worker.submit(rgb, width, height, ask_faces) {
+                self.last_sent = now;
+                if ask_faces {
+                    self.last_face_ask = now;
+                }
+            }
+        }
+        let hold_for = |gesture: Gesture| {
+            tuning
+                .holds
+                .iter()
+                .find(|(g, _)| *g == gesture)
+                .map_or(opc_monitor::hand::HOLD, |(_, seconds)| *seconds)
+        };
+        for update in self.worker.updates() {
+            match update {
+                Update::Ready(provider) => {
+                    self.provider = provider;
+                    self.status = provider.to_string();
+                }
+                Update::Failed(error) => {
+                    self.status = format!("model failed: {error}");
+                }
+                Update::Seen { hands, faces, ms } => {
+                    if !self.provider.is_empty() {
+                        self.status = format!("{} {ms:.0} ms", self.provider);
+                    }
+                    self.reading(&hands, now, tuning, &hold_for, &mut looked);
+                    if let Some(faces) = faces {
+                        self.faces(&faces, now, tuning, &mut looked);
+                    }
+                }
+            }
+        }
+        if let Some(until) = self.face_wanted_until {
+            if now > until {
+                self.face_wanted_until = None;
+                looked.no_face = true;
+            }
+        }
+        if !looked.gestures.is_empty() {
+            // Putting the hand down afterwards must not read as a sweep.
+            self.sweep.hold_off(now);
+            self.holder.reset();
+        }
+        looked
+    }
+
+    /// The hands in one result: pinch controls, then poses and sweeps from a hand that
+    /// is not holding a control.
+    fn reading(
+        &mut self,
+        hands: &[opc_monitor::handnet::Hand],
+        now: f64,
+        tuning: &Tuning<'_>,
+        hold_for: &dyn Fn(opc_monitor::gesture::Gesture) -> f64,
+        looked: &mut Looked,
+    ) {
+        use opc_monitor::gesture::Gesture;
+        use opc_monitor::hand::{pose_of, HandScene, HandView};
+
+        let mut grabs = Vec::new();
+        if tuning.hand_control {
+            let reading = self.controls.feed(hands, now);
+            looked.controls.extend(reading.controls);
+            grabs = reading.grabs;
+        } else if self.controls.busy() {
+            looked.controls.extend(self.controls.release());
+        }
+        looked.dt = if self.last_read.is_finite() {
+            (now - self.last_read).clamp(0.0, 0.1)
+        } else {
+            0.0
+        };
+        self.last_read = now;
+        // Poses and sweeps come from a hand that is not pinching: the stick hand's if
+        // both are free.
+        let free = |hand: &&opc_monitor::handnet::Hand| {
+            !self.controls.busy()
+                && opc_monitor::hand::pinch_ratio(hand) > opc_monitor::hand::PINCH_OFF
+        };
+        let posing = hands
+            .iter()
+            .filter(free)
+            .min_by_key(|hand| u8::from(hand.right != tuning.stick_is_right));
+        let swipe = self.sweep.feed(posing, now);
+        if now >= self.moving_until {
+            looked.gestures.extend(swipe);
+        }
+        let seen = posing.and_then(pose_of);
+        if self.pulse.feed(seen, now) {
+            looked.gestures.push(Gesture::FaceTrack);
+            self.holder.reset();
+        } else {
+            let hold = seen.map_or(opc_monitor::hand::HOLD, |pose| hold_for(pose.gesture()));
+            if let Some(pose) = self.holder.feed(seen, now, hold) {
+                looked.gestures.push(pose.gesture());
+            }
+        }
+        let held = self.holder.progress(now);
+        looked.progress = held
+            .filter(|(_, fraction)| *fraction < 1.0)
+            .map(|(pose, fraction)| (pose.gesture(), fraction));
+        self.scene = Some(HandScene {
+            hands: hands
+                .iter()
+                .map(|hand| HandView {
+                    hand: hand.clone(),
+                    pose: pose_of(hand),
+                })
+                .collect(),
+            grabs,
+            hold: held.map_or(0.0, |(_, fraction)| fraction),
+        });
+    }
+
+    /// The faces in one result: the one a gesture asked for, or one seen for a moment.
+    fn faces(
+        &mut self,
+        faces: &[opc_monitor::facenet::Face],
+        now: f64,
+        tuning: &Tuning<'_>,
+        looked: &mut Looked,
+    ) {
+        let Some(face) = faces.first() else {
+            self.face_seen_since = None;
+            return;
+        };
+        if self.face_wanted_until.take().is_some() {
+            looked.face = Some(Self::face_box(face));
+            looked.no_face = false;
+            self.face_rest_until = now + 20.0;
+            return;
+        }
+        if !tuning.auto_face || tuning.tracking {
+            self.face_seen_since = None;
+            return;
+        }
+        let since = *self.face_seen_since.get_or_insert(now);
+        if now - since >= 1.5 && now >= self.face_rest_until {
+            looked.face = Some(Self::face_box(face));
+            self.face_seen_since = None;
+            // Once started by itself, leave it alone for a while: stopping it by hand
+            // must not start it again at once.
+            self.face_rest_until = now + 30.0;
+        }
+    }
 }

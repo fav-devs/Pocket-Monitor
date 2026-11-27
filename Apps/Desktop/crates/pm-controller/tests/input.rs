@@ -7,7 +7,7 @@
 
 use opc_camera::{Command, SetOutcome, Status, TrackingPoll};
 use opc_ui::Key;
-use pm_controller::gesture::Gesture;
+use pm_controller::gesture::{Gesture, GestureAction, GestureMap};
 use pm_controller::gimbal::{stick_axes, DriveSource};
 use pm_controller::input::LiveInput;
 use pm_controller::keys::{self, Route};
@@ -930,8 +930,21 @@ fn presets_are_saved_from_the_live_pose_and_recalled_by_key_or_swipe() {
         input.gesture(Gesture::SwipeRight, 5.0).as_slice(),
         [Command::GimbalTimedTarget { yaw_tenth: 600, .. }]
     ));
+    // The default map leaves vertical sweeps alone: lowering a hand is not a flip.
+    assert!(input.gesture(Gesture::SwipeUp, 9.0).is_empty());
+    assert!(input.gesture(Gesture::SwipeDown, 9.5).is_empty());
     assert_eq!(
-        input.gesture(Gesture::SwipeUp, 9.0),
+        input.gesture(Gesture::Fist, 10.0),
+        [Command::GimbalRecenter]
+    );
+    assert_eq!(input.gesture(Gesture::Horns, 11.0), [Command::GimbalFlip]);
+    // The operator's own map decides.
+    let mut map = GestureMap::default();
+    map.set(Gesture::SwipeUp, GestureAction::Recenter);
+    map.set(Gesture::SwipeDown, GestureAction::Flip);
+    input.set_gesture_map(map);
+    assert_eq!(
+        input.gesture(Gesture::SwipeUp, 12.0),
         [Command::GimbalRecenter]
     );
     assert_eq!(
@@ -988,6 +1001,22 @@ fn swipes_with_no_presets_say_so() {
     let mut input = input();
     assert!(input.gesture(Gesture::Point, 0.0).is_empty());
     assert_eq!(notices(&mut input), ["NO PRESETS SAVED"]);
+}
+
+#[test]
+fn a_peace_sign_records_and_face_tracking_lets_go_or_says_why_not() {
+    let mut input = input();
+    assert_eq!(input.gesture(Gesture::Two, 0.0), [Command::RecordStart]);
+    assert_eq!(notices(&mut input), ["GESTURE: RECORD"]);
+    assert!(input.gesture(Gesture::FaceTrack, 1.0).is_empty());
+    assert_eq!(
+        notices(&mut input),
+        ["FACE TRACKING NEEDS THE CAMERA'S PICTURE"]
+    );
+    let mut map = GestureMap::default();
+    map.set(Gesture::Two, GestureAction::Nothing);
+    input.set_gesture_map(map);
+    assert!(input.gesture(Gesture::Two, 2.0).is_empty());
 }
 
 #[test]

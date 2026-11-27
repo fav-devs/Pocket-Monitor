@@ -40,7 +40,16 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(opc_core_linked)");
     println!("cargo:rerun-if-env-changed=OPC_CORE_LIB_DIR");
     println!("cargo:rerun-if-env-changed=DEP_OPENPOCKETCINEDESKTOP_LIB_DIR");
-    if find_core().is_some() || std::env::var("DEP_OPENPOCKETCINEDESKTOP_LIB_DIR").is_ok() {
+    let core = find_core();
+    // The library test harness is an executable too, and a dependency's rustc-link-arg
+    // does not reach it: on macOS dyld needs the facade's @rpath from here (as
+    // opc-monitor's build script does).
+    if let Some(dir) = core.as_ref() {
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        }
+    }
+    if core.is_some() || std::env::var("DEP_OPENPOCKETCINEDESKTOP_LIB_DIR").is_ok() {
         println!("cargo:rustc-cfg=opc_core_linked");
     }
 }

@@ -129,6 +129,10 @@ try {
         New-Item -ItemType Directory -Force -Path $staged | Out-Null
         Copy-Item (Join-Path $desktop 'target\release\pm-desktop.exe') (Join-Path $staged 'pocket-monitor.exe') -Force
         Copy-Item (Join-Path $desktop 'target\release\opc_vcam_win.dll') (Join-Path $staged 'opc_vcam_win.dll') -Force
+        # ONNX Runtime's DirectML provider for the hand and face models (pm-controller's
+        # `ort`); the ort build puts it beside the executable.
+        $directMl = Join-Path $desktop 'target\release\DirectML.dll'
+        if (Test-Path $directMl) { Copy-Item $directMl (Join-Path $staged 'DirectML.dll') -Force }
         Stage-Runtime $staged
     } finally { Pop-Location }
 } finally { Pop-Location }

@@ -44,15 +44,47 @@ impl Gpu {
         device_extensions: &[*const c_char],
     ) -> Result<Self, RenderError> {
         // Safety: loads the system Vulkan loader. Nothing else has been initialised yet.
-        let entry =
-            unsafe { Entry::load() }.map_err(|error| RenderError::NoVulkan(error.to_string()))?;
+        let entry = load_entry().map_err(|error| RenderError::NoVulkan(error.to_string()))?;
 
         let application = vk::ApplicationInfo::default()
             .application_name(c"Pocket Monitor")
             .api_version(vk::make_api_version(0, 1, 1, 0));
+        // MoltenVK exposes a portability device, which Vulkan loaders hide unless
+        // the instance explicitly opts into enumeration. Other platforms keep
+        // their existing extension lists and device selection.
+        #[cfg(target_os = "macos")]
+        let portability_enumeration = {
+            // Safety: querying the loaded driver's instance capabilities.
+            unsafe { entry.enumerate_instance_extension_properties(None) }
+                .unwrap_or_default()
+                .iter()
+                .any(|extension| {
+                    extension.extension_name_as_c_str().ok()
+                        == Some(ash::khr::portability_enumeration::NAME)
+                })
+        };
+        #[cfg(target_os = "macos")]
+        let instance_extensions = {
+            let mut extensions = instance_extensions.to_vec();
+            // This extension belongs to the Vulkan loader; direct MoltenVK
+            // loading does not advertise it and already exposes its devices.
+            if portability_enumeration {
+                extensions.push(ash::khr::portability_enumeration::NAME.as_ptr());
+            }
+            extensions.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
+            extensions
+        };
+        #[cfg(target_os = "macos")]
+        let instance_extensions = instance_extensions.as_slice();
         let instance_info = vk::InstanceCreateInfo::default()
             .application_info(&application)
             .enabled_extension_names(instance_extensions);
+        #[cfg(target_os = "macos")]
+        let instance_info = instance_info.flags(if portability_enumeration {
+            vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+        } else {
+            vk::InstanceCreateFlags::empty()
+        });
         // Safety: `instance_info` borrows `application`, which outlives this call.
         let instance = unsafe { entry.create_instance(&instance_info, None) }
             .map_err(|result| RenderError::NoVulkan(format!("{result:?}")))?;
@@ -64,6 +96,14 @@ impl Gpu {
         };
 
         let priorities = [1.0_f32];
+        #[cfg(target_os = "macos")]
+        let device_extensions = {
+            let mut extensions = device_extensions.to_vec();
+            extensions.push(ash::khr::portability_subset::NAME.as_ptr());
+            extensions
+        };
+        #[cfg(target_os = "macos")]
+        let device_extensions = device_extensions.as_slice();
         let queue_info = [vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family)
             .queue_priorities(&priorities)];
@@ -182,6 +222,21 @@ impl Gpu {
         unsafe { self.device.destroy_fence(fence, None) };
         result
     }
+}
+
+fn load_entry() -> Result<Entry, ash::LoadingError> {
+    #[cfg(target_os = "macos")]
+    if let Some(bundled) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("Frameworks/libMoltenVK.dylib")))
+    {
+        if bundled.is_file() {
+            // Safety: the app packager supplies the matching MoltenVK library.
+            return unsafe { Entry::load_from(bundled) };
+        }
+    }
+    // Safety: loads the platform's Vulkan loader for unbundled development builds.
+    unsafe { Entry::load() }
 }
 
 fn pick_device(instance: &Instance) -> Option<(vk::PhysicalDevice, u32)> {

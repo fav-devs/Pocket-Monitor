@@ -11,6 +11,9 @@
 //! - [`gimbal`]: the stick curve and the stick stream the input thread owns.
 //! - [`assists`], [`scopes`], [`luts`], [`prefs`], [`toggles`], [`appsettings`], [`zoom`],
 //!   [`moves`], [`presets`], [`pad`], [`gesture`], [`hand`], [`homewifi`].
+//! - [`handnet`] and [`facenet`]: the MediaPipe hand and YuNet face models through ONNX
+//!   Runtime, on their own thread; [`clap`]: the double clap heard in a microphone's
+//!   samples (the stream that feeds it stays with the app).
 //!
 //! And the vocabulary the Tauri app speaks to the Expo web build:
 //!
@@ -24,12 +27,15 @@
 
 pub mod appsettings;
 pub mod assists;
+pub mod clap;
 pub mod command;
 pub mod decode;
 pub mod effects;
+pub mod facenet;
 pub mod gesture;
 pub mod gimbal;
 pub mod hand;
+pub mod handnet;
 pub mod homewifi;
 pub mod input;
 pub mod keys;

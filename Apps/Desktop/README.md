@@ -28,6 +28,9 @@ Its log is `pocket-monitor.log`: beside a portable or developer copy, in
 the first run copies the old `OpenPocketCine` folder across and leaves it for `opc-monitor`. `pocket-monitor --help` lists the
 command line. See [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5.9, §5.11.
 
+On macOS, `build-macos.sh --dmg` builds an ad-hoc signed `.app` and optional disk image;
+see [macOS build notes](macos/README.md) for dependencies and camera-extension signing.
+
 ## Quick start
 
 Needs a Swift toolchain, FFmpeg development libraries, a Vulkan loader, and a GLSL

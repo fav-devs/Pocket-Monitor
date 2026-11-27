@@ -36,10 +36,18 @@ pm-surface = { path = "../pm-surface" }
 opc-ui = { path = "../opc-ui" }
 gilrs = "0.11"
 # Bluetooth pairing and station mode (§1.C, §1.D), as opc-monitor's `ble_impl.rs`.
-btleplug = "0.11"
 futures = "0.3"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 uuid = "1"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+btleplug = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CoreBluetooth discovery errors could leave connect() pending forever in 0.11.
+btleplug = "=0.13.5"
+# btleplug collapses unsupported/unauthorized adapter states into Unknown.
+objc2-core-bluetooth = { version = "0.2.2", features = ["CBCentralManager", "CBManager"] }
 
 [lints]
 workspace = true
