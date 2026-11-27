@@ -110,6 +110,8 @@
     "allow-relay-control",
     "allow-relay-command",
     "allow-home-wifi-get",
-    "allow-home-wifi-forget"
+    "allow-home-wifi-forget",
+    "allow-sharing-set",
+    "allow-sharing-state"
   ]
 }

@@ -575,12 +575,14 @@ fn run(
     stop: &AtomicBool,
     showing: &AtomicBool,
 ) {
+    // What the shared preview was last told (sharing.rs): the old window's `is_active`.
+    let mut sharing_media = false;
     while !stop.load(Ordering::Relaxed) {
         let now = started.elapsed().as_secs_f64();
         let mut commands: Vec<Command> = Vec::new();
         let mut events: Vec<(&'static str, serde_json::Value)> = Vec::new();
         let mut player_jobs: Vec<PlayerJob> = Vec::new();
-        let (active, blocked_change) = {
+        let (active, blocked_change, playback) = {
             let Ok(mut inner) = inner.lock() else { return };
             tick_browse(&mut inner, now, &mut commands, &mut events);
             drain_worker(&mut inner, now, &mut events, &mut player_jobs);
@@ -594,8 +596,13 @@ fn run(
                 inner.repair_blocked = blocked;
                 blocked
             });
-            (inner.active(), change)
+            let playback = inner.browse.is_some() || inner.resume.is_some() || player_open;
+            (inner.active(), change, playback)
         };
+        if playback != sharing_media {
+            sharing_media = playback;
+            crate::sharing::tap_media(app, playback);
+        }
         for command in commands {
             send(app, command);
         }

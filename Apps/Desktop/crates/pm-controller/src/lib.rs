@@ -52,6 +52,7 @@ pub mod playback;
 pub mod prefs;
 pub mod presets;
 pub mod scopes;
+pub mod sharing;
 pub mod state;
 pub mod toggles;
 pub mod tracking;

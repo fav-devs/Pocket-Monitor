@@ -201,6 +201,8 @@ impl CameraService {
     /// Closes the link: the gimbal rests first, while the channel is still open.
     pub fn disconnect(&self) {
         self.input.rest("disconnect");
+        // A shared preview is on this link's interface (sharing.rs).
+        crate::sharing::tap_lost(&self.app);
         let session = self.session.lock().ok().and_then(|mut slot| slot.take());
         if let Some(mut session) = session {
             // Let the rest reach the camera thread before the link goes.
@@ -230,6 +232,7 @@ impl CameraService {
             .lock()
             .map(|t| t.clone())
             .unwrap_or_default();
+        crate::sharing::tap_reconnecting(&self.app);
         self.connect(target)?;
         notice(&self.app, "RECONNECTING", "info");
         Ok(())
@@ -326,6 +329,8 @@ fn run(
     let mut axis = ColorAxis::default();
     let mut bytes_this_second = 0usize;
     let mut second = Instant::now();
+    // The codec the shared preview was last told about (sharing.rs).
+    let mut shared_codec = None;
     let prefs: Prefs = prefs::load(&prefs::path())
         .map(|saved| saved.prefs)
         .unwrap_or_default();
@@ -359,16 +364,20 @@ fn run(
             changed = true;
             crate::input::observe(&event);
             match event {
-                FromCamera::Opened(_) => {
+                FromCamera::Opened(address) => {
+                    crate::sharing::tap_opened(app, address);
                     set_phase(snapshot, "live-start", Some("Waiting for live view".into()))
                 }
                 FromCamera::Picture(bytes) => {
+                    // Watchers get the camera's own units, before the decoder (sharing.rs).
+                    crate::sharing::tap_picture(app, &bytes);
                     bytes_this_second += bytes.len();
                     live.push(bytes);
                     changed = false;
                 }
                 FromCamera::Status(status) => {
                     crate::media::tap_status(app, status.in_playback);
+                    crate::sharing::tap_status(app, status.is_recording, status.in_playback);
                     let next_axis = ColorAxis::from_status(&status);
                     if next_axis != axis {
                         axis = next_axis;
@@ -406,6 +415,7 @@ fn run(
                     }
                 }
                 FromCamera::Lost(reason) => {
+                    crate::sharing::tap_lost(app);
                     // The link thread keeps reopening by itself; "… — reconnecting" is
                     // recovery, anything else a failure.
                     if reason.ends_with("reconnecting") {
@@ -450,7 +460,12 @@ fn run(
                 }
                 Decoded::Ran(None) => {}
             }
+            if live.codec() != shared_codec {
+                shared_codec = live.codec();
+                crate::sharing::tap_codec(app, shared_codec);
+            }
         }
+        crate::sharing::tap_tick(app);
         if has_picture {
             let phase = snapshot
                 .lock()

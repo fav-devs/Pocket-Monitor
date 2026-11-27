@@ -37,6 +37,7 @@ mod pointer;
 mod prefs;
 mod relay;
 mod scopes;
+mod sharing;
 mod station;
 mod stills;
 mod uri;
@@ -181,6 +182,7 @@ fn main() {
         .manage(launch.clone())
         .manage(hub.clone())
         .manage(PictureHost::default())
+        .manage(sharing::SharingService::default())
         // Thumbnails, filmstrip frames and stills for the web view, never over JSON.
         .register_asynchronous_uri_scheme_protocol("pm", uri::handle)
         .setup(move |app| {
@@ -353,6 +355,8 @@ fn main() {
             relay::relay_command,
             connect::home_wifi_get,
             connect::home_wifi_forget,
+            sharing::sharing_set,
+            sharing::sharing_state,
         ])
         .build(tauri::generate_context!());
 
@@ -373,6 +377,9 @@ fn main() {
     app.run(|app, event| {
         if let RunEvent::Exit = event {
             media::stop_services(app);
+            if let Some(sharing) = app.try_state::<sharing::SharingService>() {
+                sharing.shutdown();
+            }
             if let Some(camera) = app.try_state::<CameraService>() {
                 camera.shutdown();
             }

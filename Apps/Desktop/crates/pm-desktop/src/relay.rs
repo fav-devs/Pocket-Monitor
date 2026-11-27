@@ -399,7 +399,7 @@ fn browse_loop(app: &AppHandle, hosts: &Mutex<HostsPayload>, stop: &AtomicBool) 
         Ok(browser) => browser,
         Err(error) => {
             publish(HostsPayload {
-                error: Some(format!("Could not look for phones: {error}")),
+                error: Some(format!("Could not look for shared feeds: {error}")),
                 ..HostsPayload::default()
             });
             return;
@@ -665,7 +665,7 @@ pub fn relay_info(relay: tauri::State<'_, RelayService>) -> RelayInfo {
 #[tauri::command]
 pub async fn relay_join(app: AppHandle, target: JoinTarget) -> Result<(), String> {
     if target.name.trim().is_empty() {
-        return Err("Pick a phone to watch.".to_string());
+        return Err("Pick a shared feed to watch.".to_string());
     }
     let addresses: Vec<IpAddr> = target
         .addresses
