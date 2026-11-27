@@ -1,10 +1,12 @@
 /**
  * Live monitor geometry, laid out like DJI Mimo's camera screen. In landscape the picture sits
- * between two solid black letterbox strips that hold the chrome: the leading strip (back,
- * exposure mode, format, tracking, assists, more) and the trailing strip (the rotated
- * shooting-mode rail, the record disc and media). Over the picture only a few small things
- * float: status, a column of quick icons, the gimbal cluster and the exposure readout.
- * Portrait keeps the picture on top and turns the strips into rows under it.
+ * between two slim black letterbox strips: the leading strip (back, exposure mode, format,
+ * tracking, assists, more) and the trailing strip (the rotated shooting-mode rail). Like Mimo the
+ * strips live mostly inside the unsafe area (the notch / Dynamic Island side), so the picture
+ * keeps the full screen height. Record and media sit over the picture's trailing edge (Mimo's
+ * column), with the quick icons above and the lock below record. Over the picture float status,
+ * the gimbal cluster and the exposure readout; these and the quick icons are movable (saved
+ * layouts, `layoutModel.ts`). Portrait keeps the picture on top and turns the strips into rows.
  *
  * Pure geometry: every chrome region for a viewport, safe area and picture aspect. No React
  * here so it can be unit tested. Multiview reuses the constants and `readoutRows`.
@@ -73,12 +75,22 @@ export const LIVE_STICK_TABLET = 112;
 /** `GimbalCluster` constants. */
 export const ZOOM_SIZE = 44;
 export const CLUSTER_GAP = 8;
-/** Leading strip width (landscape), phone and tablet, before the safe area. */
-export const LEAD_STRIP = 64;
-export const LEAD_STRIP_TABLET = 88;
-/** Trailing strip width (landscape): the record column plus the mode rail. */
-export const TRAIL_STRIP = 94;
-export const TRAIL_STRIP_TABLET = 124;
+/** Leading strip's control column (landscape), phone and tablet, outside the reachable inset. */
+export const LEAD_STRIP = 44;
+export const LEAD_STRIP_TABLET = 64;
+/** Trailing strip (landscape): the mode rail plus a hairline of black, outside the reachable inset. */
+export const TRAIL_STRIP = 32;
+export const TRAIL_STRIP_TABLET = 42;
+/** The picture may run this far under each strip's inner edge (the strip glyphs stay on black). */
+export const PICTURE_TUCK = 8;
+/**
+ * iOS reports landscape side insets symmetric and deeper than the notch or Dynamic Island itself
+ * (47–59pt for a ~30–48pt cutout), so strip controls may reach this far into them, as Mimo's do.
+ * Android reports the real cutout, so it passes 0.
+ */
+export const IOS_INSET_OVERLAP = 12;
+/** Gap between quick icons in a column (Mimo spaces its glyphs ~40pt apart: 44pt targets edge to edge). */
+export const QUICK_GAP = 0;
 /** The rotated shooting-mode rail's thickness (landscape). */
 export const MODE_RAIL_W = 28;
 export const MODE_RAIL_W_TABLET = 34;
@@ -114,8 +126,18 @@ export interface FieldMonitorLayout {
   leading: Rect;
   /** Back to cameras: the top of the leading strip, or the status row's leading end in portrait. */
   back: Rect;
-  /** Quick icons (flip, DISP, recenter, lock): a column over the picture's trailing edge, a row in portrait. */
+  /** Quick icons (flip, DISP, recenter): a column over the picture's trailing edge above record, a row in portrait. */
   quick: Rect;
+  /** Optional (additive). The screen lock (and Picture in Picture): under record in landscape, the row's end in portrait. */
+  lock: Rect;
+  /**
+   * Optional (additive). Where movable chrome may sit (`layoutModel.ts`): the visible picture in
+   * landscape; in portrait the band from the header to the mode rail. Saved positions are
+   * normalized to it.
+   */
+  stage: Rect;
+  /** Optional (additive). Fixed controls inside `stage` that movable chrome keeps clear of. */
+  fixed: Rect[];
   axis: 'vertical' | 'horizontal';
   /** Camera status (battery, card, link), right-aligned in this rect. */
   status: Rect;
@@ -150,7 +172,16 @@ export interface FieldMonitorLayoutInput {
   showsValues?: boolean;
   valueCount?: number;
   stickSide?: number;
+  /** How far strip controls may reach into the reported side insets (`IOS_INSET_OVERLAP` on iOS). */
+  insetOverlap?: number;
+  /** Quick icons in the column (flip, DISP, recenter); default 3. */
+  quickCount?: number;
+  /** Items in the lock group (lock, Picture in Picture); default 1. */
+  lockCount?: number;
 }
+
+/** A column (or row) of `n` 44pt quick icons. */
+export const quickExtent = (n: number) => Math.max(1, n) * QUICK_SIZE + Math.max(0, n - 1) * QUICK_GAP;
 
 /** Readout strip rows for `count` tiles across `width`. */
 export function readoutRows(count: number | undefined, width: number) {
@@ -182,13 +213,16 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
   const tablet = Math.min(w, h) >= 600;
   const disc = tablet ? RECORD_DISC_TABLET : RECORD_DISC;
   const stickSide = input.stickSide ?? (tablet ? LIVE_STICK_TABLET : LIVE_STICK);
+  const quickN = Math.max(1, input.quickCount ?? 3);
+  const lockN = Math.max(1, input.lockCount ?? 1);
   const edge = tablet ? 20 : portrait ? 16 : 12;
   const lead = safeArea.leading + edge;
   const trail = w - safeArea.trailing - edge;
 
-  let picture: Rect, leadStrip: Rect, trailStrip: Rect, leading: Rect, back: Rect, quick: Rect;
+  let picture: Rect, leadStrip: Rect, trailStrip: Rect, leading: Rect, back: Rect, quick: Rect, lock: Rect;
   let status: Rect, statusLead: Rect, values: Rect, modeRail: Rect, record: Rect, media: Rect;
-  let aspectToggle: Rect, stick: Rect;
+  let aspectToggle: Rect, stick: Rect, stage: Rect;
+  let fixed: Rect[];
   let fillsPicture: boolean;
   let sheet: MonitorSheetPlacement;
 
@@ -225,64 +259,90 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
       const fullH = w / aspect;
       picture = fullH <= room ? rect(0, ceiling, w, fullH) : fitting(rect(0, ceiling, w, room), aspect);
     }
+    let quickRow: Rect;
     if (overlaid) {
       leading = rect(lead, ceiling + 6, trail - lead, LEAD_ROW_H);
-      quick = rect(lead, maxY(leading) + 4, trail - lead, QUICK_SIZE);
+      quickRow = rect(lead, maxY(leading) + 4, trail - lead, QUICK_SIZE);
       const valuesH = showsValues ? READOUT_LINE_H : 0;
       values = rect(lead, stick.y - CLUSTER_GAP - ZOOM_SIZE - 12 - valuesH, trail - lead, valuesH);
     } else {
       const valuesH = showsValues ? READOUT_LINE_H : 0;
       values = rect(lead, maxY(picture) + 8, trail - lead, valuesH);
-      quick = rect(lead, maxY(values) + (showsValues ? 8 : 0), trail - lead, QUICK_SIZE);
-      leading = rect(lead, maxY(quick) + 8, trail - lead, LEAD_ROW_H);
+      quickRow = rect(lead, maxY(values) + (showsValues ? 8 : 0), trail - lead, QUICK_SIZE);
+      leading = rect(lead, maxY(quickRow) + 8, trail - lead, LEAD_ROW_H);
     }
+    // The quick row: flip, DISP, recenter spread from the leading end, the lock group at the trailing end.
+    const lockW = quickExtent(lockN);
+    lock = rect(maxX(quickRow) - lockW, quickRow.y, lockW, QUICK_SIZE);
+    quick = rect(quickRow.x, quickRow.y, Math.max(QUICK_SIZE, lock.x - 8 - quickRow.x), QUICK_SIZE);
     const below = overlaid ? h * 0.5 : maxY(picture) + 6;
     sheet = { dock: null, topInset: clamp(below, h * 0.3, h * 0.68), bottomInset: h - modeRail.y + 4 };
+    // Movable chrome lives between the header's top and the mode rail.
+    stage = rect(Math.max(0, safeArea.leading), headerTop, w - Math.max(0, safeArea.leading) - Math.max(0, safeArea.trailing), modeRail.y - 6 - headerTop);
+    fixed = [back, leading];
   } else {
-    fillsPicture = false;
-    const leadW = (tablet ? LEAD_STRIP_TABLET : LEAD_STRIP) + safeArea.leading;
-    const trailW = (tablet ? TRAIL_STRIP_TABLET : TRAIL_STRIP) + safeArea.trailing;
-    const leftEdge = leadW;
-    const rightEdge = w - trailW;
-    // The picture may tuck a few points under each strip's empty edge to keep its full height.
-    const slack = tablet ? 0 : 6;
-    const fitted = fitting(rect(leftEdge - slack, 0, Math.max(1, rightEdge - leftEdge + slack * 2), h), aspect);
-    // Centred on the screen like Mimo when the strips allow it.
-    const px = clamp((w - fitted.width) / 2, leftEdge - slack, rightEdge + slack - fitted.width);
-    picture = rect(px, fitted.y, fitted.width, fitted.height);
+    // Mimo: the strips hold only what must stay on black and sit mostly in the unsafe area,
+    // so the picture keeps the full height between them.
+    const overlap = Math.max(0, input.insetOverlap ?? 0);
+    const leadInset = Math.max(0, safeArea.leading - overlap);
+    const trailInset = Math.max(0, safeArea.trailing - overlap);
+    const column = tablet ? LEAD_STRIP_TABLET : LEAD_STRIP;
+    const railW = tablet ? MODE_RAIL_W_TABLET : MODE_RAIL_W;
+    const leftEdge = leadInset + column;
+    const rightEdge = w - trailInset - (tablet ? TRAIL_STRIP_TABLET : TRAIL_STRIP);
+    const tuck = tablet ? 0 : PICTURE_TUCK;
+    const area = rect(leftEdge - tuck, 0, Math.max(1, rightEdge - leftEdge + tuck * 2), h);
+    fillsPicture = !!input.fill;
+    if (fillsPicture) {
+      // Fill: the picture covers everything between the strips (cropped, never stretched).
+      picture = area;
+    } else {
+      const fitted = fitting(area, aspect);
+      // Centred on the screen like Mimo when the strips allow it.
+      const px = clamp((w - fitted.width) / 2, area.x, maxX(area) - fitted.width);
+      picture = rect(px, fitted.y, fitted.width, fitted.height);
+    }
     leadStrip = rect(0, 0, leftEdge, h);
     trailStrip = rect(rightEdge, 0, w - rightEdge, h);
 
     const top = Math.max(6, safeArea.top + 4);
     const bottom = h - Math.max(6, safeArea.bottom);
-    const leadX = safeArea.leading + ((tablet ? LEAD_STRIP_TABLET : LEAD_STRIP) - MIN_TAP) / 2;
-    back = rect(leadX, top, MIN_TAP, MIN_TAP);
-    leading = rect(safeArea.leading, maxY(back), tablet ? LEAD_STRIP_TABLET : LEAD_STRIP, bottom - maxY(back));
+    back = rect(leadInset + (column - MIN_TAP) / 2, top, MIN_TAP, MIN_TAP);
+    leading = rect(leadInset, maxY(back), column, bottom - maxY(back));
+    modeRail = rect(w - trailInset - railW, 0, railW, h);
 
-    // Trailing strip: the rotated mode rail against the edge, the record column inside it.
-    const railW = tablet ? MODE_RAIL_W_TABLET : MODE_RAIL_W;
-    modeRail = rect(w - safeArea.trailing - railW, 0, railW, h);
-    const colMid = (Math.max(rightEdge, maxX(picture)) + modeRail.x) / 2;
-    record = rect(colMid - disc / 2, h / 2 - disc / 2, disc, disc);
-    media = rect(colMid - MIN_TAP / 2, bottom - MIN_TAP - 4, MIN_TAP, MIN_TAP);
-    aspectToggle = rect();
-
-    // Over the picture: quick icons down its trailing edge, status beside the top one, the
-    // gimbal cluster bottom-trailing leading of the column, the readout bottom-centre.
+    // The visible picture (between the strips, inside the safe height).
+    const seenX = Math.max(picture.x, leftEdge);
+    const seenR = Math.min(maxX(picture), rightEdge);
     const picTop = Math.max(picture.y, safeArea.top) + 6;
     const picBottom = Math.min(maxY(picture), h - safeArea.bottom) - 6;
-    quick = rect(maxX(picture) - 8 - QUICK_SIZE, picTop, QUICK_SIZE, picBottom - picTop);
-    status = rect(midX(picture), picTop + 2, quick.x - 4 - midX(picture), 28);
-    statusLead = rect(picture.x + 12, picTop + 2, midX(picture) - picture.x - 12, 28);
-    stick = rect(quick.x - 8 - stickSide, picBottom - 4 - stickSide, stickSide, stickSide);
-    const centre = midX(picture);
-    const half = Math.max(60, Math.min(centre - picture.x - 12, stick.x - 8 - centre));
+    stage = rect(seenX, picTop - 6, seenR - seenX, picBottom - picTop + 12);
+
+    // Mimo's trailing column over the picture: quick icons, record in the middle, lock, media.
+    const colMid = seenR - (tablet ? 16 : 10) - disc / 2;
+    record = rect(colMid - disc / 2, midY(stage) - disc / 2, disc, disc);
+    media = rect(colMid - MIN_TAP / 2, picBottom - MIN_TAP, MIN_TAP, MIN_TAP);
+    aspectToggle = rect();
+    const quickH = Math.min(quickExtent(quickN), Math.max(QUICK_SIZE, record.y - 4 - picTop));
+    quick = rect(colMid - QUICK_SIZE / 2, picTop, QUICK_SIZE, quickH);
+    const lockRoom = media.y - 6 - (maxY(record) + 6);
+    const lockH = Math.min(quickExtent(lockN), Math.max(QUICK_SIZE, lockRoom));
+    lock = rect(colMid - QUICK_SIZE / 2, maxY(record) + 6 + Math.max(0, (lockRoom - lockH) / 2), QUICK_SIZE, lockH);
+    fixed = [record, media];
+
+    // Over the picture: status beside the top quick icon, the gimbal cluster bottom-trailing
+    // leading of the column, the readout bottom-centre.
+    status = rect(midX(stage), picTop + 2, quick.x - 4 - midX(stage), 28);
+    statusLead = rect(seenX + 10, picTop + 2, midX(stage) - seenX - 10, 28);
+    stick = rect(colMid - disc / 2 - 8 - stickSide, picBottom - 4 - stickSide, stickSide, stickSide);
+    const centre = midX(stage);
+    const half = Math.max(60, Math.min(centre - seenX - 12, stick.x - 8 - centre));
     const valuesH = showsValues ? READOUT_LINE_H : 0;
     values = rect(centre - half, picBottom - valuesH, half * 2, valuesH);
 
     const dockTop = Math.max(0, safeArea.top);
     sheet = {
-      dock: { left: picture.x, width: panelWidth(w, Math.max(200, quick.x - 8 - picture.x)), top: dockTop, bottom: h - Math.max(0, safeArea.bottom) },
+      dock: { left: leftEdge, width: panelWidth(w, Math.max(200, quick.x - 8 - leftEdge)), top: dockTop, bottom: h - Math.max(0, safeArea.bottom) },
       topInset: 0,
     };
   }
@@ -300,6 +360,9 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     leading,
     back,
     quick,
+    lock,
+    stage,
+    fixed,
     axis: portrait ? 'horizontal' : 'vertical',
     status,
     statusRows: 1,
