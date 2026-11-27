@@ -67,6 +67,7 @@ function useCoordinator(native: boolean): MultiviewCoordinator {
               onHost: (id, host) => c.setCameraHost(id, host),
             })
           : createDemoTileSession(camera),
+      takesTurn: (camera) => !camera.demoScene,
       connectOptions: async (camera) => (camera.path ? { wifiPassword: await readNetworkPassword(camera.path.ssid) } : undefined),
       restoreAccessPoint: (session) => restoreNativeAccessPoint(session),
       onMembersChanged: (cameras) => useMultiviewStage.getState().members(cameras),

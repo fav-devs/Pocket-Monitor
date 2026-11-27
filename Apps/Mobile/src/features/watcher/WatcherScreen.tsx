@@ -1,10 +1,13 @@
 /**
  * Join as watcher (§1.E): watch a feed a phone is sharing on this Wi-Fi.
  *
- * In the desktop app the Rust backend finds the sharing phones (`relay://hosts`), joins one and
- * runs the whole viewfinder on its picture: the live screen reads the phone's state like a
- * camera's, and controls the relay wire carries go to the phone once it grants control. On a
- * phone and in the browser demo this screen is a placeholder (no relay client there yet).
+ * - Desktop app (Tauri): the Rust backend finds the sharing phones (`relay://hosts`), joins one
+ *   and runs the whole viewfinder on its picture: the live screen reads the phone's state like a
+ *   camera's, and controls the relay wire carries go to the phone once it grants control.
+ * - Phones: the native relay (`PocketRelay`) browses `_pocket-mon._tcp` and the legacy
+ *   `_opc-mon._tcp`, joins as a `WatcherCameraSession`, and the watcher monitor shows the
+ *   picture with local assists (`WatcherBrowse` → `WatcherLiveView`).
+ * - Browser preview: the same screens on simulated hosts and the demo picture.
  */
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -18,6 +21,12 @@ import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
 import { Squircle } from '@/components/squircle';
 import { TextField } from '@/components/text-field';
+import { DEMO_HOSTS } from '@/camera/watcher/demo';
+import { joinHostWifi, watcherWifiJoinAvailable, wifiJoinCopy } from '@/camera/watcher/joinWifi';
+import { WifiQrScanner, wifiQrScanAvailable } from '@/features/pairing/WifiQrScanner';
+import { useWatcher } from './useWatcher';
+import { WatcherBrowse } from './WatcherBrowse';
+import { WatcherLiveView } from './WatcherLiveView';
 import { CONTENT_MAX_WIDTH } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 
@@ -36,18 +45,47 @@ function BackButton() {
   );
 }
 
-/** Phones and the browser demo: no relay client yet. */
-function Placeholder() {
-  const styles = useThemedStyles(createStyles);
-  const insets = useSafeAreaInsets();
+const demoLatency = (id: string) => DEMO_HOSTS.find((h) => h.id === id)?.latencyMs;
+
+/** Phones and the browser preview. */
+function PhoneWatcher() {
+  const w = useWatcher();
+  const [scanning, setScanning] = useState(false);
+  const [wifi, setWifi] = useState<{ joining: boolean; message: string | null }>({ joining: false, message: null });
+  const exit = () => {
+    w.leave();
+    goBack();
+  };
+  if (w.session && w.accepted) {
+    return <WatcherLiveView session={w.session} info={w.info} onLeave={exit} onChooseFeed={w.chooseFeed} />;
+  }
+  const canScan = wifiQrScanAvailable && watcherWifiJoinAvailable;
   return (
-    <View style={[styles.root, { paddingTop: insets.top + spacing.sm }]}>
-      <BackButton />
-      <View style={styles.center}>
-        <Text style={styles.emptyTitle}>Join as watcher</Text>
-        <Text style={styles.line}>Watch a feed another phone is sharing. Coming soon.</Text>
-      </View>
-    </View>
+    <>
+      <WatcherBrowse
+        hosts={w.hosts}
+        host={w.host}
+        info={w.info}
+        onBack={exit}
+        onJoin={(host) => w.join(host)}
+        onPasscode={w.answerPasscode}
+        onScanWifi={canScan ? () => setScanning(true) : null}
+        wifiMessage={wifi.message}
+        wifiJoining={wifi.joining}
+        latency={w.simulated ? demoLatency : undefined}
+      />
+      {canScan ? (
+        <WifiQrScanner
+          visible={scanning}
+          onClose={() => setScanning(false)}
+          onScanned={(code) => {
+            setScanning(false);
+            setWifi({ joining: true, message: null });
+            void joinHostWifi(code.ssid, code.password).then((result) => setWifi({ joining: false, message: wifiJoinCopy(result) }));
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -243,7 +281,7 @@ function DesktopWatcher() {
 }
 
 export default function WatcherScreen() {
-  return isTauri() ? <DesktopWatcher /> : <Placeholder />;
+  return isTauri() ? <DesktopWatcher /> : <PhoneWatcher />;
 }
 
 function createStyles(colors: ThemeColors) {

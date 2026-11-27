@@ -141,7 +141,7 @@ function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPres
 
       {/* Not live: what the link is doing, or why it stopped. */}
       {!live ? (
-        <View pointerEvents="box-none" style={styles.status}>
+        <View pointerEvents="box-none" style={[styles.status, session.video.kind === 'none' && styles.statusBlank]}>
           {busy ? <Spinner size={compact ? 14 : 18} color={onVideo.ink} opacity={0.3} /> : null}
           <Text numberOfLines={compact ? 1 : 2} style={[styles.statusText, compact && styles.statusTextCompact]}>
             {tile.status}
@@ -219,6 +219,7 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: 16,
       backgroundColor: 'rgba(0,0,0,0.35)',
     },
+    statusBlank: { backgroundColor: 'rgba(255,255,255,0.06)' },
     statusText: { fontFamily: fonts.semibold, fontSize: 13, color: onVideo.ink, textAlign: 'center' as const, ...textShadow },
     statusTextCompact: { fontSize: 10 },
     failure: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: onVideo.inkMuted, textAlign: 'center' as const, maxWidth: 360 },

@@ -47,6 +47,8 @@ const PHOTO_MODES: ShootingMode[] = ['photo', 'panorama', 'night'];
 export interface CoordinatorDeps {
   /** One session per tile, for the tile's lifetime (native: on the shared network; demo: a scene). */
   createSession(camera: MultiviewCamera, slot: number): CameraSession;
+  /** Whether a camera's connect takes a Bluetooth turn (default: every camera). Demo cameras need none. */
+  takesTurn?(camera: MultiviewCamera): boolean;
   /** Connect options for a camera (the shared network password for a station join). */
   connectOptions?(camera: MultiviewCamera): Promise<ConnectOptions | undefined> | ConnectOptions | undefined;
   /** Return a camera moved onto the shared network to its own access point (before disconnect). */
@@ -360,9 +362,11 @@ export class MultiviewCoordinator {
     const session = rt.session;
     const camera = rt.camera;
     if (!session || !camera) return Promise.resolve();
-    rt.queued = true;
+    const turn = this.deps.takesTurn?.(camera) ?? true;
+    rt.queued = turn;
     this.publish();
-    return this.inTurn(async () => {
+    const run = turn ? (job: () => Promise<void>) => this.inTurn(job) : (job: () => Promise<void>) => job();
+    return run(async () => {
       if (generation !== rt.generation || this.closing) return;
       rt.queued = false;
       rt.connecting = true;
