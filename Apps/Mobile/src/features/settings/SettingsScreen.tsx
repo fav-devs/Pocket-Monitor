@@ -11,7 +11,8 @@ import { connectionPhaseLabel } from '@/features/pairing/presentation';
 import { SettingsScreenPage, ValueText } from './components/ui';
 import { tint } from './components/feedback';
 import { appVersion } from './diagnostics';
-import { sectionInfo, settingsGroups, type SettingsSectionId } from './sections';
+import { gesturesAvailable } from '@/camera/desktop/gestures';
+import { sectionInfo, settingsGroups, visibleSectionIds, type SettingsSectionId } from './sections';
 
 const STATUS_WELL = 44;
 
@@ -66,26 +67,29 @@ export default function SettingsScreen() {
           <SettingsRow icon={ServerStack01Icon} title="Server" onPress={() => router.push('/server')} chevron last />
         </SettingsGroup>
       )}
-      {settingsGroups.map((group) => (
-        <SettingsGroup key={group.label} label={group.label}>
-          {group.ids.map((id, i) => {
-            const info = sectionInfo(id);
-            if (!info) return null;
-            return (
-              <View key={id} testID={`monitor.settings.tab.${info.title}`}>
-                <SettingsRow
-                  icon={info.icon}
-                  title={info.title}
-                  accessory={id === 'about' ? <ValueText value={appVersion()} /> : undefined}
-                  onPress={() => open(id)}
-                  chevron
-                  last={i === group.ids.length - 1}
-                />
-              </View>
-            );
-          })}
-        </SettingsGroup>
-      ))}
+      {settingsGroups.map((group) => {
+        const ids = visibleSectionIds(group.ids, gesturesAvailable());
+        return (
+          <SettingsGroup key={group.label} label={group.label}>
+            {ids.map((id, i) => {
+              const info = sectionInfo(id);
+              if (!info) return null;
+              return (
+                <View key={id} testID={`monitor.settings.tab.${info.title}`}>
+                  <SettingsRow
+                    icon={info.icon}
+                    title={info.title}
+                    accessory={id === 'about' ? <ValueText value={appVersion()} /> : undefined}
+                    onPress={() => open(id)}
+                    chevron
+                    last={i === ids.length - 1}
+                  />
+                </View>
+              );
+            })}
+          </SettingsGroup>
+        );
+      })}
     </SettingsScreenPage>
   );
 }

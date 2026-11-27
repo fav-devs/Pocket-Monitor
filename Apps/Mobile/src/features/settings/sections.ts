@@ -10,6 +10,7 @@ import {
   Tap02Icon,
   Tv01Icon,
   Video01Icon,
+  WavingHand01Icon,
   Wifi01Icon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
@@ -24,6 +25,8 @@ export type SettingsSectionId =
   | 'operator'
   | 'input'
   | 'motion'
+  /** Desktop only (`desktopOnly`): hand gestures, the gesture guide. */
+  | 'gestures'
   | 'exposure'
   | 'assists'
   | 'media'
@@ -37,12 +40,14 @@ export interface SettingsSectionInfo {
   title: string;
   /** Icon in the row's well on the Settings list. */
   icon: IconSvgElement;
+  /** Only in the desktop app (and its web preview). */
+  desktopOnly?: boolean;
 }
 
 /** How the Settings list groups the sections, in order. */
 export const settingsGroups: { label: string; ids: SettingsSectionId[] }[] = [
   { label: 'Monitor', ids: ['connection', 'display', 'operator'] },
-  { label: 'Control', ids: ['input', 'motion'] },
+  { label: 'Control', ids: ['input', 'motion', 'gestures'] },
   { label: 'Picture', ids: ['exposure', 'assists'] },
   { label: 'Media', ids: ['media', 'sharing'] },
   { label: 'App', ids: ['storage', 'support', 'about'] },
@@ -54,6 +59,7 @@ export const settingsSections: SettingsSectionInfo[] = [
   { id: 'operator', title: 'Operator', icon: Tap02Icon },
   { id: 'input', title: 'Input & Orientation', icon: GameController03Icon },
   { id: 'motion', title: 'Motion Control', icon: Joystick02Icon },
+  { id: 'gestures', title: 'Gestures', icon: WavingHand01Icon, desktopOnly: true },
   { id: 'exposure', title: 'Exposure & Look', icon: Sun03Icon },
   { id: 'assists', title: 'View Assists', icon: ChartHistogramIcon },
   { id: 'media', title: 'Media & Delivery', icon: Video01Icon },
@@ -65,4 +71,9 @@ export const settingsSections: SettingsSectionInfo[] = [
 
 export function sectionInfo(id: string | undefined): SettingsSectionInfo | undefined {
   return settingsSections.find((s) => s.id === id);
+}
+
+/** The sections one group lists here: desktop-only ones only where `desktop` is true. */
+export function visibleSectionIds(ids: readonly SettingsSectionId[], desktop: boolean): SettingsSectionId[] {
+  return ids.filter((id) => desktop || !sectionInfo(id)?.desktopOnly);
 }

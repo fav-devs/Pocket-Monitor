@@ -33,6 +33,7 @@ import { DesktopMediaService } from './media';
 import { cancelDesktopConnect, desktopConnect, startDesktopScan, type ConnectReport } from './connect';
 import { invoke, listen, type Unlisten } from './tauri';
 import * as input from './input';
+import { watchGestures } from './gestures';
 
 type Listener<T> = (value: T) => void;
 
@@ -102,6 +103,8 @@ export class DesktopCameraSession implements CameraSession {
     this.unlisten.push(listen<RustEvent>('camera://event', (event) => this.relay(event)));
     // Live controls (countdown, tracking, Motion Control, lock) live in Rust: ./input.ts.
     this.unlisten.push(...input.watchInput(() => this.apply(this.backend ?? this.state)));
+    // Gestures, the hand view (`Y`) and what Rust runs for them: ./gestures.ts.
+    this.unlisten.push(...watchGestures());
     // Re-attach to whatever the backend is already doing (a reload never reconnects).
     invoke<CameraState>('camera_state')
       .then((next) => this.apply(next))

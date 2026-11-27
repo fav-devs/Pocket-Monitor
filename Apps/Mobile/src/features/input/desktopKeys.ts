@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { toggleHandView } from '@/camera/desktop/gestures';
 import { controlKey, type DesktopKeyAction } from '@/camera/desktop/input';
 import { invoke } from '@/camera/desktop/tauri';
 import { useLiveUi } from '@/features/live/liveUiStore';
@@ -14,7 +15,7 @@ const SWALLOW = new Set([' ', 'Tab', 'F11', ...ARROWS]);
 const DESKTOP_KEYS = new Set([
   ' ', 'Escape', 'Tab', 'F11', ...ARROWS,
   'r', 't', 's', 'c', '+', '=', '-', '_', '0', 'f', 'v', 'g', 'x', '[', ']', 'h', 'e', 'k', 'a', 'z', 'p', 'l', 'm',
-  '1', '2', '3', '4', '5', '6',
+  'j', 'y', '1', '2', '3', '4', '5', '6',
 ]);
 
 export function isDesktopKey(key: string): boolean {
@@ -67,6 +68,12 @@ export function runDesktopKeyAction(action: DesktopKeyAction, a: LiveInputAction
       break;
     case 'fullscreen':
       // Already toggled in Rust.
+      break;
+    case 'toggle-hand-view':
+      toggleHandView();
+      break;
+    case 'toggle-gestures':
+      // Switched and saved in Rust; `gestures://state` and a notice follow.
       break;
   }
 }

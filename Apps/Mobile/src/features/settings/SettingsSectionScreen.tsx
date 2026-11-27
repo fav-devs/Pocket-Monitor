@@ -16,6 +16,8 @@ import { StorageSection } from './sections/StorageSection';
 import { SupportSection } from './sections/SupportSection';
 import { sectionInfo } from './sections';
 import { DesktopAppRows, DesktopNetworkRows, DesktopSupportRows } from './desktop/DesktopSettings';
+import { GestureSettings } from './desktop/GestureSettings';
+import { gesturesAvailable } from '@/camera/desktop/gestures';
 
 /** `/settings/<section>`: one Operator Setup section as its own settings page (e.g. `/settings/assists`). */
 export default function SettingsSectionScreen() {
@@ -23,7 +25,7 @@ export default function SettingsSectionScreen() {
   const info = sectionInfo(typeof section === 'string' ? section : undefined);
   const [legal, setLegal] = useState<LegalPage | null>(null);
   const [reporting, setReporting] = useState(false);
-  if (!info) return <Redirect href="/settings" />;
+  if (!info || (info.desktopOnly && !gesturesAvailable())) return <Redirect href="/settings" />;
 
   let body: ReactNode;
   switch (info.id) {
@@ -51,6 +53,9 @@ export default function SettingsSectionScreen() {
       break;
     case 'motion':
       body = <MotionSection />;
+      break;
+    case 'gestures':
+      body = <GestureSettings />;
       break;
     case 'exposure':
       body = <ExposureSection />;

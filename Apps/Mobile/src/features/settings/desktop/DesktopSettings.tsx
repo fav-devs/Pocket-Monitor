@@ -2,7 +2,8 @@
  * Settings rows only the desktop app has (`docs/desktop-expo-port.md` A2, D-2/D-3, Y1/Y2).
  * Each renders nothing outside the Tauri app.
  *
- * - `DesktopAppRows` (Operator): the old home screen's settings, kept in `desktop-app-v1.txt`.
+ * - `DesktopAppRows` (Operator): the old home screen's settings, kept in `desktop-app-v1.txt`;
+ *   gestures have their own page (`GestureSettings`).
  * - `DesktopNetworkRows` (Connection): the camera on this PC's home Wi-Fi, and a search for it.
  * - `DesktopSupportRows` (Support): the log, the folders, and a report written to disk.
  */
@@ -12,15 +13,12 @@ import { Platform, Text } from 'react-native';
 import { useCameraSession } from '@/camera';
 import { desktopCameraEnabled } from '@/camera/bootstrap';
 import {
-  appSettingsGet,
-  appSettingsSet,
   diagnosticsPaths,
   findStationCamera,
   keyboardShortcuts,
   knownCameras,
   openDesktopFolder,
   writeDiagnostics,
-  type DesktopAppSettings,
   type DesktopPaths,
   type KnownCamera,
 } from '@/camera/desktop/connect';
@@ -29,37 +27,24 @@ import { usePreferences } from '@/state/preferences';
 import { useSavedCameras } from '@/state/savedCameras';
 import { ActionRow, Group, LinkRow, SwitchRow, ValueRow } from '../components/ui';
 import { buildDiagnosticsReport } from '../diagnostics';
+import { router } from 'expo-router';
+import { loadGestureSettings, saveGestureSettings, sourceLabel, useDesktopGestures } from '@/camera/desktop/gestures';
 
 const message = (error: unknown) => (typeof error === 'string' ? error : error instanceof Error ? error.message : 'That did not work.');
 
-/** Webcam gestures, open the camera at launch, and the viewfinder's key list (A2). */
+/** Gestures (a link to their page), open the camera at launch, and the viewfinder's key list (A2). */
 export function DesktopAppRows() {
   const styles = useThemedStyles(createStyles);
-  const [settings, setSettings] = useState<DesktopAppSettings | null>(null);
+  const settings = useDesktopGestures((s) => s.settings);
+  const error = useDesktopGestures((s) => s.error);
   const [keys, setKeys] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [gesturesChanged, setGesturesChanged] = useState(false);
 
   useEffect(() => {
     if (!desktopCameraEnabled) return;
-    appSettingsGet()
-      .then(setSettings)
-      .catch(() => {});
+    loadGestureSettings().catch(() => {});
   }, []);
 
   if (!desktopCameraEnabled) return null;
-
-  const change = (patch: Partial<DesktopAppSettings>) => {
-    if (!settings) return;
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    appSettingsSet(next)
-      .then(() => setNote(null))
-      .catch((error) => {
-        setSettings(settings);
-        setNote(message(error));
-      });
-  };
 
   const toggleKeys = () => {
     if (keys) return setKeys(null);
@@ -69,16 +54,12 @@ export function DesktopAppRows() {
   };
 
   return (
-    <Group label="Desktop" note={note ?? (gesturesChanged ? 'Applies at the next launch.' : undefined)}>
-      <SwitchRow
+    <Group label="Desktop" note={error ?? undefined}>
+      <LinkRow
         icon={CameraSmileIcon}
-        title="Webcam gestures"
-        value={!!settings?.gestures}
-        disabled={!settings}
-        onChange={(gestures) => {
-          setGesturesChanged(true);
-          change({ gestures });
-        }}
+        title="Gestures"
+        value={settings ? (settings.gestures ? sourceLabel(settings.gestureSource ?? 'cameraFeed') : 'Off') : undefined}
+        onPress={() => router.push('/settings/gestures')}
         testID="desktop.gestures"
       />
       <SwitchRow
@@ -86,7 +67,7 @@ export function DesktopAppRows() {
         title="Open camera at launch"
         value={!!settings?.openCameraAtLaunch}
         disabled={!settings}
-        onChange={(openCameraAtLaunch) => change({ openCameraAtLaunch })}
+        onChange={(openCameraAtLaunch) => void saveGestureSettings({ openCameraAtLaunch })}
         testID="desktop.openAtLaunch"
       />
       <LinkRow icon={KeyboardIcon} title="Keyboard shortcuts" value={keys ? 'Hide' : undefined} onPress={toggleKeys} last={!keys} />

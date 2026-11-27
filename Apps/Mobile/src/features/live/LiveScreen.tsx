@@ -26,6 +26,8 @@ import {
   type StickMapping,
 } from '@/features/input';
 import LivePicture from '@/features/picture/LivePicture';
+import { desktopCameraEnabled } from '@/camera/bootstrap';
+import { gesturesAvailable } from '@/camera/desktop/gestures';
 import { useAssists } from '@/state/assists';
 import { usePreferences } from '@/state/preferences';
 import { useTheme } from '@/constants/theme';
@@ -39,6 +41,7 @@ import { BackButton, DispButton, LeadingControls, MediaButton, QuickIcons } from
 import { PortraitAspectToggle } from './chrome/SystemButtons';
 import { FeedGestureWell } from './feed/FeedGestureWell';
 import { FocusEvBox } from './feed/FocusEvBox';
+import { DesktopGestureHold, HandViewOverlay } from './feed/HandViewOverlay';
 import { MonitorTrackingOverlay } from './feed/MonitorTrackingOverlay';
 import { GimbalLockChip, LiveGimbalButton } from './gimbal/LiveGimbalControls';
 import { LiveGimbalStick } from './gimbal/LiveGimbalStick';
@@ -379,6 +382,12 @@ export default function LiveScreen() {
       {/* Feed touches sit above the picture and under the chrome. */}
       <FeedGestureWell picture={pictureRect} enabled={live && !locked} handlers={feedHandlers} />
       <MonitorTrackingOverlay picture={pictureRect} focusBox={false} />
+      {desktopCameraEnabled || gesturesAvailable() ? (
+        <>
+          <HandViewOverlay picture={pictureRect} />
+          <DesktopGestureHold picture={pictureRect} />
+        </>
+      ) : null}
       {(ui.gimbalPanel !== 'none' || programActive) && hasWaypoints ? <MotionPathOverlay picture={pictureRect} /> : null}
       <RecordCountdownOverlay />
       <ShutterFlash trigger={flash} />

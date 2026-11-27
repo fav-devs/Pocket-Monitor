@@ -64,6 +64,8 @@ export interface DesktopInputView {
     cursor: number | null;
   };
   gamepadEnabled: boolean;
+  /** A held gesture on its way to recording (the old `HOLD TO START RECORDING` bar). */
+  gestureHold?: { text: string; fraction: number } | null;
 }
 
 /** `gamepad://state` (the mobile `GamepadState` shape). */
@@ -173,7 +175,11 @@ export type DesktopKeyAction =
   | 'library'
   | 'still'
   | 'escape'
-  | 'fullscreen';
+  | 'fullscreen'
+  /** `Y`: the hand view over the picture. */
+  | 'toggle-hand-view'
+  /** `J`: gestures on or off, already switched in Rust; the web reflects it. */
+  | 'toggle-gestures';
 
 /** One key event to Rust. Resolves with the web's part, if any. */
 export async function controlKey(key: string, down: boolean, repeat = false): Promise<DesktopKeyAction | null> {
@@ -313,11 +319,15 @@ export function presetSeconds(seconds: number) {
   quiet(invoke('preset_seconds', { seconds }));
 }
 
-// ───────────── Webcam gestures ─────────────
+// ───────────── Gestures (`gestures.ts` has the settings and the hand view) ─────────────
 
 export interface DesktopGesturesState {
+  /** Gestures are on (the setting), whichever source. */
   on: boolean;
+  source?: 'cameraFeed' | 'webcam' | null;
+  /** The webcam being read. */
   device?: string | null;
+  /** Why the webcam is not running. */
   problem?: string | null;
 }
 
