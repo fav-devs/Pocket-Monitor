@@ -7,6 +7,8 @@
     "core:default",
     "core:window:allow-set-fullscreen",
     "core:window:allow-is-fullscreen",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-title-bar-style",
     "allow-launch-args",
     "allow-keyboard-shortcuts",
     "allow-ble-scan-start",
