@@ -3,7 +3,7 @@ import ExpoModulesCore
 import Foundation
 
 /// JS module `PocketEdit` (`PocketEditNativeModule` in src/edit.ts): the playback editor's
-/// native colour stage on the expo-video player, the clip exporter and a frame grabber.
+/// native colour and face stages on the expo-video player, the clip exporter and a frame grabber.
 ///
 /// Classic Module DSL (like expo-video): it takes expo-video's `VideoPlayer` as a `SharedObject`
 /// argument — expo-video's player is a `SharedRef<AVPlayer>` — which the v2 macros do not cover.
@@ -11,7 +11,20 @@ public final class PocketEditModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PocketEdit")
 
-    Events("onExportProgress")
+    Events("onExportProgress", "onFaceCount")
+
+    OnCreate {
+      let send: (Int) -> Void = { [weak self] count in self?.sendEvent("onFaceCount", ["count": count]) }
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated { PocketEditPreview.shared.onFaceCount = send }
+      }
+    }
+
+    OnDestroy {
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated { PocketEditPreview.shared.onFaceCount = nil }
+      }
+    }
 
     Function("setLut") { (key: String, size: Int, rgb: Float32Array) in
       guard size >= 2, size <= 65 else {

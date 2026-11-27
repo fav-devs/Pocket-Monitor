@@ -17,6 +17,7 @@ Protocol policy (command building, reply parsing, status decode, watchdog, enabl
 | `PocketGamepad` | `PocketGamepadModule` | `gamepad.PocketGamepadModule` | `ios/Gamepad`, `android/.../gamepad` |
 | `PocketHeadMotion` | `PocketHeadMotionModule` | `headmotion.PocketHeadMotionModule` | `ios/HeadMotion`, `android/.../headmotion` |
 | `PocketHands` | `PocketHandsModule` | `hands.PocketHandsModule` | `ios/Hands`, `android/.../hands`, `android/src/main/assets/pocket-hands` |
+| `PocketEdit` | `PocketEditModule` | `edit.PocketEditModule` | `ios/Edit`, `android/.../edit` (face model in `assets/pocket-hands`) |
 
 Event names are the full contract names (`onAdvert`, `onDuml`, …), set explicitly with
 `@Event("onX")` because the macros would otherwise strip the `on` prefix.
@@ -195,6 +196,34 @@ Android encoder fails) the host forwards the camera's own access units with its 
 (`status.video = "forward"`; Settings says new watchers may wait for a camera keyframe). The host
 never sends `0x09/0xa8` in either mode.
 
+### PocketEdit face retouch
+
+The playback editor's face stage (Face panel: Auto, Smooth, Brighten, Slim, Eyes; strengths in
+`ClipEdit.face`). The maths is `src/core/edit/face.ts` (tested there); `ios/Edit/PocketFaceMath.swift`
+and `android/.../edit/PocketFaceMath.kt` port it line for line, and the web demo's
+`src/features/picture/web/faceShader.ts` is the GLSL both GPUs follow. It runs after colour and
+before geometry on the full source frame, in the player preview and the export alike, and only
+while a strength is above 0 (or the Face panel is open, to say "No face found").
+
+| | iOS (`ios/Edit/PocketFaceRetouch.swift`) | Android (`edit/PocketFaceRetouchEffect.kt`) |
+| --- | --- | --- |
+| Landmarks | Vision `VNDetectFaceLandmarksRequest` on the frame drawn 640 on its long side (sRGB BGRA, own buffer); contour, eyes, pupils, lips and nose mapped onto the 35 MediaPipe points (no forehead: an arc over the eyes) | MediaPipe `FaceLandmarker` (`face_landmarker.task` float16 v1, VIDEO mode, GPU then CPU) on the frame drawn 640 on its long side into an RGBA8 target and read back (HDR encoded 1/2.4 first) |
+| Faces | up to 3, largest first | same |
+| Preview rate | ≤ 10 Hz on `pocket.edit.face`, dropped while busy | ≤ 10 Hz on the effect's `pocket-face` thread, dropped while busy |
+| Export | every frame, inline | every frame, the GL thread waits for its worker (≤ 3 s) |
+| Tracking | `PocketFaceTracker`: One-Euro per face, 0.4 s hold then 0.3 s fade, interpolation between detections, ≤ 80 ms extrapolation | same class in Kotlin |
+| Pixels | two Core Image Metal kernels (`[[stitchable]]`, compiled at runtime with `CIKernel.kernels(withMetalString:)`): `pocketFaceSkin`, then `pocketFaceWarp`, each over the face's bounds, composited over the frame | one GLSL ES 1.00 pass, `uFace[75]` (25 vec4 per face, `packFaceUniforms` layout) |
+| HDR | Core Image's linear working space, kernels on pow(c, 1/2.2); the lift never touches values above 1 | `useHdr`: pow(c, 1/2.4) around the work like the colour stage; export keeps HDR when there is no LUT |
+
+Skin mask: the face oval (soft edge) less ellipses round the eyes and lips, times a chroma check
+against the cheeks' colour. Smooth = three rings of eight taps weighted by colour distance (an
+edge-keeping bilateral) blended in by the mask; Brighten = a gamma lift of the mid-tones over a
+wider glow, fading out above 0.8 so highlights stay; Slim = six local pushes along the jaw towards
+the face's middle line, (1 − d²/R²)² falloff, capped so they cannot fold; Eyes = a local magnifier
+on each iris. Auto adds a mix chosen per face from its size and the skin's luma (more smoothing on
+close-ups, lift only on dim skin). The preview reports `onFaceCount {count}` when the count
+changes; a paused frame drawn before its landmarks arrived is drawn again.
+
 ## Threading summary
 
 | Work | iOS | Android |
@@ -205,6 +234,7 @@ never sends `0x09/0xa8` in either mode.
 | Gamepad | main | main |
 | Head motion | `OperationQueue` `pocket.headmotion` | — |
 | Hands | serial queue `pocket.hands` (timer, Vision, front camera); mic tap thread | `pocket-hands` HandlerThread (MediaPipe, CameraX analyzer, ImageReader); GL thread draws only; `pocket-hands-mic` |
+| Face retouch (preview) | serial queue `pocket.edit.face` (Vision); the composition's render threads draw | `pocket-face` HandlerThread per effect (MediaPipe); Media3's GL thread draws and reads back small |
 
 JS calls only enqueue onto those; events are emitted from them (Expo schedules them onto JS).
 

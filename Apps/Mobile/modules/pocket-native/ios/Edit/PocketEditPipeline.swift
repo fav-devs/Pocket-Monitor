@@ -5,10 +5,12 @@ import Foundation
 
 // The playback editor's effect pipeline (iOS). Same stages and order as `src/core/edit/plan.ts`:
 //   1. colour   — one baked 3D LUT (`PocketEditLutRegistry`), applied to the encoded signal
-//   2. face     — `PocketFaceRetouchStage` (placeholder: passes through until face retouch lands)
+//   2. face     — `PocketFaceRetouchStage` (PocketFaceRetouch.swift): Vision landmarks, skin smooth
+//                 and brighten under a skin mask, then the slim / eye warps
 //   3. geometry — rotate (clockwise) → crop (normalized, rotated frame, top-left origin) → flip → scale
-// Preview runs 1–2 on the AVPlayerItem (geometry is React Native transforms); export runs 1–3 in
-// the AVVideoComposition's Core Image handler.
+// Preview runs 1–2 on the AVPlayerItem (geometry is React Native transforms) and then the
+// before/after split (`PocketEditColorStage.composeSplit`); export runs 1–3 in the AVVideoComposition's
+// Core Image handler.
 
 // MARK: - LUT registry
 
@@ -98,6 +100,8 @@ struct PocketEditPreviewPlan: Equatable {
   var face = PocketFaceParams()
   var toneMapSdr = false
   var volume: Double = 1
+  /// Look for faces at strength 0 too (the Face panel is open).
+  var faceProbe = false
 
   init(_ dict: [String: Any]) {
     lutKey = dict["lutKey"] as? String
@@ -105,6 +109,7 @@ struct PocketEditPreviewPlan: Equatable {
     face = PocketFaceParams(dict["face"] as? [String: Any])
     toneMapSdr = (dict["toneMapSdr"] as? Bool) ?? false
     volume = (dict["volume"] as? NSNumber)?.doubleValue ?? 1
+    faceProbe = (dict["faceProbe"] as? Bool) ?? false
   }
 }
 
@@ -166,8 +171,9 @@ protocol PocketEditFrameStage: AnyObject {
 }
 
 /// Colour: the baked cube through CIColorCubeWithColorSpace in the source's encoding space, so
-/// the cube sees the clip's code values (Rec.709, HLG or log), like a .cube in an editor. An
-/// optional split shows the original on one side (before/after compare).
+/// the cube sees the clip's code values (Rec.709, HLG or log), like a .cube in an editor. The
+/// optional split (`composeSplit(original:edited:)`, after the face stage) shows the original on one side
+/// (before/after compare).
 final class PocketEditColorStage: PocketEditFrameStage, @unchecked Sendable {
   private let lock = NSLock()
   private var key: String?
@@ -207,7 +213,14 @@ final class PocketEditColorStage: PocketEditFrameStage, @unchecked Sendable {
     }
     guard let filter else { return image }
     filter.setValue(image, forKey: kCIInputImageKey)
-    guard let graded = filter.outputImage?.cropped(to: image.extent) else { return image }
+    return filter.outputImage?.cropped(to: image.extent) ?? image
+  }
+
+  /// The compare: `original` on its side of the line over `edited` (colour and face), or `edited`.
+  func composeSplit(original image: CIImage, edited graded: CIImage) -> CIImage {
+    lock.lock()
+    let split = self.split
+    lock.unlock()
     guard let split else { return graded }
     // The original's side of the line, in Core Image coordinates (bottom-left origin).
     let e = image.extent
@@ -224,37 +237,7 @@ final class PocketEditColorStage: PocketEditFrameStage, @unchecked Sendable {
   }
 }
 
-/// A face as the face stage sees it: bounds and named landmark points, in the frame's pixels.
-struct PocketFaceLandmarks {
-  var bounds: CGRect
-  var points: [String: [CGPoint]]
-}
-
-/// Face retouch (Smooth / Brighten / Slim / Eyes / Auto). PLACEHOLDER: passes frames through.
-///
-/// To implement (the face agent): set `landmarks` to a provider that runs Vision
-/// (`VNDetectFaceLandmarksRequest` through a `VNSequenceRequestHandler`) on the frame, cached by
-/// `time`, then in `apply` build masks from the landmarks and run Core Image / Metal kernels:
-/// smooth = edge-preserving blur blended in the skin mask, brighten = exposure in the face mask,
-/// slim / eyes = local warps (CIBumpDistortion-like) around jaw / eye points. Flip `isActive` on.
-/// The same stage runs in preview (player item) and export (before geometry, so landmarks are in
-/// source coordinates).
-final class PocketFaceRetouchStage: PocketEditFrameStage, @unchecked Sendable {
-  private let lock = NSLock()
-  private var params = PocketFaceParams()
-  /// Per-frame landmarks (set by the face implementation).
-  var landmarks: ((CIImage, CMTime) -> [PocketFaceLandmarks])?
-
-  func update(_ params: PocketFaceParams) {
-    lock.lock()
-    self.params = params
-    lock.unlock()
-  }
-
-  var isActive: Bool { false }
-
-  func apply(_ image: CIImage, at time: CMTime) -> CIImage { image }
-}
+// The face stage, `PocketFaceRetouchStage`, is in PocketFaceRetouch.swift.
 
 /// Geometry for export: rotate → crop → flip → scale to the output size.
 struct PocketEditGeometry {

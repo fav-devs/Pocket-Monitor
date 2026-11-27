@@ -54,7 +54,15 @@ class PocketEditModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PocketEdit")
 
-    Events("onExportProgress")
+    Events("onExportProgress", "onFaceCount")
+
+    OnCreate {
+      PocketEditPreview.onFaceCount = { n -> sendEvent("onFaceCount", mapOf("count" to n)) }
+    }
+
+    OnDestroy {
+      PocketEditPreview.onFaceCount = null
+    }
 
     Function("setLut") { key: String, size: Int, rgb: Float32Array ->
       if (size < 2 || size > 65) throw CodedException("ERR_POCKET_EDIT_LUT", "Unsupported cube size $size.", null)
@@ -74,7 +82,8 @@ class PocketEditModule : Module() {
       val exo = exoPlayerOf(player) ?: throw CodedException("ERR_POCKET_EDIT_PLAYER", "Not an expo-video player.", null)
       val state = PocketEditColorEffect.State(plan["lutKey"] as? String, splitOf(plan["split"] as? Map<*, *>))
       val face = PocketFaceParams.from(plan["face"] as? Map<*, *>)
-      main.post { PocketEditPreview.attach(exo, state, face) }
+      val probe = plan["faceProbe"] as? Boolean ?: false
+      main.post { PocketEditPreview.attach(exo, state, face, probe) }
     }
 
     Function("detachPreview") { player: SharedObject ->
@@ -146,27 +155,41 @@ class PocketEditModule : Module() {
 
 /**
  * The colour and face stages on expo-video's ExoPlayer (`setVideoEffects`), installed once per
- * player; later plans only change the effect's state, which the GL thread reads every frame.
- * Main looper only (expo-video builds its ExoPlayer on it).
+ * player; later plans only change the effects' state, which the GL thread reads every frame. The
+ * face effect is in the chain only while a face strength is above 0 or the Face panel probes for
+ * faces (re-set when that flips). Main looper only (expo-video builds its ExoPlayer on it).
  */
 @OptIn(UnstableApi::class)
 object PocketEditPreview {
-  private class Attachment(val color: PocketEditColorEffect, var face: PocketFaceParams)
+  private class Attachment(val color: PocketEditColorEffect, val face: PocketFaceRetouchEffect, var faceOn: Boolean)
 
   private val attachments = WeakHashMap<ExoPlayer, Attachment>()
+  private val main = Handler(Looper.getMainLooper())
 
-  fun attach(player: ExoPlayer, state: PocketEditColorEffect.State, face: PocketFaceParams) {
+  /** The face stage's count of faces in the frame (sent to JS as `onFaceCount`). */
+  @Volatile
+  var onFaceCount: ((Int) -> Unit)? = null
+
+  fun attach(player: ExoPlayer, state: PocketEditColorEffect.State, face: PocketFaceParams, probe: Boolean) {
     var att = attachments[player]
-    val faceChanged = att != null && att.face != face
+    val wantFace = !face.isZero || probe
     if (att == null) {
-      att = Attachment(PocketEditColorEffect(), face)
+      att = Attachment(PocketEditColorEffect(), faceEffect(player), wantFace)
       att.color.state = state
+      att.face.params = face
+      att.face.probe = probe
+      att.face.split = state.split
       attachments[player] = att
       install(player, att)
     } else {
-      att.face = face
       att.color.state = state
-      if (faceChanged) player.setVideoEffects(effects(att))
+      att.face.params = face
+      att.face.probe = probe
+      att.face.split = state.split
+      if (wantFace != att.faceOn) {
+        att.faceOn = wantFace
+        player.setVideoEffects(effects(att))
+      }
     }
     // Paused: show the change on the current frame.
     if (!player.isPlaying && player.playbackState == Player.STATE_READY) player.seekTo(player.currentPosition)
@@ -176,7 +199,21 @@ object PocketEditPreview {
     if (attachments.remove(player) != null) player.setVideoEffects(emptyList())
   }
 
-  private fun effects(att: Attachment): List<Effect> = listOfNotNull(att.color, PocketFaceRetouch.effect(att.face))
+  private fun effects(att: Attachment): List<Effect> = listOfNotNull(att.color, att.face.takeIf { att.faceOn })
+
+  private fun faceEffect(player: ExoPlayer): PocketFaceRetouchEffect {
+    val ref = java.lang.ref.WeakReference(player)
+    return PocketFaceRetouchEffect(export = false).apply {
+      onFaces = { n -> onFaceCount?.invoke(n) }
+      // Landmarks for a paused frame arrived after it was drawn: draw it again.
+      onRedraw = {
+        main.post {
+          val p = ref.get()
+          if (p != null && attachments[p] != null && !p.isPlaying && p.playbackState == Player.STATE_READY) p.seekTo(p.currentPosition)
+        }
+      }
+    }
+  }
 
   private fun install(player: ExoPlayer, att: Attachment) {
     val prepared = player.playbackState != Player.STATE_IDLE
@@ -228,7 +265,8 @@ object PocketEditExporter {
         video += PocketEditColorEffect().apply { state = PocketEditColorEffect.State(lutKey, null) }
       }
       PocketFaceRetouch.effect(face)?.let { video += it }
-      val colour = video.isNotEmpty()
+      // The LUT works on SDR code values; the face stage handles HDR itself (1/2.4 encoding).
+      val colour = video.any { it is PocketEditColorEffect }
       if (!geometryIdentity) {
         video += PocketEditPipeline.geometry(rotation, crop, plan["flipH"] as? Boolean ?: false, plan["flipV"] as? Boolean ?: false, width, height)
       }

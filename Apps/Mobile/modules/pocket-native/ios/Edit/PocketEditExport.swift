@@ -45,7 +45,7 @@ final class PocketEditExporter: @unchecked Sendable {
 
     let color = PocketEditColorStage(colorSpace: source.lutSpace)
     color.update(lutKey: plan.lutKey, split: nil)
-    let face = PocketFaceRetouchStage()
+    let face = PocketFaceRetouchStage(mode: .export)
     face.update(plan.face)
     let output = CGSize(width: plan.width, height: plan.height)
     let geometry = PocketEditGeometry(rotation: plan.rotation, crop: plan.crop, flipH: plan.flipH, flipV: plan.flipV, output: output)

@@ -21,9 +21,9 @@ import java.util.concurrent.ConcurrentHashMap
 /*
  * The playback editor's effect pipeline (Android). Same stages and order as src/core/edit/plan.ts:
  *   1. colour   — one baked 3D LUT (PocketEditLuts) in a Media3 GL effect (PocketEditColorEffect)
- *   2. face     — PocketFaceRetouch.factory (placeholder: none until face retouch lands)
+ *   2. face     — PocketFaceRetouchEffect (landmarks → skin smooth / brighten → slim / eye warps)
  *   3. geometry — rotate (cw) → Crop → flip → Presentation (output size)
- * Preview: ExoPlayer.setVideoEffects([colour, face]) on expo-video's player (geometry is React
+ * Preview: ExoPlayer.setVideoEffects([colour, face?]) on expo-video's player (geometry is React
  * Native transforms over a TextureView). Export: Media3 Transformer with all three + audio.
  */
 
@@ -223,22 +223,14 @@ void main() {
 }
 
 /**
- * Face retouch hook. PLACEHOLDER: nothing is drawn until the face implementation sets
- * `factory`. It receives the clip's face params and returns a GlEffect (or null when idle); a
- * `PocketFaceLandmarkSource` gives it per-frame landmarks by presentation time. It runs after
- * colour and before geometry, on the source frame, in preview and export alike.
+ * The face stage for export: a [PocketFaceRetouchEffect] that finds landmarks on every frame, or
+ * null while every face strength is 0 (no stage, no detection). The preview keeps its own
+ * effect per player ([PocketEditPreview]). Runs after colour and before geometry, on the source
+ * frame.
  */
 object PocketFaceRetouch {
-  @Volatile
-  var factory: ((PocketFaceParams) -> GlEffect?)? = null
-
   @UnstableApi
-  fun effect(params: PocketFaceParams): GlEffect? = if (params.isZero) null else factory?.invoke(params)
-}
-
-/** Per-frame face landmarks (normalized, top-left origin) for the face stage. */
-interface PocketFaceLandmarkSource {
-  fun landmarks(presentationTimeUs: Long): List<Map<String, List<FloatArray>>>
+  fun effect(params: PocketFaceParams): GlEffect? = if (params.isZero) null else PocketFaceRetouchEffect(export = true).also { it.params = params }
 }
 
 @UnstableApi
