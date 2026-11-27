@@ -69,7 +69,16 @@ export function acceptsPassword(password: string, hotspot: boolean): boolean {
 }
 
 /** Shared Wi-Fi details (`StationNetworkSetupView` password page) with an optional QR scan. */
-export function StationNetworkForm({ draft, onChange }: { draft: NetworkDraft; onChange: (d: NetworkDraft) => void }) {
+export function StationNetworkForm({
+  draft,
+  onChange,
+  passwordPlaceholder,
+}: {
+  draft: NetworkDraft;
+  onChange: (d: NetworkDraft) => void;
+  /** "Saved" on the desktop when the kept network's password will be used. */
+  passwordPlaceholder?: string;
+}) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [scanning, setScanning] = useState(false);
@@ -110,7 +119,7 @@ export function StationNetworkForm({ draft, onChange }: { draft: NetworkDraft; o
         value={draft.password}
         onChangeText={(password) => onChange({ ...draft, password })}
         secure
-        placeholder="Password"
+        placeholder={passwordPlaceholder ?? 'Password'}
         testID="setup.password"
         hint={draft.password.length > 0 && draft.password.length < 8 ? NetworkSetupCopy.passwordTooShort : undefined}
       />

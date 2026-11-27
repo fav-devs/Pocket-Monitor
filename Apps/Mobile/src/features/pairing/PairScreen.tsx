@@ -14,7 +14,9 @@ import { saveWifiPassword } from './credentials';
 import { rssiToBars } from './presentation';
 import { HotspotForm, SetupChooser, StationNetworkForm, acceptsPassword, type NetworkDraft } from './SetupFlow';
 import { useConnectActions } from './useConnectActions';
-import { DesktopAlreadyOnCameraWifi, DesktopReturnToCameraWifi, useDesktopSsidPrefill } from './desktop/DesktopPairExtras';
+import { desktopCameraEnabled } from '@/camera/bootstrap';
+import { joinsByItself, useDesktopHomeWifi } from '@/camera/desktop/homeWifi';
+import { DesktopAlreadyOnCameraWifi, DesktopRememberWifi, DesktopReturnToCameraWifi, useDesktopSsidPrefill } from './desktop/DesktopPairExtras';
 
 /** Permission explainer → scan → choose a setup → (Wi-Fi or Hotspot) network details. */
 type Stage = 'permission' | 'find' | 'setup' | 'details';
@@ -63,6 +65,10 @@ export default function PairScreen() {
   const [draft, setDraft] = useState<NetworkDraft>({ ssid: '', password: '' });
   const [reporting, setReporting] = useState(false);
   useDesktopSsidPrefill(kind, setDraft);
+  // Desktop: the home Wi-Fi kept from last time. With its password kept, the camera goes onto it
+  // with nothing typed (main 95f567d).
+  const home = useDesktopHomeWifi((s) => s.home);
+  const keptJoin = desktopCameraEnabled && kind === 'station' && joinsByItself(home, draft.ssid);
 
   useEffect(() => {
     if (stage !== 'find') return;
@@ -110,7 +116,8 @@ export default function PairScreen() {
     if (!kind || !subject) return;
     const path = pathFor(kind);
     const password = kind === 'softap' ? undefined : draft.password || undefined;
-    if (password && path.ssid) await saveWifiPassword(subject.id, path.ssid, password);
+    // The desktop keeps the home network's password in its backend, sealed (homeWifi.ts).
+    if (password && path.ssid && !desktopCameraEnabled) await saveWifiPassword(subject.id, path.ssid, password);
     if (addSetupFor) {
       const updated: SavedCamera = { ...addSetupFor, path };
       upsert(updated);
@@ -157,7 +164,18 @@ export default function PairScreen() {
   } else if (stage === 'find') {
     title = PairingWizardCopy.titles[0];
     body = PairingWizardCopy.bodies[0];
-    primary = { title: 'Continue', enabled: !!selected?.pairable, onPress: () => setStage('setup') };
+    primary = {
+      title: 'Continue',
+      enabled: !!selected?.pairable,
+      onPress: () => {
+        // A kept home Wi-Fi with its password is the way in unless the operator picks another.
+        if (desktopCameraEnabled && !kind && home?.hasPassword) {
+          setKind('station');
+          setDraft({ ssid: home.ssid, password: '' });
+        }
+        setStage('setup');
+      },
+    };
     back = saved.length ? { title: 'Back', onPress: exit } : null;
     const looking = scanning && !scanLooksEmpty;
     page = (
@@ -185,11 +203,15 @@ export default function PairScreen() {
     title = SetupChooserText.title;
     // Camera Wi-Fi needs nothing typed, so it connects from here; the others ask for a network next.
     primary =
-      kind === 'softap'
+      kind === 'softap' || keptJoin
         ? { title: 'Connect', enabled: setupValid && !!subject, onPress: () => void finishSetup() }
         : { title: 'Continue', enabled: !!kind && !!subject, onPress: () => setStage('details') };
     back = { title: 'Back', onPress: () => (addSetupFor ? exit() : setStage('find')) };
-    const added = addSetupFor ? { [addSetupFor.path.kind]: addSetupFor.path.ssid || 'saved' } : undefined;
+    const added = addSetupFor
+      ? { [addSetupFor.path.kind]: addSetupFor.path.ssid || 'saved' }
+      : desktopCameraEnabled && home
+        ? { station: home.ssid }
+        : undefined;
     page = (
       <>
         <SetupChooser
@@ -213,7 +235,15 @@ export default function PairScreen() {
       onPress: () => void finishSetup(),
     };
     back = { title: 'Back', onPress: () => setStage('setup') };
-    page = kind === 'station' ? <StationNetworkForm draft={draft} onChange={setDraft} /> : <HotspotForm draft={draft} onChange={setDraft} />;
+    page =
+      kind === 'station' ? (
+        <>
+          <StationNetworkForm draft={draft} onChange={setDraft} passwordPlaceholder={keptJoin ? 'Saved' : undefined} />
+          <DesktopRememberWifi />
+        </>
+      ) : (
+        <HotspotForm draft={draft} onChange={setDraft} />
+      );
   }
 
   return (

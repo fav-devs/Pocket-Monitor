@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { usePendingConnect } from '@/features/pairing/pairingStore';
 import type { ConnectionState, DiscoveredCamera, SavedCamera } from '../types';
+import { useDesktopHomeWifi } from './homeWifi';
 import {
   addressTarget,
   cameraModelFor,
@@ -56,6 +57,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 afterEach(() => {
   delete (globalThis as unknown as { window?: unknown }).window;
   usePendingConnect.getState().clear();
+  useDesktopHomeWifi.setState({ home: null, remember: true });
 });
 
 const sighting: DiscoveredCamera = { id: 'AA:BB', name: 'Pocket 3', model: 'osmo-pocket-3', rssi: -50, pairable: true, saved: false };
@@ -128,8 +130,32 @@ describe('first pair', () => {
     });
     usePendingConnect.getState().begin({ id: 'AA:BB', name: 'Pocket 3', model: 'osmo-pocket-3', path: { kind: 'station', ssid: 'Home' } }, { firstPair: true });
     await desktopConnect(sighting, { wifiPassword: 'hunter22' }, () => {});
-    expect(tauri.named('station_join')[0].args).toEqual({ address: 'AA:BB', ssid: 'Home', password: 'hunter22', model: 0x20 });
+    expect(tauri.named('station_join')[0].args).toEqual({ address: 'AA:BB', ssid: 'Home', password: 'hunter22', remember: true, model: 0x20 });
     expect(tauri.named('camera_open')[0].args).toEqual({ target: { kind: 'station' } });
+    // The kept network is read back after the join (name and whether a password is kept).
+    expect(tauri.commands()).toContain('home_wifi_get');
+  });
+
+  it('joins the kept network with nothing typed, so no password crosses IPC', async () => {
+    const tauri = fakeTauri({
+      station_join: () => ({ host: '10.0.0.7:9004', modelId: 0x20, confirmed: true }),
+      camera_open: () => ({ connected: true, pair: false }),
+    });
+    useDesktopHomeWifi.setState({ home: { ssid: 'Home', hasPassword: true }, remember: true });
+    usePendingConnect.getState().begin({ id: 'AA:BB', name: 'Pocket 3', model: 'osmo-pocket-3', path: { kind: 'station', ssid: 'Home' } }, { firstPair: true });
+    await desktopConnect(sighting, undefined, () => {});
+    expect(tauri.named('station_join')[0].args).toEqual({ address: 'AA:BB', ssid: 'Home', remember: true, model: 0x20 });
+  });
+
+  it('a camera that gives no Wi-Fi name is looked for on the LAN', async () => {
+    const tauri = fakeTauri({
+      ble_pair: () => ({ ssid: '', modelId: 0x20, onLan: true }),
+      camera_open: () => ({ connected: true, host: '10.0.0.7:9004', pair: false }),
+    });
+    const reports: (Partial<ConnectionState> | null)[] = [];
+    await desktopConnect(sighting, undefined, (p) => reports.push(p));
+    expect(tauri.named('camera_open')[0].args).toEqual({ target: { kind: 'paired', model: 0x20 } });
+    expect(reports[1]).toMatchObject({ phase: 'joining-wifi', detail: 'Finding the camera on your Wi-Fi…', transport: 'station' });
   });
 
   it('shows a failure in the camera’s own words and keeps quiet about a cancel', async () => {

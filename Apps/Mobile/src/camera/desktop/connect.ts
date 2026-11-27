@@ -9,7 +9,10 @@
  *   camera hands over) then `camera_open {kind: 'paired'}`, which writes the Windows WLAN
  *   profile, joins and links.
  * - First pair onto the operator's Wi-Fi: `station_join` (the password goes to the camera
- *   over Bluetooth and nowhere else), then `camera_open {kind: 'station'}`.
+ *   over Bluetooth, and is kept sealed by the backend when *Remember* is on), then
+ *   `camera_open {kind: 'station'}`. A kept network joins with nothing typed (`homeWifi.ts`).
+ * - A camera that gives no Wi-Fi name while pairing is probably already on the operator's
+ *   network: `ble_pair` says `onLan` and `camera_open {kind: 'paired'}` looks for it there.
  * - Remembered cameras live in the backend's files (the old viewfinder's);
  *   `features/pairing/desktop/desktopSync.ts` mirrors them into the saved-camera store with
  *   `desktop-*` ids so the Cameras page shows them.
@@ -21,6 +24,7 @@
 import { usePendingConnect } from '@/features/pairing/pairingStore';
 import type { ConnectOptions, Unsubscribe } from '../session';
 import type { CameraModelId, ConnectionPhase, ConnectionState, DiscoveredCamera, SavedCamera } from '../types';
+import { stationJoinArgs, useDesktopHomeWifi } from './homeWifi';
 import { invoke, isTauri, listen, type Unlisten } from './tauri';
 
 // ───────────── Shapes the backend speaks ─────────────
@@ -108,6 +112,8 @@ export interface ConnectStep {
 interface Paired {
   ssid: string;
   modelId?: number | null;
+  /** No Wi-Fi name: the camera is looked for on this PC's networks instead. */
+  onLan?: boolean;
 }
 
 interface StationReady {
@@ -287,15 +293,26 @@ export async function desktopConnect(
       });
       if (path.kind === 'softap') {
         const paired = await invoke<Paired>('ble_pair', { address: target.id, ...(model != null ? { model } : {}) });
-        report({ phase: 'joining-wifi', detail: `Joining ${paired.ssid}…` });
+        report({
+          phase: 'joining-wifi',
+          detail: paired.onLan ? 'Finding the camera on your Wi-Fi…' : `Joining ${paired.ssid}…`,
+          ...(paired.onLan ? { transport: 'station' as const } : {}),
+        });
         opened = await invoke<Opened>('camera_open', { target: { kind: 'paired', ...(model != null ? { model } : {}) } });
       } else {
-        await invoke<StationReady>('station_join', {
-          address: target.id,
-          ssid: path.ssid,
-          password: options?.wifiPassword ?? '',
-          ...(model != null ? { model } : {}),
-        });
+        const home = useDesktopHomeWifi.getState();
+        await invoke<StationReady>(
+          'station_join',
+          stationJoinArgs({
+            address: target.id,
+            ssid: path.ssid,
+            typed: options?.wifiPassword,
+            home: home.home,
+            remember: home.remember,
+            ...(model != null ? { model } : {}),
+          }),
+        );
+        void home.refresh();
         opened = await invoke<Opened>('camera_open', { target: { kind: 'station' } });
       }
     }

@@ -4,10 +4,21 @@
  *
  * - `DesktopAppRows` (Operator): the old home screen's settings, kept in `desktop-app-v1.txt`;
  *   gestures have their own page (`GestureSettings`).
- * - `DesktopNetworkRows` (Connection): the camera on this PC's home Wi-Fi, and a search for it.
+ * - `DesktopNetworkRows` (Connection): the home Wi-Fi kept for next time (Forget), the camera on
+ *   it, and a search for it.
  * - `DesktopSupportRows` (Support): the log, the folders, and a report written to disk.
  */
-import { File01Icon, Folder01Icon, CameraSmileIcon, KeyboardIcon, Note01Icon, Router01Icon, Search01Icon, Video01Icon } from '@hugeicons/core-free-icons';
+import {
+  File01Icon,
+  Folder01Icon,
+  CameraSmileIcon,
+  KeyboardIcon,
+  Note01Icon,
+  Router01Icon,
+  Search01Icon,
+  Video01Icon,
+  Wifi01Icon,
+} from '@hugeicons/core-free-icons';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform, Text } from 'react-native';
 import { useCameraSession } from '@/camera';
@@ -22,6 +33,7 @@ import {
   type DesktopPaths,
   type KnownCamera,
 } from '@/camera/desktop/connect';
+import { homeWifiLabel, useDesktopHomeWifi } from '@/camera/desktop/homeWifi';
 import { fonts, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import { usePreferences } from '@/state/preferences';
 import { useSavedCameras } from '@/state/savedCameras';
@@ -80,17 +92,24 @@ export function DesktopAppRows() {
   );
 }
 
-/** The camera on this PC's Wi-Fi: which network, and a search for it now (D-2, D-3). */
+/**
+ * This PC's home Wi-Fi: the network kept for the next pair (Forget), the camera on it, and a
+ * search for it now (D-1…D-3).
+ */
 export function DesktopNetworkRows() {
   const [station, setStation] = useState<KnownCamera | null>(null);
   const [state, setState] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
+  const home = useDesktopHomeWifi((s) => s.home);
+  const refreshHome = useDesktopHomeWifi((s) => s.refresh);
+  const forgetHome = useDesktopHomeWifi((s) => s.forget);
 
   useEffect(() => {
     if (!desktopCameraEnabled) return;
+    void refreshHome();
     knownCameras()
       .then((known) => setStation(known.find((k) => k.kind === 'station') ?? null))
       .catch(() => {});
-  }, []);
+  }, [refreshHome]);
 
   if (!desktopCameraEnabled) return null;
 
@@ -104,8 +123,26 @@ export function DesktopNetworkRows() {
     }
   };
 
+  const forget = () =>
+    forgetHome()
+      .then(() => setState({ busy: false, note: null }))
+      .catch((error) => setState({ busy: false, note: message(error) }));
+
   return (
     <Group label="This PC" note={state.note}>
+      {home ? (
+        <ActionRow
+          icon={Wifi01Icon}
+          title="Home Wi-Fi"
+          subtitle={homeWifiLabel(home)}
+          action="Forget"
+          destructive
+          onPress={() => void forget()}
+          testID="desktop.homeWifi.forget"
+        />
+      ) : (
+        <ValueRow icon={Wifi01Icon} title="Home Wi-Fi" value="None" />
+      )}
       <ValueRow icon={Router01Icon} title="Home Wi-Fi camera" value={station?.ssid ?? 'None'} last={!station} />
       {station ? (
         <ActionRow
