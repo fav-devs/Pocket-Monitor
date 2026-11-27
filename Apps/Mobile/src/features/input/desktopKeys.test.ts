@@ -23,6 +23,14 @@ describe('the desktop keys', () => {
     expect(useDesktopGestures.getState().handView).toBe(false);
   });
 
+  it('M is the marker (the web keeps the take) and I the mirror', () => {
+    for (const key of ['m', 'M', 'i', 'I']) expect(isDesktopKey(key)).toBe(true);
+    const calls: string[] = [];
+    runDesktopKeyAction('marker', { ...actions, addMarker: (source) => calls.push(`marker ${source}`), toggleAssist: (a) => calls.push(a) });
+    runDesktopKeyAction('toggle-mirror', { ...actions, toggleAssist: (a) => calls.push(a) });
+    expect(calls).toEqual(['marker key', 'mirror']);
+  });
+
   it('J is already done in Rust', () => {
     expect(() => runDesktopKeyAction('toggle-gestures', actions)).not.toThrow();
     expect(useDesktopGestures.getState().handView).toBe(false);

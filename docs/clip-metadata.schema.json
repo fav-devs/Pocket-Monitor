@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pocketmonitor.app/schemas/clip-metadata/v1.json",
+  "title": "Pocket Monitor clip metadata sidecar, v1",
+  "description": "One per clip, named <clip basename>.pocketmeta.json, beside the clip. Readers keep fields they do not know; writers put them back. See docs/clip-metadata.md.",
+  "type": "object",
+  "required": ["format", "version", "app", "writtenAt", "clip", "markers", "tags", "rating", "favorite", "notes", "shoot", "take"],
+  "additionalProperties": true,
+  "properties": {
+    "format": { "const": "pocket-monitor.clip-metadata" },
+    "version": { "type": "integer", "minimum": 1, "description": "1 for this schema. A reader reads a newer version as far as it understands it." },
+    "app": {
+      "type": "object",
+      "required": ["name", "version", "platform"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "platform": { "type": "string", "description": "ios, android, web or desktop." }
+      }
+    },
+    "writtenAt": { "type": "string", "format": "date-time" },
+    "clip": {
+      "type": "object",
+      "required": ["fileName", "createdAt", "durationSec", "fps", "width", "height", "colorMode", "codec", "sizeBytes", "camera"],
+      "additionalProperties": true,
+      "properties": {
+        "fileName": { "type": "string", "minLength": 1, "description": "The clip's file name as the camera wrote it (or the exported file's)." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The camera file's own time (DJI names files after their start)." },
+        "durationSec": { "type": ["number", "null"], "minimum": 0 },
+        "fps": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "width": { "type": ["integer", "null"], "minimum": 1 },
+        "height": { "type": ["integer", "null"], "minimum": 1 },
+        "colorMode": { "type": ["string", "null"], "description": "normal, hlg, dlog-m, dlog, dlog2 or 10bit." },
+        "codec": { "type": ["string", "null"], "description": "h264 or h265." },
+        "sizeBytes": { "type": ["integer", "null"], "minimum": 0 },
+        "camera": {
+          "type": "object",
+          "required": ["model", "name", "serial"],
+          "additionalProperties": true,
+          "properties": {
+            "model": { "type": ["string", "null"], "description": "osmo-pocket-3, osmo-pocket-4, osmo-pocket-4-pro, osmo-nano, osmo-action-6." },
+            "name": { "type": ["string", "null"] },
+            "serial": { "type": ["string", "null"] }
+          }
+        },
+        "derivedFrom": {
+          "type": "object",
+          "required": ["fileName", "trimStart", "trimEnd"],
+          "additionalProperties": true,
+          "description": "On a clip exported from the editor: the clip it was cut from and the kept range (seconds of that clip). Its markers are already in the new clip's time.",
+          "properties": {
+            "fileName": { "type": "string" },
+            "trimStart": { "type": "number", "minimum": 0 },
+            "trimEnd": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "markers": { "type": "array", "items": { "$ref": "#/$defs/marker" } },
+    "tags": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 32 } },
+    "rating": { "type": "integer", "minimum": 0, "maximum": 5, "description": "0 unrated, 1 to 5 stars." },
+    "favorite": { "type": "boolean" },
+    "notes": { "type": "string" },
+    "shoot": {
+      "type": ["object", "null"],
+      "required": ["id", "name", "folderPath"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "folderPath": { "type": "string", "description": "Slash-separated folders, e.g. Vlog/Tokyo/Day 2. Empty: use the name." }
+      }
+    },
+    "take": {
+      "type": ["object", "null"],
+      "required": ["id", "number", "startedAt", "timeSource"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "number": { "type": "integer", "minimum": 1 },
+        "startedAt": { "type": "string", "format": "date-time", "description": "The camera's first frame by the recording phone's clock." },
+        "timeSource": { "enum": ["camera", "phone"], "description": "camera: marker times follow the camera's own elapsed recording time; phone: the phone's clock from REC." }
+      }
+    }
+  },
+  "$defs": {
+    "marker": {
+      "type": "object",
+      "required": ["id", "time", "frame", "label", "tag", "color", "createdAt"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "time": { "type": "number", "minimum": 0, "description": "Seconds from the clip's first frame, to the millisecond." },
+        "frame": { "type": "integer", "minimum": 0, "description": "Nearest frame at clip.fps." },
+        "label": { "type": "string" },
+        "tag": { "type": ["string", "null"] },
+        "color": { "enum": ["blue", "cyan", "green", "yellow", "red", "pink", "purple", "cream"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "source": { "type": "string", "description": "button, key, gamepad, gesture, playback or import." }
+      }
+    }
+  }
+}

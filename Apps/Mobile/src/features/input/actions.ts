@@ -23,6 +23,8 @@ export interface LiveInputActions {
   /** +1 closes (faster), −1 opens (slower). */
   stepShutter: (direction: 1 | -1) => void;
   openGallery: () => void;
+  /** Optional (additive). A marker on the take being recorded (`M`, the gamepad's Menu button). */
+  addMarker?: (source: 'key' | 'gamepad') => void;
   toggleAssist: (assist: 'zebra' | 'peaking' | 'lut' | 'mirror') => void;
   toggleChrome: () => void;
   closeViewfinder: () => void;

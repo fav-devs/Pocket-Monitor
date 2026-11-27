@@ -1,5 +1,6 @@
 import { Camera01Icon, Cancel01Icon, Delete02Icon, Download04Icon, Share08Icon, SmartPhone01Icon, StarIcon } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
+import type { ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { chromeRegion, isHovered } from '@/components/desktop';
 import { ToolbarButton } from '@/components/page-toolbar';
@@ -29,6 +30,7 @@ export function PlaybackInspector({
   deleteLabel,
   onStill,
   onClose,
+  extra,
 }: {
   fileName: string;
   rendition: string;
@@ -43,6 +45,8 @@ export function PlaybackInspector({
   deleteLabel: string;
   onStill?: () => void;
   onClose: () => void;
+  /** Optional (additive). More sections under Rating (the clip's markers, tags, notes, shoot). */
+  extra?: ReactNode;
 }) {
   const styles = useThemedStyles(createStyles);
   return (
@@ -80,6 +84,7 @@ export function PlaybackInspector({
             <StarRating stars={rating} onSelect={onRate} />
           </View>
         </View>
+        {extra}
         <View style={styles.section}>
           <Text style={styles.label}>Details</Text>
           <ClipInfoList rows={rows} />

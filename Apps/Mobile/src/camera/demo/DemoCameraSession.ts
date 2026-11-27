@@ -18,7 +18,7 @@ import type {
   MotionWaypoint,
   SavedCamera,
 } from '../types';
-import { demoMediaItems } from './demoMedia';
+import { demoLookFor, demoMediaItems, studioSvg, svgDataUrl } from './demoMedia';
 
 type Listener<T> = (value: T) => void;
 type DemoVideoScene = Extract<VideoSource, { kind: 'demo' }>['scene'];
@@ -57,6 +57,8 @@ export class DemoCameraSession implements CameraSession {
   private zoomRate = 0;
   private mediaItems: CameraMediaItem[] = demoMediaItems();
   private lastTarget: DiscoveredCamera | SavedCamera | null = null;
+  /** When the current take began: a DJI file is named (and dated) after its start. */
+  private recordStartedAt = 0;
   private t = 0;
 
   /** The test scene this camera shows once live (additive; Multiview gives each demo camera its own). */
@@ -217,6 +219,7 @@ export class DemoCameraSession implements CameraSession {
         }
       }
       await this.delay();
+      this.recordStartedAt = Date.now();
       this.set((s) => ({ ...s, recording: { ...s.recording, countdown: null, recording: true, elapsedSec: 0, timecode: tc(0) } }));
       this.emit({ type: 'recording-started' });
     },
@@ -224,11 +227,14 @@ export class DemoCameraSession implements CameraSession {
       await this.delay();
       const elapsed = this.state.recording.elapsedSec;
       this.set((s) => ({ ...s, recording: { ...s.recording, recording: false } }));
+      const id = `demo-clip-${Date.now()}`;
+      const look = demoLookFor({ id, kind: 'video' });
       this.mediaItems.unshift({
-        id: `demo-clip-${Date.now()}`,
+        id,
         kind: 'video',
         fileName: `DJI_${String(this.mediaItems.length + 1).padStart(4, '0')}.MP4`,
-        createdAt: Date.now(),
+        createdAt: this.recordStartedAt || Date.now(),
+        thumbnailUrl: svgDataUrl(studioSvg((look.pan + 1) * 37 + elapsed / 2, look)),
         durationSec: elapsed,
         sizeBytes: elapsed * 1_250_000,
         width: 3840,

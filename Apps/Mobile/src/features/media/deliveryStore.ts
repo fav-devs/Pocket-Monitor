@@ -12,6 +12,8 @@ import { deliveryPlatform, type DeliverableFile } from './deliveryPlatform';
 import { type ExportOptions, ExportUnavailableError, mediaExporter, mimeTypeFor, requestedTransforms } from './export';
 import { frameioClient, sharedDemoFrameioClient, type FrameioProject } from './frameio';
 import { useMediaLibrary } from './libraryStore';
+import { hasMetadata, sidecarFileFor } from '@/features/markers/sidecarFor';
+import { sidecarShareFile, writeLibrarySidecar } from '@/features/markers/sidecarFiles';
 
 export type DeliveryDestination = 'share' | 'photos' | 'frameio';
 export type DeliveryStage =
@@ -196,6 +198,21 @@ export const useDelivery = create<DeliveryState>()((set, get) => {
         update(batch.id, { clipFraction: 1, notes: [...notes] });
       }
       if (isCancelled()) throw new CancelledError();
+      // Clip metadata (docs/clip-metadata.md): a sidecar rides with each clip that has any;
+      // Photos takes no sidecar, so the app's library keeps it.
+      const withMeta = batch.items.filter((i) => i.kind === 'video' && hasMetadata(i));
+      if (batch.destination === 'share' && prefs.shareSidecar !== false) {
+        for (const item of withMeta) {
+          const { fileName, json } = sidecarFileFor(item);
+          files.push(await sidecarShareFile(fileName, json));
+        }
+      }
+      if (batch.destination === 'photos') {
+        for (const item of withMeta) {
+          const { fileName, json } = sidecarFileFor(item);
+          await writeLibrarySidecar(fileName, json);
+        }
+      }
       let message: string;
       if (batch.destination === 'share') {
         update(batch.id, { stage: 'sharing' });

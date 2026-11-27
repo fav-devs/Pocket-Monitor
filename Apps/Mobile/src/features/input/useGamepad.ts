@@ -62,6 +62,7 @@ function readWebPad(): GamepadState {
  * picture-relative invert. Cross/A records (skips confirmation), Circle/B recenters, Square/X
  * rotates 180, Triangle/Y tracks a face or cancels. L1/R1 jump zoom stops; L2/R2 hold-to-zoom
  * (deeper is faster). D-pad up/down ISO, left/right shutter (left opens, right closes).
+ * Menu (Start / Options) adds a marker while recording.
  * Toasts connect/disconnect; unplug rests stick and zoom. Returns connection for Settings.
  */
 export function useGamepadInput(
@@ -136,6 +137,7 @@ export function useGamepadInput(
       if (pressed('down')) a.stepIso(-1);
       if (pressed('left')) a.stepShutter(-1);
       if (pressed('right')) a.stepShutter(1);
+      if (pressed('menu')) a.addMarker?.('gamepad');
       prev = next;
     };
 

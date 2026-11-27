@@ -14,6 +14,7 @@ function rig(facts: GestureFacts = { tracking: false, recording: false }) {
     toggleRecording: () => calls.push('record'),
     trackFace: (box) => calls.push(`track ${box.join(',')}`),
     stopTracking: () => calls.push('untrack'),
+    marker: () => calls.push('marker'),
     notice: (text) => calls.push(`notice ${text}`),
   };
   const driver = new GestureDriver(target, () => facts, defaultGestureMap());
@@ -40,6 +41,13 @@ describe('GestureDriver gestures', () => {
       'record',
       'notice NO PRESETS SAVED',
     ]);
+  });
+
+  it('a gesture set to "Add marker" adds one, with no notice of its own', () => {
+    const { driver, calls } = rig({ tracking: false, recording: true });
+    driver.map = { ...driver.map, horns: 'marker' };
+    driver.gesture('horns');
+    expect(calls).toEqual(['marker']);
   });
 
   it('the face gesture asks for the face while the camera picture is read, else says why not', () => {

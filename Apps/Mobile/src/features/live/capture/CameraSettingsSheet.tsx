@@ -16,6 +16,8 @@ import { LayoutChips, LayoutRows, LayoutsPanel } from '../layout/LayoutsPanel';
 import { useLiveUi, type CameraTab } from '../liveUiStore';
 import { PanelBack, PanelHint, PanelRow, PanelSwitch, PanelTitle, RowValue, ValueButton } from '../panel/kit';
 import { AudioMeters, ManualFocusDrum, WbControls, useWrite } from './CaptureSheetHost';
+import { ShootSheet } from '@/features/markers/MetaSheets';
+import { useActiveShoot } from '@/state/clipMeta';
 
 /** The panel's tabs (Mimo's leading tab icons). */
 export const CAMERA_TABS: { id: CameraTab; label: string; icon: IconSvgElement }[] = [
@@ -31,6 +33,20 @@ const DIRECTIONS = ['off', 'front', 'rear', 'surround'] as const;
 function next<T>(list: readonly T[], current: T): T {
   const i = list.indexOf(current);
   return list[(i + 1) % list.length];
+}
+
+/** The active shoot: clips recorded now join it (`src/state/clipMeta.ts`). */
+function ShootRow() {
+  const shoot = useActiveShoot();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <PanelRow testID="monitor.camera.shoot" title="Shoot" onPress={() => setOpen(true)}>
+        <RowValue value={shoot ? shoot.name : 'None'} />
+      </PanelRow>
+      <ShootSheet visible={open} onClose={() => setOpen(false)} />
+    </>
+  );
 }
 
 /** Camera tab: Mimo's Video panel rows. */
@@ -52,6 +68,7 @@ function CameraTabBody({ onWb }: { onWb: () => void }) {
   const colors = s.format.colorModeOptions;
   return (
     <>
+      {!photo ? <ShootRow /> : null}
       <PanelRow title="Grid">
         <ValueButton label={grid ? 'Gridlines' : 'Off'} accessibilityLabel="Grid" onPress={() => setAssist('GRID', !grid, 'live')} />
       </PanelRow>

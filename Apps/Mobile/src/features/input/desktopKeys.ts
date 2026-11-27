@@ -3,6 +3,7 @@ import { toggleHandView } from '@/camera/desktop/gestures';
 import { controlKey, type DesktopKeyAction } from '@/camera/desktop/input';
 import { invoke } from '@/camera/desktop/tauri';
 import { useLiveUi } from '@/features/live/liveUiStore';
+import { requestMarker } from '@/features/markers/bridge';
 import type { LiveInputActions } from './actions';
 
 /** Held arrows are repeated to Rust this often; it rests the gimbal after 250 ms of silence. */
@@ -14,7 +15,7 @@ const SWALLOW = new Set([' ', 'Tab', 'F11', ...ARROWS]);
 /** Every key the desktop viewfinder listens for (`pm_controller::keys`). */
 const DESKTOP_KEYS = new Set([
   ' ', 'Escape', 'Tab', 'F11', ...ARROWS,
-  'r', 't', 's', 'c', '+', '=', '-', '_', '0', 'f', 'v', 'g', 'x', '[', ']', 'h', 'e', 'k', 'a', 'z', 'p', 'l', 'm',
+  'r', 't', 's', 'c', '+', '=', '-', '_', '0', 'f', 'v', 'g', 'x', '[', ']', 'h', 'e', 'k', 'a', 'z', 'p', 'l', 'm', 'i',
   'j', 'y', '1', '2', '3', '4', '5', '6',
 ]);
 
@@ -52,6 +53,11 @@ export function runDesktopKeyAction(action: DesktopKeyAction, a: LiveInputAction
       break;
     case 'toggle-mirror':
       a.toggleAssist('mirror');
+      break;
+    case 'marker':
+      // `M`: Rust routes it back; the take and its clock live here.
+      if (a.addMarker) a.addMarker('key');
+      else requestMarker('key');
       break;
     case 'toggle-chrome':
       a.toggleChrome();

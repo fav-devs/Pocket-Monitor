@@ -19,6 +19,7 @@ import type { CameraSession } from '@/camera/session';
 import type { HandOverlay } from '@/core/gestures/vision';
 import { ClapDetector } from '@/core/gestures/clap';
 import { GestureDriver, type GestureTarget } from '@/core/gestures/drive';
+import { requestMarker } from '@/features/markers/bridge';
 import type { GestureMap } from '@/core/gestures/gesture';
 import { HandSmoother, POINTS, type Hand } from '@/core/gestures/hand';
 import { FeedReader, handOverlay, type Face, type VisionUpdate } from '@/core/gestures/vision';
@@ -100,6 +101,7 @@ export function sessionTarget(session: () => CameraSession, notice: (text: strin
       quiet(s.control.startTracking({ x, y, width, height }));
     },
     stopTracking: () => quiet(session().control.stopTracking()),
+    marker: () => requestMarker('gesture'),
     notice,
   };
 }

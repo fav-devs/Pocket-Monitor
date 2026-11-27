@@ -1,4 +1,4 @@
-import { Download04Icon, Image01Icon, Layers01Icon, SmartPhone01Icon, StarIcon, Tick02Icon, Video01Icon } from '@hugeicons/core-free-icons';
+import { Download04Icon, Flag02Icon, Image01Icon, Layers01Icon, SmartPhone01Icon, StarIcon, Tick02Icon, Video01Icon } from '@hugeicons/core-free-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { memo } from 'react';
@@ -10,6 +10,10 @@ import { cardDetail, colorModeLabel, durationLabel, formatLabel } from './format
 import type { GalleryEntry } from './gallery';
 import { useMediaThumbnail } from './libraryStore';
 import { ArtPill, favoriteColor, Glyph, ProgressBar } from './MediaChips';
+import { useClipMeta } from '@/state/clipMeta';
+
+/** The clip's marker count (its own entry; 0 without one). */
+const useMarkerCount = (id: string) => useClipMeta((s) => s.clips[id]?.markers.length ?? 0);
 
 /** Name + detail under a grid tile's picture. Used by the masonry for placement. */
 export const gridCaptionHeight = 44;
@@ -117,8 +121,10 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
   const duration = item.kind === 'video' ? durationLabel(item.durationSec) : '';
   const burst = entry.members.length > 1 ? entry.members.length : null;
   const press = () => (selecting ? p.onSelect(entry.id) : p.onOpen(entry.id));
-  const a11y = `${item.fileName}${burst ? `, ${burst} frames` : ''}${p.transferCaption ? `, ${p.transferCaption}` : ''}`;
-  const detail = [cardDetail(item), burst ? `${burst} frames` : null].filter(Boolean).join(' · ');
+  const markers = useMarkerCount(item.id);
+  const markerText = markers ? `${markers} marker${markers === 1 ? '' : 's'}` : null;
+  const a11y = `${item.fileName}${burst ? `, ${burst} frames` : ''}${markerText ? `, ${markerText}` : ''}${p.transferCaption ? `, ${p.transferCaption}` : ''}`;
+  const detail = [cardDetail(item), burst ? `${burst} frames` : null, markerText].filter(Boolean).join(' · ');
 
   if (p.layout === 'list') {
     const rate = p.transferCaption && p.transferCaption.includes('·');
@@ -170,7 +176,7 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
     );
   }
 
-  if (p.dense) return <DenseTile {...p} favorite={favorite} duration={duration} burst={burst} a11y={a11y} press={press} />;
+  if (p.dense) return <DenseTile {...p} favorite={favorite} duration={duration} burst={burst} markers={markers} a11y={a11y} press={press} />;
 
   const width = p.width ?? 160;
   const pictureHeight = width / (p.aspect ?? 16 / 9);
@@ -195,6 +201,7 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
             </View>
           ) : null}
           {burst && !selecting ? <ArtPill icon={Layers01Icon} text={`${burst}`} style={styles.topLeft} /> : null}
+          {markers && !selecting ? <ArtPill icon={Flag02Icon} text={`${markers}`} style={[styles.topLeft, burst ? { top: 30 } : null]} /> : null}
           {p.onPhone && p.transferFraction == null ? <ArtPill icon={SmartPhone01Icon} style={styles.bottomLeft} /> : null}
           {duration ? <ArtPill text={duration} style={styles.bottomRight} /> : null}
           {p.transferFraction != null ? <ProgressBar fraction={p.transferFraction} height={3} onVideo style={styles.transferBar} /> : null}
@@ -236,7 +243,7 @@ function TileGlyph({ icon, size = 14, color = '#ffffff', filled }: { icon: Param
  * download state top-left (arrow until the original is on the phone), a favourite star and the
  * burst count. The selection check takes the download mark's corner while selecting.
  */
-function DenseTile(p: MediaCellProps & { favorite: boolean; duration: string; burst: number | null; a11y: string; press: () => void }) {
+function DenseTile(p: MediaCellProps & { favorite: boolean; duration: string; burst: number | null; markers: number; a11y: string; press: () => void }) {
   const styles = useThemedStyles(createStyles);
   const { entry, selecting, selected } = p;
   const item = entry.cover;
@@ -268,7 +275,7 @@ function DenseTile(p: MediaCellProps & { favorite: boolean; duration: string; bu
             )}
           </View>
         ) : null}
-        {p.duration || p.burst ? (
+        {p.duration || p.burst || p.markers ? (
           <View pointerEvents="none" style={styles.denseBottom}>
             {p.duration ? (
               <View style={styles.denseRow}>
@@ -278,10 +285,20 @@ function DenseTile(p: MediaCellProps & { favorite: boolean; duration: string; bu
             ) : (
               <View />
             )}
-            {p.burst ? (
+            {p.burst || p.markers ? (
               <View style={styles.denseRow}>
-                <TileGlyph icon={Layers01Icon} size={12} />
-                <Text style={styles.denseText}>{p.burst}</Text>
+                {p.markers ? (
+                  <>
+                    <TileGlyph icon={Flag02Icon} size={12} />
+                    <Text style={styles.denseText}>{p.markers}</Text>
+                  </>
+                ) : null}
+                {p.burst ? (
+                  <>
+                    <TileGlyph icon={Layers01Icon} size={12} />
+                    <Text style={styles.denseText}>{p.burst}</Text>
+                  </>
+                ) : null}
               </View>
             ) : null}
           </View>

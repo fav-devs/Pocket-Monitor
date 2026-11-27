@@ -17,6 +17,7 @@ import { CameraProvider } from '@/camera';
 import { isWideWindow } from '@/constants/layout';
 import { AppThemeProvider, useTheme } from '@/constants/theme';
 import { PhoneGesturesHost } from '@/features/gestures/PhoneGesturesHost';
+import { MarkerHost } from '@/features/markers/MarkerHost';
 import { AppShell } from '@/features/shell/AppShell';
 import { FeedSharingHost } from '@/features/watcher/useFeedSharing';
 import '@/camera/bootstrap';
@@ -76,6 +77,8 @@ function RootLayoutInner() {
               </AppShell>
               {/* Phones' hand gestures: runs them on the live view and draws their pills over it. */}
               <PhoneGesturesHost />
+              {/* Takes, their markers and matching them with camera files; sidecars on this device. */}
+              <MarkerHost />
             </BottomSheetModalProvider>
           </CameraProvider>
         </ThemeProvider>

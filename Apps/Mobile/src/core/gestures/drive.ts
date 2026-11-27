@@ -43,6 +43,8 @@ export interface GestureTarget {
   /** Track this box (left, top, width, height of the picture). */
   trackFace(box: FaceBox): void;
   stopTracking(): void;
+  /** Optional (additive). A marker on the take being recorded (it shows its own toast). */
+  marker?(): void;
   /** A line for the operator ("GESTURE: RECENTRE"). */
   notice(text: string): void;
 }
@@ -113,6 +115,10 @@ export class GestureDriver {
         } else {
           this.target.notice("FACE TRACKING NEEDS THE CAMERA'S PICTURE");
         }
+        return;
+      case 'marker':
+        // The marker toast says what happened; no notice on top of it.
+        this.target.marker?.();
         return;
       case 'next_preset':
       case 'previous_preset':

@@ -9,6 +9,7 @@ import {
   CloudUploadIcon,
   ColorsIcon,
   FileVideoIcon,
+  Flag02Icon,
   Folder01Icon,
   GridViewIcon,
   Image01Icon,
@@ -243,6 +244,7 @@ export default function MediaSettingsPanel() {
         />
         {toggle('bakeLUT', PaintBoardIcon, 'Bake LUT on export', { disabled: !exporter, tag: exporter ? undefined : NATIVE })}
         {toggle('includeMetadata', Tag01Icon, 'Include metadata')}
+        {toggle('shareSidecar', Flag02Icon, 'Send markers file')}
         {toggle('keepOriginals', SmartPhone01Icon, 'Keep originals on this phone')}
         <SettingsRow
           icon={SmartPhone01Icon}

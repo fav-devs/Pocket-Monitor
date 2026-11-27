@@ -44,9 +44,19 @@ describe('GestureMap', () => {
     expect(gestureMapOrDefault([1, 2])).toEqual(DEFAULT_GESTURE_MAP);
   });
 
+  it('reads and writes "Add marker", which no gesture does by default', () => {
+    expect(Object.values(DEFAULT_GESTURE_MAP)).not.toContain('marker');
+    const read = gestureMapFromJson({ horns: 'marker' });
+    expect(read.horns).toBe('marker');
+    expect(gestureMapToJson(read).horns).toBe('marker');
+    const lines = defaultGestureMap();
+    readGestureMapLine(lines, 'gesture.point=marker');
+    expect(lines.point).toBe('marker');
+  });
+
   it('carries the desktop serde names', () => {
     expect(GESTURE_KEYS).toEqual(['swipe_left', 'swipe_right', 'swipe_up', 'swipe_down', 'palm', 'fist', 'point', 'two', 'horns', 'face_track']);
-    expect(GESTURE_ACTION_KEYS).toEqual(['nothing', 'recenter', 'flip', 'next_preset', 'previous_preset', 'stop', 'record', 'face_track']);
+    expect(GESTURE_ACTION_KEYS).toEqual(['nothing', 'recenter', 'flip', 'next_preset', 'previous_preset', 'stop', 'record', 'face_track', 'marker']);
     // `GestureMap::default()`.
     expect(DEFAULT_GESTURE_MAP).toEqual({
       swipe_left: 'previous_preset',

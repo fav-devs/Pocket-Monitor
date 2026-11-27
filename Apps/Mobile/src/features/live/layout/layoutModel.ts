@@ -23,9 +23,9 @@ export interface Point {
 }
 
 /** Movable chrome over the picture. Strip controls, record, media and Fit/Fill stay fixed. */
-export type MovableId = 'quick' | 'lock' | 'status' | 'statusLead' | 'values' | 'zoom' | 'gimbal' | 'stick' | 'runPill';
+export type MovableId = 'quick' | 'lock' | 'status' | 'statusLead' | 'values' | 'zoom' | 'gimbal' | 'stick' | 'runPill' | 'marker';
 
-export const MOVABLE_IDS: MovableId[] = ['quick', 'lock', 'status', 'statusLead', 'values', 'zoom', 'gimbal', 'stick', 'runPill'];
+export const MOVABLE_IDS: MovableId[] = ['quick', 'lock', 'status', 'statusLead', 'values', 'zoom', 'gimbal', 'stick', 'runPill', 'marker'];
 
 export const MOVABLE_LABEL: Record<MovableId, string> = {
   quick: 'Quick icons',
@@ -37,6 +37,7 @@ export const MOVABLE_LABEL: Record<MovableId, string> = {
   gimbal: 'Gimbal button',
   stick: 'Stick',
   runPill: 'Motion Control',
+  marker: 'Marker',
 };
 
 export type ItemSize = 'S' | 'M' | 'L';
@@ -53,6 +54,7 @@ export const ITEM_SIZES: Record<MovableId, ItemSize[]> = {
   gimbal: ['M', 'L'],
   stick: ['S', 'M', 'L'],
   runPill: [],
+  marker: ['M', 'L'],
 };
 
 export type LayoutSlot = 'landscape' | 'portrait' | 'wide';

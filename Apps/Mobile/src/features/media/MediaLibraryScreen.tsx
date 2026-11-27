@@ -6,8 +6,11 @@ import {
   CheckmarkCircle02Icon,
   CloudUploadIcon,
   Delete02Icon,
+  FileExportIcon,
   FilterHorizontalIcon,
+  Folder01Icon,
   Image01Icon,
+  MoreHorizontalIcon,
   RefreshIcon,
   Search01Icon,
   Settings02Icon,
@@ -15,6 +18,7 @@ import {
   SmartPhone01Icon,
   StarIcon,
   StarOffIcon,
+  Tag01Icon,
   WifiDisconnected01Icon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
@@ -45,6 +49,11 @@ import { HeaderButton, TextAction } from './MediaChips';
 import { MediaGallery } from './MediaGallery';
 import { BusyOverlay, ConfirmSheet, NoticeToast } from './MediaOverlays';
 import type { CameraMediaItem } from '@/camera';
+import { ActionSheet } from '@/components/action-sheet';
+import { Chip } from '@/components/chip';
+import { emptyMetaFilter, matchesQuery, metaFilterCount, passesMetaFilter, shootSectionOf, tagsIn, type MetaFilter } from '@/features/markers/library';
+import { ExportMarkersSheet, ShootSheet, TagSheet } from '@/features/markers/MetaSheets';
+import { metaOf, useActiveShoot, useClipMeta } from '@/state/clipMeta';
 
 const copy = {
   emptyPull: 'Pull to refresh.',
@@ -188,6 +197,13 @@ export default function MediaLibraryScreen() {
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareItems, setShareItems] = useState<CameraMediaItem[]>([]);
+  // Clip metadata: the tag and shoot filters, and the sheets the selection opens.
+  const [metaFilter, setMetaFilter] = useState<MetaFilter>(emptyMetaFilter);
+  const [metaSheet, setMetaSheet] = useState<'shoots' | 'more' | 'move' | 'tags' | 'export' | null>(null);
+  const [metaItems, setMetaItems] = useState<CameraMediaItem[]>([]);
+  const clipMeta = useClipMeta((s) => s.clips);
+  const shoots = useClipMeta((s) => s.shoots);
+  const activeShoot = useActiveShoot();
 
   // Listing pauses live view on the camera, so it runs only while the Camera tab is shown.
   useEffect(() => {
@@ -203,11 +219,21 @@ export default function MediaLibraryScreen() {
   }, [lib.localFiles, phoneClips]);
 
   // Offline (native camera dropped), only clips cached on this phone are browsable.
+  const availableItems = useMemo(
+    () => (onPhoneTab ? phoneItems : sourceAvailable ? lib.items : lib.items.filter((i) => onPhone[i.id])),
+    [onPhoneTab, phoneItems, lib.items, onPhone, sourceAvailable],
+  );
+  const lookup = useCallback((i: CameraMediaItem) => metaOf(clipMeta, i), [clipMeta]);
+  // Search also reads tags, notes, marker labels and the shoot; the chips filter by tag and shoot.
   const visibleItems = useMemo(() => {
-    const available = onPhoneTab ? phoneItems : sourceAvailable ? lib.items : lib.items.filter((i) => onPhone[i.id]);
-    const q = query.trim().toLowerCase();
-    return q ? available.filter((i) => i.fileName.toLowerCase().includes(q)) : available;
-  }, [onPhoneTab, phoneItems, lib.items, onPhone, sourceAvailable, query]);
+    const q = query.trim();
+    return availableItems.filter((i) => {
+      const m = lookup(i);
+      return passesMetaFilter(m, metaFilter) && matchesQuery(i, m, m?.shootId ? shoots.find((x) => x.id === m.shootId) : undefined, q);
+    });
+  }, [availableItems, lookup, metaFilter, query, shoots]);
+  const libraryTags = useMemo(() => tagsIn(availableItems, lookup).slice(0, 30), [availableItems, lookup]);
+  const sectionOf = useMemo(() => (prefs.groupByShoot ? shootSectionOf(lookup, shoots) : undefined), [prefs.groupByShoot, lookup, shoots]);
   const model = useMemo(
     () =>
       deriveGallery(visibleItems, {
@@ -216,8 +242,9 @@ export default function MediaLibraryScreen() {
         sort: prefs.sort,
         stackBursts: prefs.stackBursts,
         groupByDay: prefs.groupByDay,
+        sectionOf,
       }),
-    [visibleItems, lib.category, lib.filters, prefs.sort, prefs.stackBursts, prefs.groupByDay],
+    [visibleItems, lib.category, lib.filters, prefs.sort, prefs.stackBursts, prefs.groupByDay, sectionOf],
   );
 
   const filterCount = activeFilterCount(lib.filters);
@@ -286,6 +313,8 @@ export default function MediaLibraryScreen() {
       <EmptyState icon={WifiDisconnected01Icon} title="Camera disconnected" />
     ) : searching && !model.entries.length ? (
       <EmptyState icon={Search01Icon} title="No matches" />
+    ) : metaFilterCount(metaFilter) > 0 ? (
+      <EmptyState icon={Tag01Icon} title="No matching clips" action={{ title: 'Clear filters', onPress: () => setMetaFilter(emptyMetaFilter) }} />
     ) : filterCount > 0 ? (
       <EmptyState icon={FilterHorizontalIcon} title="No matching clips" action={{ title: 'Clear filters', onPress: () => lib.setFilters(emptyFilters) }} />
     ) : lib.category === 'favorites' ? (
@@ -389,6 +418,7 @@ export default function MediaLibraryScreen() {
               onPress={refresh}
               disabled={onPhoneTab || !sourceAvailable || lib.refreshing || lib.status === 'loading'}
             />
+            <ToolbarButton icon={Folder01Icon} title={activeShoot ? activeShoot.name : 'Shoots'} label="Shoots" variant="secondary" onPress={() => setMetaSheet('shoots')} />
             <ToolbarButton icon={CloudUploadIcon} label="Deliveries" badge={deliveryCount || undefined} onPress={() => setDeliveryPanel(true)} />
             <ToolbarButton icon={Settings02Icon} label="Media settings" onPress={() => router.push('/media/settings')} />
             <ToolbarButton icon={CheckmarkCircle02Icon} title="Select" variant="secondary" onPress={() => lib.beginSelection()} disabled={!model.entries.length} />
@@ -419,6 +449,9 @@ export default function MediaLibraryScreen() {
           </Pressable>
         ) : null}
       </View>
+      {wideLayout ? null : (
+        <SquareButton icon={Folder01Icon} label={activeShoot ? `Shoots, ${activeShoot.name} active` : 'Shoots'} active={!!activeShoot} onPress={() => setMetaSheet('shoots')} />
+      )}
       <SquareButton icon={ArrowUpDownIcon} label="Sort and view" onPress={() => setViewOpen(true)} />
       <SquareButton icon={FilterHorizontalIcon} label="Filter library" active={filterCount > 0} badge={filterCount || undefined} onPress={() => setFilterOpen(true)} />
     </View>
@@ -431,6 +464,19 @@ export default function MediaLibraryScreen() {
       ))}
     </ScrollView>
   );
+
+  const shootFilter = metaFilter.shootId ? (metaFilter.shootId === 'none' ? 'No shoot' : (shoots.find((x) => x.id === metaFilter.shootId)?.name ?? 'Shoot')) : null;
+  const toggleTagFilter = (t: string) =>
+    setMetaFilter((f) => ({ ...f, tags: f.tags.some((x) => x.toLowerCase() === t.toLowerCase()) ? f.tags.filter((x) => x.toLowerCase() !== t.toLowerCase()) : [...f.tags, t] }));
+  const metaChips =
+    libraryTags.length || shootFilter ? (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.metaChips} keyboardShouldPersistTaps="handled">
+        {shootFilter ? <Chip label={`${shootFilter} ✕`} selected onPress={() => setMetaFilter((f) => ({ ...f, shootId: null }))} /> : null}
+        {libraryTags.map((t) => (
+          <Chip key={t} label={t} selected={metaFilter.tags.some((x) => x.toLowerCase() === t.toLowerCase())} onPress={() => toggleTagFilter(t)} />
+        ))}
+      </ScrollView>
+    ) : null;
 
   const notices = (
     <>
@@ -474,6 +520,7 @@ export default function MediaLibraryScreen() {
               {categoryRow}
             </>
           )}
+          {metaChips}
         </View>
       </View>
 
@@ -530,6 +577,18 @@ export default function MediaLibraryScreen() {
               style={styles.dockButton}
             />
             <Button
+              title="More"
+              icon={MoreHorizontalIcon}
+              variant="secondary"
+              accessibilityLabel="More for selected"
+              disabled={!selection.length}
+              onPress={() => {
+                setMetaItems((onPhoneTab ? phoneItems : lib.items).filter((i) => selection.some((s) => s.id === i.id)));
+                setMetaSheet('more');
+              }}
+              style={styles.dockButton}
+            />
+            <Button
               title="Delete"
               icon={Delete02Icon}
               variant="ghost"
@@ -558,6 +617,28 @@ export default function MediaLibraryScreen() {
         }}
       />
       <DeliveryQueueSheet visible={deliveryPanelOpen} onClose={() => setDeliveryPanel(false)} />
+      <ShootSheet visible={metaSheet === 'shoots'} onClose={() => setMetaSheet(null)} onFilter={(id) => setMetaFilter((f) => ({ ...f, shootId: id }))} />
+      <ActionSheet
+        visible={metaSheet === 'more'}
+        title={`${metaItems.length} selected`}
+        onClose={() => setMetaSheet((m) => (m === 'more' ? null : m))}
+        actions={[
+          { label: 'Move to shoot', icon: Folder01Icon, onPress: () => setMetaSheet('move') },
+          { label: 'Tags', icon: Tag01Icon, onPress: () => setMetaSheet('tags') },
+          { label: 'Export markers', icon: FileExportIcon, onPress: () => setMetaSheet('export') },
+        ]}
+      />
+      <ShootSheet
+        visible={metaSheet === 'move'}
+        mode="pick"
+        onClose={() => setMetaSheet(null)}
+        onPick={(id) => {
+          useClipMeta.getState().setShoot(metaItems, id);
+          lib.showNotice(id ? `Moved to ${useClipMeta.getState().shoots.find((x) => x.id === id)?.name ?? 'shoot'}` : 'Removed from shoot');
+        }}
+      />
+      <TagSheet visible={metaSheet === 'tags'} items={metaItems} onClose={() => setMetaSheet(null)} />
+      <ExportMarkersSheet visible={metaSheet === 'export'} items={metaItems} onClose={() => setMetaSheet(null)} onDone={(m) => lib.showNotice(m)} />
       <ConfirmSheet
         visible={confirmDelete !== null}
         title={`Delete ${confirmDelete?.length === 1 ? '1 item' : `${confirmDelete?.length ?? 0} items`} from ${onPhoneTab ? 'this phone' : 'the camera'}?`}
@@ -635,6 +716,7 @@ function createStyles(colors: ThemeColors) {
     categoryScroll: { flexGrow: 1, flexShrink: 1 },
     categories: { gap: spacing.sm, paddingTop: spacing.sm + 2, paddingBottom: 2 },
     categoriesWide: { paddingTop: 0 },
+    metaChips: { gap: spacing.sm, paddingTop: spacing.sm },
     pill: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,

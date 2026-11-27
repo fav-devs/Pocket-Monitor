@@ -22,7 +22,7 @@ export type GestureKey =
   | 'face_track';
 
 /** What a gesture can be set to do (`GestureAction::key`). */
-export type GestureActionKey = 'nothing' | 'recenter' | 'flip' | 'next_preset' | 'previous_preset' | 'stop' | 'record' | 'face_track';
+export type GestureActionKey = 'nothing' | 'recenter' | 'flip' | 'next_preset' | 'previous_preset' | 'stop' | 'record' | 'face_track' | 'marker';
 
 /** `Gesture::ALL`, in order. */
 export const GESTURE_KEYS: readonly GestureKey[] = [
@@ -48,6 +48,7 @@ export const GESTURE_ACTION_KEYS: readonly GestureActionKey[] = [
   'stop',
   'record',
   'face_track',
+  'marker',
 ];
 
 /** `Gesture::label`. */
@@ -88,6 +89,7 @@ export const GESTURE_ACTION_LABEL: Readonly<Record<GestureActionKey, string>> = 
   stop: 'Stop everything',
   record: 'Start / stop recording (hold 2.5 s)',
   face_track: 'Face tracking on / off',
+  marker: 'Add marker',
 };
 
 export type GestureMap = Record<GestureKey, GestureActionKey>;

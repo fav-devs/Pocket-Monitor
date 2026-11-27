@@ -124,7 +124,8 @@ export function ViewSheet({ visible, onClose }: { visible: boolean; onClose: () 
             value={prefs.layout === 'grid' && prefs.gridCaptions}
             onChange={(v) => prefs.set('gridCaptions', v)}
           />
-          <SwitchRow inset={false} title="Group by day" value={prefs.groupByDay} onChange={(v) => prefs.set('groupByDay', v)} />
+          <SwitchRow inset={false} title="Group by day" disabled={prefs.groupByShoot} value={prefs.groupByDay && !prefs.groupByShoot} onChange={(v) => prefs.set('groupByDay', v)} />
+          <SwitchRow inset={false} title="Group by shoot" value={!!prefs.groupByShoot} onChange={(v) => prefs.set('groupByShoot', v)} />
           <SwitchRow inset={false} last title="Stack bursts" value={prefs.stackBursts} onChange={(v) => prefs.set('stackBursts', v)} />
         </View>
       </View>

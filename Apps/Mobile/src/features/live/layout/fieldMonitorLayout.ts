@@ -144,6 +144,8 @@ export interface FieldMonitorLayout {
   statusRows: 1 | 2;
   /** REC + timecode, left-aligned in this rect. */
   statusLead: Rect;
+  /** Optional (additive). The Marker button's default spot, beside REC / timecode. */
+  marker: Rect;
   /** The exposure readout text (a tile strip in Multiview). */
   values: Rect;
   valuesPerRow: number;
@@ -221,7 +223,7 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
 
   let picture: Rect, leadStrip: Rect, trailStrip: Rect, leading: Rect, back: Rect, quick: Rect, lock: Rect;
   let status: Rect, statusLead: Rect, values: Rect, modeRail: Rect, record: Rect, media: Rect;
-  let aspectToggle: Rect, stick: Rect, stage: Rect;
+  let aspectToggle: Rect, stick: Rect, stage: Rect, marker: Rect;
   let fixed: Rect[];
   let fillsPicture: boolean;
   let sheet: MonitorSheetPlacement;
@@ -275,6 +277,8 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     const lockW = quickExtent(lockN);
     lock = rect(maxX(quickRow) - lockW, quickRow.y, lockW, QUICK_SIZE);
     quick = rect(quickRow.x, quickRow.y, Math.max(QUICK_SIZE, lock.x - 8 - quickRow.x), QUICK_SIZE);
+    // The Marker button under REC / timecode: the picture's top corner, below the rows over it.
+    marker = overlaid ? rect(lead, maxY(quickRow) + 8, MIN_TAP, MIN_TAP) : rect(lead, picture.y + 8, MIN_TAP, MIN_TAP);
     const below = overlaid ? h * 0.5 : maxY(picture) + 6;
     sheet = { dock: null, topInset: clamp(below, h * 0.3, h * 0.68), bottomInset: h - modeRail.y + 4 };
     // Movable chrome lives between the header's top and the mode rail.
@@ -334,6 +338,8 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     // leading of the column, the readout bottom-centre.
     status = rect(midX(stage), picTop + 2, quick.x - 4 - midX(stage), 28);
     statusLead = rect(seenX + 10, picTop + 2, midX(stage) - seenX - 10, 28);
+    // The Marker button under REC / timecode, at the picture's leading edge.
+    marker = rect(seenX + 10, maxY(statusLead) + 8, MIN_TAP, MIN_TAP);
     stick = rect(colMid - disc / 2 - 8 - stickSide, picBottom - 4 - stickSide, stickSide, stickSide);
     const centre = midX(stage);
     const half = Math.max(60, Math.min(centre - seenX - 12, stick.x - 8 - centre));
@@ -367,6 +373,7 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     status,
     statusRows: 1,
     statusLead,
+    marker,
     values,
     valuesPerRow: 1,
     modeRail,

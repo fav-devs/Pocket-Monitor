@@ -72,6 +72,9 @@ import { ShootingModeRail } from './record/ShootingModeRail';
 import { CameraStatusCluster, RecordingReadout } from './status/LiveStatusChrome';
 import { isPhotoMode } from './format';
 import { WIDE_LAYOUT_MIN_WIDTH } from '@/constants/wide';
+import { addMarker } from '@/features/markers/capture';
+import { MarkerButton, MarkerToast } from '@/features/markers/LiveMarker';
+import { currentTake, useClipMeta } from '@/state/clipMeta';
 
 const ASPECT: Record<string, number> = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:3': 4 / 3, '3:2': 3 / 2 };
 
@@ -127,6 +130,7 @@ export default function LiveScreen() {
   const lockedAllAxes = useCamera((s) => s.gimbal.lockedAllAxes);
   const programActive = useCamera((s) => ['preparing', 'running'].includes(s.gimbal.program.status));
   const hasWaypoints = useCamera((s) => !!(s.gimbal.program.a || s.gimbal.program.b || s.gimbal.program.c));
+  const takeMarkers = useClipMeta((s) => (recording ? (currentTake(s.takes)?.markers.length ?? 0) : 0));
 
   const prefs = usePreferences();
   const ui = useLiveUi();
@@ -218,6 +222,7 @@ export default function LiveScreen() {
       gimbal: { rect: layout.gimbal },
       stick: { rect: layout.stick },
       runPill: { rect: rect(layout.stage.x, belowStatus, layout.stage.width, 44), v: 'start' },
+      marker: { rect: layout.marker, h: 'start', v: 'start' },
     }),
     [layout, belowStatus],
   );
@@ -366,6 +371,9 @@ export default function LiveScreen() {
         stableNotice(`Shutter 1/${next}`);
       },
       openGallery: () => router.push('/media'),
+      addMarker: (source) => {
+        addMarker(source);
+      },
       toggleAssist: (a) => {
         const tool = a === 'zebra' ? 'ZEBRA' : a === 'peaking' ? 'PEAK' : a === 'lut' ? 'LUT' : 'MIRROR';
         const store = useAssists.getState();
@@ -526,6 +534,11 @@ export default function LiveScreen() {
                 <RecordingReadout idle="timecode" ghost={editing} />
               </MovableItem>
             ) : null}
+            {recording || editing ? (
+              <MovableItem id="marker" layout={movable} label="Marker">
+                <MarkerButton count={takeMarkers} ghost={editing} />
+              </MovableItem>
+            ) : null}
             <MovableItem id="status" layout={movable} label="Status">
               <CameraStatusCluster />
             </MovableItem>
@@ -613,6 +626,11 @@ export default function LiveScreen() {
       {hasBackgroundFeatures ? <BackgroundMonitor onDisconnect={exit} /> : null}
 
       {prefs.showRecordingBorder && recording ? <MonitorRecordingBorder /> : null}
+      {/* The marker toast sits low on the picture, clear of REC, the Marker button and the notices. */}
+      <MarkerToast
+        top={(portrait && !layout.fillsPicture ? maxY(layout.picture) : layout.values.y) - 104}
+        maxWidth={Math.min(440, layout.stage.width - 16)}
+      />
       <MonitorTransientNotice notices={notices} onExpire={dismissNotice} top={ui.gimbalPanel === 'runPill' ? belowStatus + 52 : belowStatus} />
       <StopConfirmSheet onStop={record.commitStop} />
       {!live ? (

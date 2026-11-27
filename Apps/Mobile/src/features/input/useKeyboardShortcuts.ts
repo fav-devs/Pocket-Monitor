@@ -14,8 +14,8 @@ const KEY_ZOOM_RATE = 0.6;
  * Web keyboard controls (README "Keyboard controls"):
  * Space/R record · S still · arrows pan/tilt (combine for diagonals) · C recenter ·
  * +/- zoom · 0 wide · F selfie flip · V cycle gimbal mode · X stop tracking ·
- * [ / ] step resolution / frame rate · G gallery · Z P L M zebra/peaking/cube/mirror ·
- * H hide chrome · Esc close the viewfinder.
+ * [ / ] step resolution / frame rate · G gallery · M marker (while recording) ·
+ * Z P L I zebra/peaking/cube/mirror · H hide chrome · Esc close the viewfinder.
  *
  * Inside the desktop app the keys are the desktop viewfinder's superset instead (§1.R of
  * `docs/desktop-expo-port.md`, `./desktopKeys.ts`): Rust decides every key.
@@ -125,6 +125,10 @@ export function useKeyboardShortcuts(actions: LiveInputActions, enabled: boolean
           break;
         case 'm':
         case 'M':
+          a.addMarker?.('key');
+          break;
+        case 'i':
+        case 'I':
           a.toggleAssist('mirror');
           break;
         case 'h':

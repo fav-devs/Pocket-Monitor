@@ -18,6 +18,7 @@ import {
   RotateClockwiseIcon,
   Rotate01Icon,
   ScissorIcon,
+  Flag02Icon,
   Share08Icon,
   SlidersHorizontalIcon,
   SmartPhone01Icon,
@@ -84,6 +85,8 @@ import { useEditExport } from './edit/exporter';
 import { customCube } from './edit/cubes';
 import { useLookThumbnails, useThumbFrame } from './edit/lookThumbs';
 import { useEditPreview } from './edit/useEditPreview';
+import { ClipMetaBody } from '@/features/markers/MetaSheets';
+import { PlaybackMetaSheets, useMarkerPins } from '@/features/markers/PlaybackMeta';
 
 /** The picture rect for `aspect` in `w × h`: letterboxed (`fit`) or cropped to fill (`fill`). */
 function place(aspect: number, w: number, h: number, mode: 'fit' | 'fill'): LayoutRectangle {
@@ -232,6 +235,10 @@ export default function PlaybackScreen() {
   const [prepareError, setPrepareError] = useState<string | null>(null);
   /** Play the low-res copy even when the original is on the phone (rendition toggle). */
   const [preferLowRes, setPreferLowRes] = useState(false);
+  // Clip metadata: the Markers sheet, the marker a filmstrip pin's hold edits, and the pins.
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [editMarker, setEditMarker] = useState<string | null>(null);
+  const markerPins = useMarkerPins(item);
 
   // ── Editor state: the open tool, its working edit and the edit as it was on open (✕).
   const storedEdit = useClipEdit(item?.id, item?.durationSec);
@@ -657,6 +664,16 @@ export default function PlaybackScreen() {
       />
     ),
     loop: <ToolWell key="loop" icon={RepeatIcon} label="Loop playback" caption="Loop" active={prefs.loopPlayback} onPress={() => prefs.set('loopPlayback', !prefs.loopPlayback)} />,
+    markers: (
+      <ToolWell
+        key="markers"
+        icon={Flag02Icon}
+        label="Markers"
+        caption={markerPins.length ? `Markers ${markerPins.length}` : 'Markers'}
+        active={metaOpen}
+        onPress={() => setMetaOpen(true)}
+      />
+    ),
     rate: (
       <ToolWell
         key="rate"
@@ -676,7 +693,9 @@ export default function PlaybackScreen() {
         <ToolWell key={t} icon={icon} label={TOOL_TITLES[t]} caption={TOOL_TITLES[t]} edited={toolEdited(storedEdit, t)} onPress={() => openTool(t)} />
       ))
     : [];
-  const playbackWells = isVideo ? [tool_.assists, tool_.conform, tool_.sound, tool_.loop, tool_.still, tool_.rate, tool_.hide] : [tool_.still, tool_.rate, tool_.hide];
+  const playbackWells = isVideo
+    ? [tool_.markers, tool_.assists, tool_.conform, tool_.sound, tool_.loop, tool_.still, tool_.rate, tool_.hide]
+    : [tool_.still, tool_.rate, tool_.hide];
   const toolRow = (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toolRow} style={styles.toolScroll}>
       {editWells}
@@ -960,6 +979,8 @@ export default function PlaybackScreen() {
                     clock={clock}
                     clockLabel={timecode ? 'Show minutes and seconds' : 'Show timecode'}
                     onClockPress={() => prefs.set('playbackTimecode', !timecode)}
+                    markers={markerPins}
+                    onMarkerLongPress={setEditMarker}
                     onScrubbing={(active) => {
                       if (active) {
                         setScrubbing({ wasPlaying: engine.playing, position: engine.position });
@@ -1086,6 +1107,15 @@ export default function PlaybackScreen() {
         onExport={startExport}
       />
       <DeliverySheet visible={sharing} items={burst.length ? burst : [item]} onClose={() => setSharing(false)} />
+      <PlaybackMetaSheets
+        item={item}
+        position={position}
+        onSeek={(t) => engine.seek(t)}
+        open={metaOpen}
+        onClose={() => setMetaOpen(false)}
+        editId={editMarker}
+        onEditClose={() => setEditMarker(null)}
+      />
       <DeliveryQueueSheet visible={deliveryPanelOpen} onClose={() => setDeliveryPanel(false)} />
       <ConfirmSheet
         visible={confirmDelete}
@@ -1123,6 +1153,7 @@ export default function PlaybackScreen() {
           deleteLabel={fromPhone ? 'Delete clip from this phone' : 'Delete clip from camera'}
           onStill={desktop ? takeStill : undefined}
           onClose={() => setInspector(false)}
+          extra={isVideo ? <ClipMetaBody item={item} position={position} onSeek={(t) => engine.seek(t)} compact /> : undefined}
         />
       ) : null}
     </View>

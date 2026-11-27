@@ -124,7 +124,18 @@ export interface GalleryModel {
 
 export function deriveGallery(
   items: CameraMediaItem[],
-  options: { category: MediaCategory; filters: MediaFilters; sort: MediaSort; stackBursts: boolean; groupByDay: boolean },
+  options: {
+    category: MediaCategory;
+    filters: MediaFilters;
+    sort: MediaSort;
+    stackBursts: boolean;
+    groupByDay: boolean;
+    /**
+     * Optional (additive). Sections by this instead of by day (Group by shoot): sections in
+     * `order`, entries in each by the sort.
+     */
+    sectionOf?: (item: CameraMediaItem) => { key: string; title: string; order: number };
+  },
 ): GalleryModel {
   const all = buildEntries(items, options.stackBursts);
   const counts: Record<MediaCategory, number> = {
@@ -143,7 +154,16 @@ export function deriveGallery(
   );
   const dated = options.groupByDay && (options.sort === 'newest' || options.sort === 'oldest');
   const sections: GallerySection[] = [];
-  if (!dated) sections.push({ key: 'all', title: null, entries });
+  if (options.sectionOf) {
+    const groups = new Map<string, GallerySection & { order: number }>();
+    for (const entry of entries) {
+      const s = options.sectionOf(entry.cover);
+      const g = groups.get(s.key);
+      if (g) g.entries.push(entry);
+      else groups.set(s.key, { key: s.key, title: s.title, order: s.order, entries: [entry] });
+    }
+    for (const g of [...groups.values()].sort((a, b) => a.order - b.order)) sections.push({ key: g.key, title: g.title, entries: g.entries });
+  } else if (!dated) sections.push({ key: 'all', title: null, entries });
   else {
     for (const entry of entries) {
       const key = dayKey(entry.cover.createdAt);

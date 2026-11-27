@@ -17,6 +17,8 @@ import { PocketEdit } from '@modules/pocket-native/src/edit';
 import { deliveryPlatform } from '../deliveryPlatform';
 import { useMediaLibrary } from '../libraryStore';
 import { bakeEditCube, registerNativeCube } from './cubes';
+import { exportSidecarFor } from '@/features/markers/sidecarFor';
+import { writeLibrarySidecar } from '@/features/markers/sidecarFiles';
 
 export interface ExportRequest {
   item: CameraMediaItem;
@@ -129,6 +131,9 @@ export const useEditExport = create<ExportStore>()((set, get) => {
         dispatch({ type: 'saving' });
         if (outputUri) {
           await deliveryPlatform.saveToPhotos([{ uri: outputUri, fileName: outputUri.split('/').pop() ?? 'edit.mp4', mimeType: 'video/mp4' }]);
+          // Its markers, moved by the trim, stay in the app's library (Photos takes no sidecar).
+          const sidecar = exportSidecarFor(req.item, req.edit.trim, outputUri.split('/').pop() ?? 'edit.mp4');
+          await writeLibrarySidecar(sidecar.fileName, sidecar.json);
           // The library holds its own copy now.
           void deliveryPlatform.discard(outputUri);
         }

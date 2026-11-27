@@ -62,7 +62,7 @@ afterEach(() => {
 describe('the gesture map', () => {
   it('names every gesture and action Rust knows, with its defaults', () => {
     expect(GESTURES.map((g) => g.key)).toEqual(['swipe_left', 'swipe_right', 'swipe_up', 'swipe_down', 'palm', 'fist', 'point', 'two', 'horns', 'face_track']);
-    expect(GESTURE_ACTIONS.map((a) => a.key)).toEqual(['nothing', 'recenter', 'flip', 'next_preset', 'previous_preset', 'stop', 'record', 'face_track']);
+    expect(GESTURE_ACTIONS.map((a) => a.key)).toEqual(['nothing', 'recenter', 'flip', 'next_preset', 'previous_preset', 'stop', 'record', 'face_track', 'marker']);
     expect(DEFAULT_GESTURE_MAP.two).toBe('record');
     expect(DEFAULT_GESTURE_MAP.swipe_down).toBe('nothing');
   });

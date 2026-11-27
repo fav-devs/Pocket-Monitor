@@ -31,6 +31,10 @@ export interface MediaPreferences {
   stackBursts: boolean;
   /** Group the gallery under day headers. */
   groupByDay: boolean;
+  /** Optional (additive). Group the gallery under shoot headers (wins over days). */
+  groupByShoot: boolean;
+  /** Optional (additive). Share sends each clip's metadata sidecar with it, when it has any. */
+  shareSidecar: boolean;
   /**
    * Grid only: file name and details under each tile (rounded cards at the picture's shape).
    * Off (default): Mimo's dense grid of square crops, 2 pt apart, with marks over the picture.
@@ -79,6 +83,8 @@ export const defaultMediaPreferences: MediaPreferences = {
   sort: 'newest',
   stackBursts: true,
   groupByDay: true,
+  groupByShoot: false,
+  shareSidecar: true,
   gridCaptions: false,
   librarySource: 'camera',
   loopPlayback: false,

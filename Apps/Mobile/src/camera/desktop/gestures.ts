@@ -51,6 +51,7 @@ export const GESTURE_ACTIONS: readonly { key: GestureActionKey; label: string }[
   { key: 'stop', label: 'Stop' },
   { key: 'record', label: 'Record' },
   { key: 'face_track', label: 'Face tracking' },
+  { key: 'marker', label: 'Add marker' },
 ];
 
 /** `GestureMap::default()`. Raising and lowering a hand reads as a vertical sweep, so those do nothing. */

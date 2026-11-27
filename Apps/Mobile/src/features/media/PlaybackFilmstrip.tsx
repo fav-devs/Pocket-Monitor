@@ -75,6 +75,8 @@ export function PlaybackFilmstrip({
   onScrub,
   onSeek,
   onScrubbing,
+  markers,
+  onMarkerLongPress,
 }: {
   frames: FilmstripFrame[];
   position: number;
@@ -86,6 +88,9 @@ export function PlaybackFilmstrip({
   onScrub: (seconds: number) => void;
   onSeek: (seconds: number) => void;
   onScrubbing: (active: boolean) => void;
+  /** Optional (additive). Marker pins on the strip: a tap seeks to one, a hold edits it. */
+  markers?: { id: string; time: number; color: string; label: string }[];
+  onMarkerLongPress?: (id: string) => void;
 }) {
   const styles = useThemedStyles(createStyles);
   const [width, setWidth] = useState(0);
@@ -175,6 +180,28 @@ export function PlaybackFilmstrip({
             })}
           </View>
         ) : null}
+        {width > 0 && markers?.length && duration > 0
+          ? markers.map((m) => {
+              const x = left + Math.min(1, Math.max(0, m.time / duration)) * stripW;
+              if (x < -8 || x > width + 8) return null;
+              return (
+                <Pressable
+                  key={m.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${m.label} at ${stripClock(m.time)}`}
+                  accessibilityHint="Hold to edit"
+                  onPress={() => onSeek(m.time)}
+                  onLongPress={() => onMarkerLongPress?.(m.id)}
+                  delayLongPress={350}
+                  hitSlop={{ top: 8, bottom: 30, left: 14, right: 14 }}
+                  style={[styles.pin, { left: x - 8 }]}
+                >
+                  <View style={[styles.pinHead, { backgroundColor: m.color }]} />
+                  <View style={[styles.pinLine, { backgroundColor: m.color }]} />
+                </Pressable>
+              );
+            })
+          : null}
         <View pointerEvents="none" style={[styles.playhead, { left: width / 2 - 1 }]} />
       </View>
     </View>
@@ -197,6 +224,9 @@ function createStyles(_colors: ThemeColors) {
     strip: { position: 'absolute' as const, top: 6, height: FRAME_H, flexDirection: 'row' as const, borderRadius: 6, overflow: 'hidden' as const },
     frame: { width: FRAME_W, height: FRAME_H, backgroundColor: 'rgba(255,255,255,0.08)' },
     frameImage: { width: '100%' as const, height: '100%' as const },
+    pin: { position: 'absolute' as const, top: 0, width: 16, height: FRAME_H + 6, alignItems: 'center' as const },
+    pinHead: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: '#ffffff' },
+    pinLine: { width: 2, flex: 1, opacity: 0.9 },
     playhead: {
       position: 'absolute' as const,
       top: 0,

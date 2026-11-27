@@ -70,6 +70,28 @@ The desktop's gestures (`Apps/Desktop/crates/pm-controller`: `hand.rs`, `gesture
 - Web: `native.web.ts` gives a made-up `PocketHands` (two hands and a face at 15 Hz) so the page,
   the pill and the hand view can be checked in a browser. Not inside the desktop app.
 
+## Clip metadata: markers, tags, shoots
+
+Spec and AI Cut mapping: `../../docs/clip-metadata.md` (sidecar v1, schema
+`../../docs/clip-metadata.schema.json`).
+
+- `src/core/markers/`: the pure part, all tested — the marker clock on the camera's own elapsed
+  time (`clock.ts`), takes and matching them with camera files (`takes.ts`), the sidecar
+  (`sidecar.ts`: build, parse, unknown fields kept), trim shifting, shoots, and the FCPXML /
+  Resolve EDL / CSV exports.
+- `src/state/clipMeta.ts`: per-clip metadata keyed by media item id (plus the file identity),
+  pending takes, shoots, the operator's tags. Persisted (`pm.clipMeta.v1`), additive only.
+- `src/features/markers/`: `MarkerHost` (root layout: follows REC, matches takes when the library
+  lists, keeps sidecars beside clips on this device), `capture.ts` (`addMarker`, the toast store),
+  `bridge.ts` (how input code asks for a marker without importing React Native), the live Marker
+  button and toast, the sheets (shoots, tags, marker editor, the clip's metadata, export),
+  `sidecarFiles(.web).ts` (phones: expo-file-system; desktop: `media_sidecar` / `markers_save`).
+- Inputs: the live view's movable **Marker** item (`marker` in the layout), `M` (mirror is `I`),
+  the gamepad's Menu button, the gesture action `marker` (not mapped by default; Rust
+  `GestureAction::Marker`, `PadAction::Marker`, `UiAction::Marker`, `input://marker`).
+- Marker labels and notes are never logged; they leave the device only in a sidecar or export the
+  operator makes.
+
 ## Commands
 
 ```bash

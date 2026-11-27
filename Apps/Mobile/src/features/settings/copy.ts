@@ -34,4 +34,5 @@ export const GamepadButtons: readonly [string, string][] = [
   ['L2 / R2', 'Hold to zoom'],
   ['D-pad ↑ ↓', 'ISO'],
   ['D-pad ← →', 'Shutter'],
+  ['Menu', 'Marker'],
 ];

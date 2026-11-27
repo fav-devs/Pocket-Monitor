@@ -179,7 +179,9 @@ export type DesktopKeyAction =
   /** `Y`: the hand view over the picture. */
   | 'toggle-hand-view'
   /** `J`: gestures on or off, already switched in Rust; the web reflects it. */
-  | 'toggle-gestures';
+  | 'toggle-gestures'
+  /** `M` (additive): a marker on the take being recorded; the web owns markers. */
+  | 'marker';
 
 /** One key event to Rust. Resolves with the web's part, if any. */
 export async function controlKey(key: string, down: boolean, repeat = false): Promise<DesktopKeyAction | null> {
