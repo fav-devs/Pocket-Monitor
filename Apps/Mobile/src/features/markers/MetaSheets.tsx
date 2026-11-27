@@ -1,8 +1,8 @@
 import {
   Add01Icon,
   Delete02Icon,
+  FilterHorizontalIcon,
   Flag02Icon,
-  Folder01Icon,
   PencilEdit01Icon,
   StopCircleIcon,
   Tick02Icon,
@@ -93,20 +93,6 @@ export function ShootSheet({
 
   return (
     <Sheet visible={visible} title={pick ? 'Move to shoot' : 'Shoots'} onClose={onClose}>
-      <View style={styles.form}>
-        <TextField value={name} onChangeText={setName} placeholder="Name" accessibilityLabel="Shoot name" returnKeyType="next" maxLength={60} />
-        <TextField
-          value={folder}
-          onChangeText={setFolder}
-          placeholder="Folder (Vlog/Tokyo/Day 2)"
-          accessibilityLabel="Folder path"
-          autoCapitalize="words"
-          autoCorrect={false}
-          maxLength={200}
-          onSubmitEditing={create}
-        />
-        <Button title={pick ? 'New shoot' : 'Start shoot'} icon={Add01Icon} onPress={create} />
-      </View>
       <View style={styles.list}>
         {pick ? (
           <Row title="No shoot" selected={pickedId === null} onPress={() => (onPick?.(null), onClose())} />
@@ -143,7 +129,7 @@ export function ShootSheet({
               trailing={
                 pick ? null : (
                   <>
-                    {onFilter ? <RowIcon icon={Folder01Icon} label={`Show ${s.name}`} onPress={() => (onFilter(s.id), onClose())} /> : null}
+                    {onFilter ? <RowIcon icon={FilterHorizontalIcon} label={`Show ${s.name}`} onPress={() => (onFilter(s.id), onClose())} /> : null}
                     <RowIcon
                       icon={PencilEdit01Icon}
                       label={`Rename ${s.name}`}
@@ -160,6 +146,20 @@ export function ShootSheet({
             />
           ),
         )}
+      </View>
+      <View style={[styles.form, list.length > 0 && styles.formAfterList]}>
+        <TextField value={name} onChangeText={setName} placeholder="Name" accessibilityLabel="Shoot name" returnKeyType="next" maxLength={60} />
+        <TextField
+          value={folder}
+          onChangeText={setFolder}
+          placeholder="Folder (Vlog/Tokyo/Day 2)"
+          accessibilityLabel="Folder path"
+          autoCapitalize="words"
+          autoCorrect={false}
+          maxLength={200}
+          onSubmitEditing={create}
+        />
+        <Button title={pick ? 'New shoot' : 'Start shoot'} icon={Add01Icon} onPress={create} />
       </View>
     </Sheet>
   );
@@ -489,7 +489,8 @@ function createStyles(colors: ThemeColors) {
   return {
     flex: { flex: 1 },
     form: { gap: spacing.sm, paddingBottom: spacing.md },
-    list: { paddingBottom: spacing.md },
+    formAfterList: { paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border },
+    list: { paddingBottom: spacing.sm },
     sections: { gap: spacing.md, paddingBottom: spacing.sm },
     compact: { gap: spacing.sm },
     footer: { flexDirection: 'row' as const, gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.md },
