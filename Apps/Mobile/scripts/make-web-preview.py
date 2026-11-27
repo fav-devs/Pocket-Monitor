@@ -8,11 +8,18 @@ shutil.rmtree(dst, ignore_errors=True); shutil.copytree(src, dst)
 os.remove(os.path.join(dst, 'metadata.json'))
 os.rename(os.path.join(dst, '_expo'), os.path.join(dst, 'expo'))
 js = glob.glob(os.path.join(dst, 'expo/static/js/web/*.js'))
-assert len(js) == 1, js
-code = open(js[0]).read()
-n = code.count('"/assets/')
-code = code.replace('"/assets/', '__PM_BASE__+"assets/')
-open(js[0], 'w').write(code)
+entry = [p for p in js if os.path.basename(p).startswith('entry-')]
+assert len(entry) == 1, js
+n = 0
+for path in js:
+    code = open(path).read()
+    n += code.count('"/assets/') + code.count('"/_expo/static/')
+    # Absolute URLs from the page's base: assets and lazily loaded chunks (Metro returns
+    # http(s) chunk URLs unchanged).
+    code = code.replace('"/assets/', '__PM_BASE__+"assets/')
+    code = code.replace('"/_expo/static/', '__PM_BASE__+"expo/static/')
+    open(path, 'w').write(code)
+js = entry
 rel = os.path.relpath(js[0], dst)
 page = f'''<title>Pocket Monitor</title>
 <meta name="claude:viewport-fit-sides" content="cover">
