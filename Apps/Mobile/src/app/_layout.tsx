@@ -10,10 +10,13 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { useEffect } from 'react';
+import { useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CameraProvider } from '@/camera';
+import { isWideWindow } from '@/constants/layout';
 import { AppThemeProvider, useTheme } from '@/constants/theme';
+import { AppShell } from '@/features/shell/AppShell';
 import { FeedSharingHost } from '@/features/watcher/useFeedSharing';
 import '@/camera/bootstrap';
 
@@ -29,6 +32,11 @@ export default function RootLayout() {
 
 function RootLayoutInner() {
   const { colors, scheme, navigationTheme } = useTheme();
+  // Wide layout: pairing and connecting open as a dialog over the page under them.
+  const wide = isWideWindow(useWindowDimensions().width);
+  const flowOptions = wide
+    ? ({ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } } as const)
+    : null;
   const [loaded, error] = useFonts({
     SNPro_400Regular,
     SNPro_500Medium,
@@ -56,12 +64,15 @@ function RootLayoutInner() {
             <BottomSheetModalProvider>
               <FeedSharingHost />
               <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-              <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-                {/* The monitor and playback are always on black, whatever the theme. */}
-                <Stack.Screen name="live" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
-                <Stack.Screen name="pair" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
-                <Stack.Screen name="multiview" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
-              </Stack>
+              <AppShell>
+                <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+                  {/* The monitor and playback are always on black, whatever the theme. */}
+                  <Stack.Screen name="live" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
+                  <Stack.Screen name="pair" options={flowOptions ?? { presentation: 'modal', animation: 'slide_from_bottom' }} />
+                  <Stack.Screen name="connect" options={flowOptions ?? {}} />
+                  <Stack.Screen name="multiview" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
+                </Stack>
+              </AppShell>
             </BottomSheetModalProvider>
           </CameraProvider>
         </ThemeProvider>

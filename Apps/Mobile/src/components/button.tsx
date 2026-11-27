@@ -6,6 +6,7 @@ import {
 	View,
 } from "react-native";
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from "@/constants/theme";
+import { isHovered } from "./desktop";
 import { Icon } from "./icon";
 import { Spinner } from "@/components/spinner";
 
@@ -51,6 +52,7 @@ export function Button({
 				size === "lg" && styles.large,
 				styles[variant],
 				(disabled || loading) && styles.disabled,
+				isHovered(state) && !(disabled || loading) && (variant === "primary" ? styles.hoverInk : styles.hover),
 				state.pressed && styles.pressed,
 				typeof style === "function" ? style(state) : style,
 			]}
@@ -86,6 +88,8 @@ function createStyles(colors: ThemeColors) {
 		},
 		ghost: { backgroundColor: "transparent" },
 		disabled: { opacity: 0.4 },
+		hover: { backgroundColor: colors.surface },
+		hoverInk: { opacity: 0.88 },
 		pressed: { opacity: 0.75 },
 		content: { flexDirection: "row" as const, alignItems: "center" as const, gap: spacing.sm },
 		label: { fontFamily: fonts.semibold, fontSize: 15 },

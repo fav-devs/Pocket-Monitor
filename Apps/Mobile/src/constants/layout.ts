@@ -1,4 +1,8 @@
+import { createContext, useContext } from "react";
 import { useWindowDimensions } from "react-native";
+import { isWideWindow } from "./wide";
+
+export * from "./wide";
 
 // Sizes for big screens: an iPad, an Android tablet, an unfolded foldable, a
 // wide split-view window. Decided from the window, not the device, so a narrow
@@ -17,9 +21,23 @@ export function isLargeWindow(width: number, height: number) {
 	return Math.min(width, height) >= LARGE_SCREEN_SHORT_SIDE;
 }
 
-/** The window's size and whether it is a big screen. */
+/** True when the window gets the wide (desktop) layout. */
+export function useWideLayout() {
+	return isWideWindow(useWindowDimensions().width);
+}
+
+/**
+ * The size of the area pages render in. The wide layout's shell provides it (the window minus the
+ * sidebar), so grids and columns size themselves to the page, not the window.
+ */
+export const ContentFrameContext = createContext<{ width: number; height: number } | null>(null);
+
+/** The page's size (the window, or the shell's content area) and whether it is a big screen. */
 export function useScreenSize() {
-	const { width, height } = useWindowDimensions();
+	const window = useWindowDimensions();
+	const frame = useContext(ContentFrameContext);
+	const width = frame?.width || window.width;
+	const height = frame?.height || window.height;
 	return { width, height, large: isLargeWindow(width, height), landscape: width > height };
 }
 
