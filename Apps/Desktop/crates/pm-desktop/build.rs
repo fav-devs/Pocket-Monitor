@@ -110,6 +110,9 @@ const APP_COMMANDS: &[&str] = &[
     "relay_leave",
     "relay_control",
     "relay_command",
+    // Home Wi-Fi kept for next time (§1.D).
+    "home_wifi_get",
+    "home_wifi_forget",
 ];
 
 const LIB_NAME: &str = "OpenPocketCineDesktop";

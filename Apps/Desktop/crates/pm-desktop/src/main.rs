@@ -26,6 +26,8 @@ mod keys;
 mod known;
 mod launch;
 mod luts;
+#[cfg(target_os = "macos")]
+mod macwifi;
 mod media;
 mod mic;
 mod moves;
@@ -349,6 +351,8 @@ fn main() {
             relay::relay_leave,
             relay::relay_control,
             relay::relay_command,
+            connect::home_wifi_get,
+            connect::home_wifi_forget,
         ])
         .build(tauri::generate_context!());
 

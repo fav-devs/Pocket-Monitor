@@ -48,6 +48,11 @@ btleplug = "0.11"
 btleplug = "=0.13.5"
 # btleplug collapses unsupported/unauthorized adapter states into Unknown.
 objc2-core-bluetooth = { version = "0.2.2", features = ["CBCentralManager", "CBManager"] }
+# The current Wi-Fi name, and the Location permission macOS requires to read it (macwifi.rs).
+objc2 = "0.5.2"
+objc2-core-location = { version = "0.2.2", features = ["CLLocationManager"] }
+objc2-core-wlan = { version = "0.2.2", features = ["CWInterface", "CWWiFiClient"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString"] }
 
 [lints]
 workspace = true

@@ -108,6 +108,8 @@
     "allow-relay-join",
     "allow-relay-leave",
     "allow-relay-control",
-    "allow-relay-command"
+    "allow-relay-command",
+    "allow-home-wifi-get",
+    "allow-home-wifi-forget"
   ]
 }

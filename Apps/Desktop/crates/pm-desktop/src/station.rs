@@ -55,6 +55,7 @@ pub fn local_networks() -> Vec<(Ipv4Addr, Ipv4Addr)> {
 }
 
 /// The Wi-Fi this machine is on, to offer as the network the camera should join (D-1).
+/// macOS answers from the main thread instead (`macwifi.rs`), so this gives None there.
 pub fn current_ssid() -> Option<String> {
     if cfg!(target_os = "windows") {
         background_command("netsh")
@@ -171,6 +172,26 @@ fn search_once(identity: &[u8], last: Option<Ipv4Addr>, round: u32) -> Option<So
         return Some(*only);
     }
     None
+}
+
+/// Remembers the camera the search found at `address` (D-3). Found without knowing who it
+/// was (a pair that gave no Wi-Fi name): ask it, so the next launch knows it (main
+/// d2a98a8).
+pub fn remember_found(
+    mut saved: homewifi::SavedStation,
+    address: SocketAddr,
+) -> Result<(), String> {
+    if let std::net::IpAddr::V4(v4) = address.ip() {
+        saved.address = Some(v4);
+    }
+    if saved.identity.is_empty() {
+        saved.identity = lan::read_identity(address, VERIFY_TIMEOUT).unwrap_or_default();
+        log(format_args!(
+            "asked the camera who it is: {} bytes",
+            saved.identity.len()
+        ));
+    }
+    homewifi::save_station(&saved)
 }
 
 /// Finds the remembered station camera and remembers where it answered (D-3).
@@ -496,7 +517,9 @@ pub fn reset<T: BleTransport>(
     })();
     let _ = transport.disconnect();
     if result.is_ok() {
+        // Going back to the camera's own Wi-Fi also stops putting it on mine (main 95f567d).
         homewifi::forget(&homewifi::station_path());
+        homewifi::forget_home();
         log("camera back on its own Wi-Fi; the home network is forgotten");
     }
     result

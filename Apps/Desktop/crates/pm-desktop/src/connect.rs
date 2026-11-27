@@ -500,11 +500,13 @@ fn poll<T: BleTransport>(
 }
 
 /// Wake (fire and forget), PIN, the operator's approval, wake AP, SSID, password, with
-/// the old deadlines: PIN 90 s, AP 5 s, SSID 10 s, password 10 s.
+/// the old deadlines: PIN 90 s, AP 5 s, SSID 10 s, password 10 s. `Ok(None)`: the camera
+/// gave no Wi-Fi name, which a camera already on another network does (main d2a98a8);
+/// the LAN search may still find it there.
 fn pair_exchange<T: BleTransport>(
     transport: &mut T,
     steps: &mut dyn Steps,
-) -> Result<(String, String), String> {
+) -> Result<Option<(String, String)>, String> {
     let mut assembler = NotificationAssembler::new();
     let write =
         |transport: &mut T, frame: Result<Vec<u8>, String>, what: &str| -> Result<(), String> {
@@ -643,7 +645,8 @@ fn pair_exchange<T: BleTransport>(
         0x07,
     )?;
     if ssid.is_empty() {
-        return Err("Camera did not return a Wi-Fi name.".into());
+        ble_log("pair: the camera gave no Wi-Fi name");
+        return Ok(None);
     }
     let password = read_string(
         transport,
@@ -657,8 +660,13 @@ fn pair_exchange<T: BleTransport>(
         return Err("Camera did not return a Wi-Fi password.".into());
     }
     ble_log("pair: done");
-    Ok((ssid, password))
+    Ok(Some((ssid, password)))
 }
+
+/// When the camera gives no Wi-Fi name and this PC knows no network it could be on.
+pub const NO_SSID: &str = "The camera did not give its Wi-Fi name. If it is already on your \
+    Wi-Fi, put it back on its own first with Return to camera Wi-Fi, or switch it off and on \
+    and pair again.";
 
 // ── the Bluetooth service ────────────────────────────────────────────────────────
 
@@ -686,6 +694,9 @@ pub struct Step {
 pub struct Paired {
     pub ssid: String,
     pub model_id: Option<i32>,
+    /// The camera gave no Wi-Fi name: `camera_open {kind: "paired"}` looks for it on this
+    /// PC's networks instead of joining its own (main d2a98a8).
+    pub on_lan: bool,
 }
 
 /// What `station_join` gives the web.
@@ -705,7 +716,7 @@ enum Job {
     Pair {
         address: String,
         model_id: Option<i32>,
-        reply: Reply<Credentials>,
+        reply: Reply<Option<Credentials>>,
     },
     Station {
         address: String,
@@ -728,6 +739,8 @@ pub struct BleService {
     /// A job other than a scan is waiting: the scan loop gives way.
     waiting: Arc<AtomicBool>,
     held: Mutex<Option<Credentials>>,
+    /// The last pair found no Wi-Fi name: the camera's model, for the LAN search.
+    lan_fallback: Mutex<Option<Option<i32>>>,
     /// Model ids the last scans saw, by address, for the pair that follows.
     models: Arc<Mutex<HashMap<String, Option<i32>>>>,
     app: AppHandle,
@@ -787,6 +800,7 @@ impl BleService {
             cancel: Arc::new(AtomicBool::new(false)),
             waiting: Arc::new(AtomicBool::new(false)),
             held: Mutex::new(None),
+            lan_fallback: Mutex::new(None),
             models: Arc::new(Mutex::new(HashMap::new())),
             app,
         }
@@ -863,6 +877,11 @@ impl BleService {
         if let Ok(mut held) = self.held.lock() {
             *held = None;
         }
+    }
+
+    /// The model of a pair that found no Wi-Fi name, once.
+    fn take_lan_fallback(&self) -> Option<Option<i32>> {
+        self.lan_fallback.lock().ok()?.take()
     }
 
     pub fn take_held(&self, ssid: Option<&str>) -> Option<Credentials> {
@@ -965,10 +984,12 @@ fn worker(
                     .map_err(|error| format!("Connect failed: {error}"))
                     .and_then(|()| pair_exchange(transport, &mut steps));
                 let _ = transport.disconnect();
-                let _ = reply.send(result.map(|(ssid, password)| Credentials {
-                    ssid,
-                    password,
-                    model_id,
+                let _ = reply.send(result.map(|found| {
+                    found.map(|(ssid, password)| Credentials {
+                        ssid,
+                        password,
+                        model_id,
+                    })
                 }));
             }
             Job::Station {
@@ -1237,6 +1258,9 @@ pub fn open(app: &AppHandle, target: OpenTarget) -> Result<Opened, String> {
             connect_at(app, homewifi::softap_address(), model)
         }
         OpenTarget::Paired { model } => {
+            if let Some(found_model) = app.state::<BleService>().take_lan_fallback() {
+                return open_on_lan(app, model.or(found_model));
+            }
             let held = app
                 .state::<BleService>()
                 .take_held(None)
@@ -1309,6 +1333,29 @@ pub fn open(app: &AppHandle, target: OpenTarget) -> Result<Opened, String> {
     }
 }
 
+/// The camera gave no Wi-Fi name while pairing: it is probably already on the operator's
+/// network, so look for it there (main d2a98a8). No identity to match: the one camera on
+/// the network is it, and it is asked who it is once found so the next launch knows.
+fn open_on_lan(app: &AppHandle, model: Option<i32>) -> Result<Opened, String> {
+    let ssid = homewifi::home_summary()
+        .map(|home| home.ssid)
+        .or_else(|| homewifi::load_station().map(|saved| saved.ssid))
+        .ok_or(NO_SSID)?;
+    wifi_log("the camera gave no Wi-Fi name; looking for it on the LAN");
+    step(app, "joining-wifi", "Finding the camera on your Wi-Fi…");
+    let address = station::find_camera(&[], None).ok_or(station::NOT_FOUND)?;
+    station::remember_found(
+        SavedStation {
+            ssid,
+            identity: Vec::new(),
+            address: None,
+            model_id: model,
+        },
+        address,
+    )?;
+    connect_at(app, address, model)
+}
+
 async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -1340,17 +1387,40 @@ pub async fn ble_pair(
 ) -> Result<Paired, String> {
     let ble = app.state::<BleService>();
     let model = model.or_else(|| ble.model_for(&address));
-    let held = ble
+    let found = ble
         .ask(|reply| Job::Pair {
             address,
             model_id: model,
             reply,
         })
         .await?;
+    let Some(held) = found else {
+        // No Wi-Fi name: a camera already on a network this PC knows is looked for there.
+        ble.forget_held();
+        let knows_one = blocking(|| {
+            Ok(homewifi::home_summary().is_some() || homewifi::load_station().is_some())
+        })
+        .await?;
+        if !knows_one {
+            return Err(NO_SSID.into());
+        }
+        if let Ok(mut slot) = ble.lan_fallback.lock() {
+            *slot = Some(model);
+        }
+        return Ok(Paired {
+            ssid: String::new(),
+            model_id: model,
+            on_lan: true,
+        });
+    };
     let paired = Paired {
         ssid: held.ssid.clone(),
         model_id: held.model_id,
+        on_lan: false,
     };
+    if let Ok(mut slot) = ble.lan_fallback.lock() {
+        *slot = None;
+    }
     if let Ok(mut slot) = ble.held.lock() {
         *slot = Some(held);
     }
@@ -1420,13 +1490,17 @@ pub async fn camera_open(app: AppHandle, target: OpenTarget) -> Result<Opened, S
 }
 
 /// Puts the camera on the operator's Wi-Fi over Bluetooth, finds it there and remembers
-/// it (D-1, D-2, D-3). The password goes to the camera only.
+/// it (D-1, D-2, D-3). The password goes to the camera, and, when `remember` (the
+/// default, as the old checkbox), into `desktop-homewifi-v1.txt` sealed to this user
+/// (main 95f567d). No `password`: the kept one for this network, so the web never holds
+/// it.
 #[tauri::command]
 pub async fn station_join(
     app: AppHandle,
     address: String,
     ssid: String,
-    password: String,
+    password: Option<String>,
+    remember: Option<bool>,
     model: Option<i32>,
 ) -> Result<StationReady, String> {
     let ble = app.state::<BleService>();
@@ -1434,6 +1508,18 @@ pub async fn station_join(
     if ssid.is_empty() {
         return Err("Type the network's name.".into());
     }
+    let password = {
+        let (typed, ssid) = (password, ssid.clone());
+        blocking(move || {
+            Ok(homewifi::station_password(
+                typed.as_deref(),
+                &ssid,
+                homewifi::load_home(),
+            ))
+        })
+        .await?
+    };
+    let keep = remember.unwrap_or(true).then(|| password.clone());
     let model = model.or_else(|| ble.model_for(&address));
     let (identity, confirmed) = ble
         .ask(|reply| Job::Station {
@@ -1458,17 +1544,32 @@ pub async fn station_join(
         },
     );
     blocking(move || {
-        let address = station::find_camera(&identity, None).ok_or(station::NOT_FOUND)?;
-        let mut saved = SavedStation {
-            ssid,
-            identity,
-            address: None,
-            model_id: model,
-        };
-        if let std::net::IpAddr::V4(v4) = address.ip() {
-            saved.address = Some(v4);
+        // The camera took the network: keep it for next time, or forget it, as asked.
+        match keep {
+            Some(password) => match homewifi::save_home(&ssid, &password) {
+                Ok(()) => log_line(
+                    "station",
+                    format_args!(
+                        "kept the home Wi-Fi (password sealed: {})",
+                        homewifi::home_summary().is_some_and(|home| home.has_password)
+                    ),
+                ),
+                Err(error) => {
+                    log_line("station", format_args!("could not keep the Wi-Fi: {error}"))
+                }
+            },
+            None => homewifi::forget_home(),
         }
-        homewifi::save_station(&saved)?;
+        let address = station::find_camera(&identity, None).ok_or(station::NOT_FOUND)?;
+        station::remember_found(
+            SavedStation {
+                ssid,
+                identity,
+                address: None,
+                model_id: model,
+            },
+            address,
+        )?;
         Ok(StationReady {
             host: address.to_string(),
             model_id: model,
@@ -1478,7 +1579,8 @@ pub async fn station_join(
     .await
 }
 
-/// Returns the camera to its own Wi-Fi and forgets the home network (D-4).
+/// Returns the camera to its own Wi-Fi and forgets the home network, the kept Wi-Fi
+/// included (D-4).
 #[tauri::command]
 pub async fn station_reset(app: AppHandle, address: String) -> Result<(), String> {
     app.state::<BleService>()
@@ -1492,10 +1594,38 @@ pub async fn station_find() -> Result<String, String> {
     blocking(|| station::find_saved().map(|(address, _)| address.to_string())).await
 }
 
-/// The Wi-Fi this PC is on, to prefill *Put the camera on my Wi-Fi*.
+/// The Wi-Fi this PC is on, to prefill *Put the camera on my Wi-Fi*. On macOS the name
+/// comes from CoreWLAN on the main thread, and only once the operator has allowed
+/// Location access (the first call asks), so the web asks again while it is empty.
 #[tauri::command]
-pub async fn station_current_ssid() -> Result<Option<String>, String> {
-    blocking(|| Ok(station::current_ssid())).await
+pub async fn station_current_ssid(app: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        blocking(move || Ok(crate::macwifi::current_ssid_on_main(&app))).await
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        blocking(|| Ok(station::current_ssid())).await
+    }
+}
+
+/// The home Wi-Fi kept for next time: its name and whether a password is kept for it.
+/// The password itself never reaches the web.
+#[tauri::command]
+pub async fn home_wifi_get() -> Result<Option<homewifi::HomeWifiSummary>, String> {
+    blocking(|| Ok(homewifi::home_summary())).await
+}
+
+/// Forgets the kept home Wi-Fi (the remembered camera on it stays).
+#[tauri::command]
+pub async fn home_wifi_forget() -> Result<(), String> {
+    blocking(|| {
+        homewifi::forget_home();
+        log_line("station", "forgot the kept home Wi-Fi");
+        Ok(())
+    })
+    .await
 }
 
 /// Remembers `address` as the LAN camera when it is one (B1).
@@ -1538,10 +1668,28 @@ impl Progress for PrintSteps {
     }
 }
 
-/// `pocket-monitor headless scan [--seconds N] | pair | station --ssid NAME`: Bluetooth
-/// from a terminal, every step printed, no window. `station` reads the network password
+/// `pocket-monitor headless scan [--seconds N] | pair | station --ssid NAME | identity IP`:
+/// Bluetooth from a terminal, every step printed, no window (`identity` asks a camera on
+/// the LAN, without Bluetooth). `station` reads the network password
 /// from `PM_WIFI_PASSWORD` (or `OPC_WIFI_PASSWORD`). Credentials are never printed.
 pub fn headless(args: &[String]) -> Result<(), String> {
+    // What a camera on the LAN reports as its Wi-Fi identity (main b6e6aaf): no Bluetooth.
+    if args.first().map(String::as_str) == Some("identity") {
+        let ip: std::net::Ipv4Addr = args
+            .get(1)
+            .and_then(|text| text.parse().ok())
+            .ok_or("usage: pocket-monitor headless identity <camera ip>")?;
+        let address = SocketAddr::from((ip, opc_camera::lan::DATALINK_PORT));
+        return match opc_camera::lan::read_identity(address, Duration::from_secs(8)) {
+            Some(payload) => {
+                let hex: Vec<String> = payload.iter().map(|b| format!("{b:02x}")).collect();
+                println!("identity payload: {}", hex.join(" "));
+                println!("as text: {}", String::from_utf8_lossy(&payload));
+                Ok(())
+            }
+            None => Err("the camera opened no session or did not answer".into()),
+        };
+    }
     let gatt = GattMap::from_core().ok_or("Cannot read GATT map from core.")?;
     let flag = |name: &str| pm_controller::launch::flag(args, name).map(str::to_string);
     let seconds: f64 = flag("seconds").and_then(|s| s.parse().ok()).unwrap_or(8.0);
@@ -1571,8 +1719,13 @@ pub fn headless(args: &[String]) -> Result<(), String> {
                     .map_err(|e| format!("Connect failed: {e}"))?;
                 let result = pair_exchange(&mut transport, &mut PrintSteps);
                 let _ = transport.disconnect();
-                result?;
-                println!("pairing worked (credentials read; not printed)");
+                match result? {
+                    Some(_) => println!("pairing worked (credentials read; not printed)"),
+                    None => println!(
+                        "pairing worked, but the camera gave no Wi-Fi name (already on \
+                         another network?); try headless identity <ip>"
+                    ),
+                }
                 Ok(())
             } else {
                 let password = pm_controller::platform::env_var("WIFI_PASSWORD")
@@ -1594,7 +1747,9 @@ pub fn headless(args: &[String]) -> Result<(), String> {
             }
         }
         _ => Err(
-            "usage: pocket-monitor headless scan [--seconds N] | pair | station --ssid NAME".into(),
+            "usage: pocket-monitor headless scan [--seconds N] | pair | station --ssid NAME \
+             | identity <camera ip>"
+                .into(),
         ),
     }
 }

@@ -503,6 +503,46 @@ pub fn forget_home() {
     forget(&home_path());
 }
 
+/// What the web may know about the kept home network: its name, and whether a password
+/// for it can be read back. Never the password itself.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeWifiSummary {
+    pub ssid: String,
+    pub has_password: bool,
+}
+
+impl HomeNetwork {
+    /// `has_password` is true only when `unseal` opens the sealed password: a file sealed
+    /// for another Windows user, or on a platform that cannot seal, has none to offer.
+    pub fn summary(&self, unseal: impl Fn(&[u8]) -> Option<Vec<u8>>) -> HomeWifiSummary {
+        let has_password = !self.sealed_password.is_empty()
+            && unseal(&self.sealed_password).is_some_and(|plain| !plain.is_empty());
+        HomeWifiSummary {
+            ssid: self.ssid.clone(),
+            has_password,
+        }
+    }
+}
+
+/// The kept home network as the web sees it.
+pub fn home_summary() -> Option<HomeWifiSummary> {
+    let home = HomeNetwork::parse(&std::fs::read_to_string(home_path()).ok()?)?;
+    Some(home.summary(unseal_password))
+}
+
+/// The password a station join sends: the one typed, or, when none was typed, the kept
+/// one if it is for this network. An open network (nothing typed, nothing kept) is empty.
+pub fn station_password(typed: Option<&str>, ssid: &str, kept: Option<(String, String)>) -> String {
+    match typed {
+        Some(password) if !password.is_empty() => password.to_string(),
+        _ => kept
+            .filter(|(kept_ssid, _)| kept_ssid == ssid)
+            .map(|(_, password)| password)
+            .unwrap_or_default(),
+    }
+}
+
 /// Seals `plain` to this Windows user with DPAPI (`CryptProtectData`).
 #[cfg(windows)]
 pub fn seal_password(plain: &[u8]) -> Option<Vec<u8>> {
@@ -622,6 +662,44 @@ mod tests {
         assert_eq!(HomeNetwork::parse(&text), Some(home));
         assert_eq!(HomeNetwork::parse("nope\nssid=x\n"), None);
         assert_eq!(HomeNetwork::parse(&format!("{HOME_HEADER}\nssid=\n")), None);
+    }
+
+    #[test]
+    fn the_web_learns_the_kept_network_name_and_whether_a_password_opens() {
+        let home = HomeNetwork {
+            ssid: "Home Net".into(),
+            sealed_password: vec![9, 9, 9],
+        };
+        let opens = |_: &[u8]| Some(b"hunter22".to_vec());
+        let refuses = |_: &[u8]| None;
+        assert_eq!(
+            home.summary(opens),
+            HomeWifiSummary {
+                ssid: "Home Net".into(),
+                has_password: true
+            }
+        );
+        assert!(!home.summary(refuses).has_password);
+        let name_only = HomeNetwork {
+            sealed_password: Vec::new(),
+            ..home
+        };
+        assert!(!name_only.summary(opens).has_password);
+        let json = serde_json::to_string(&name_only.summary(opens)).unwrap();
+        assert_eq!(json, r#"{"ssid":"Home Net","hasPassword":false}"#);
+    }
+
+    #[test]
+    fn a_station_join_uses_the_typed_password_else_the_kept_one_for_that_network() {
+        let kept = || Some(("Home".to_string(), "kept-secret".to_string()));
+        assert_eq!(
+            station_password(Some("typed-one"), "Home", kept()),
+            "typed-one"
+        );
+        assert_eq!(station_password(None, "Home", kept()), "kept-secret");
+        assert_eq!(station_password(Some(""), "Home", kept()), "kept-secret");
+        assert_eq!(station_password(None, "Office", kept()), "");
+        assert_eq!(station_password(None, "Home", None), "");
     }
 
     #[test]
