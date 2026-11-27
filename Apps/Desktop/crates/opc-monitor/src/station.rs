@@ -38,11 +38,11 @@ fn log(message: &str) {
 // ---- The file ---------------------------------------------------------------
 
 fn saved_path() -> Option<PathBuf> {
-    let root = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(root.join("OpenPocketCine").join("desktop-station-v1.txt"))
+    let root = pm_controller::platform::config_root()?;
+    Some(
+        root.join(pm_controller::platform::data_folder())
+            .join("desktop-station-v1.txt"),
+    )
 }
 
 pub fn load() -> Option<SavedStation> {

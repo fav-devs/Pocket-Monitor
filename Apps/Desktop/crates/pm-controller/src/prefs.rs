@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::assists::{AssistOptions, GuideFamily, PeakingColor, ZebraPaint};
-use crate::luts::{self, LutChoice};
+use crate::luts::LutChoice;
 use crate::scopes::{NdNotation, ParadeMode, ScopeOptions, WaveMode};
 use crate::toggles::Toggles;
 use opc_render::{FalseColorScale, PeakingSense};
@@ -138,12 +138,10 @@ impl Default for Prefs {
     }
 }
 
-/// `<cache>/OpenPocketCine/desktop-prefs.txt`, beside the LUT folder.
+/// `<cache>/<folder>/desktop-prefs.txt`, beside the LUT folder
+/// ([`crate::platform::cache_dir`]).
 pub fn path() -> PathBuf {
-    luts::custom_folder()
-        .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
-        .join("desktop-prefs.txt")
+    crate::platform::cache_dir().join("desktop-prefs.txt")
 }
 
 impl Prefs {

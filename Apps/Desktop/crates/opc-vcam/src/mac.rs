@@ -1,6 +1,6 @@
-//! The macOS camera: the OpenPocketCine camera extension's sink stream, written
+//! The macOS camera: the Pocket Monitor camera extension's sink stream, written
 //! through the Swift facade (`opc_vcam_mac_*`). The extension itself is installed once
-//! from the OpenPocketCine Camera app (`Apps/Desktop/macos`).
+//! from the Pocket Monitor Camera app (`Apps/Desktop/macos`).
 
 use crate::wire::rgba_to_nv12;
 use crate::{Error, Frame, Sink};
@@ -20,7 +20,7 @@ impl MacCamSink {
         match rc {
             0 => Ok(Self { width, height }),
             -1 => Err(Error::Frame(
-                "no OpenPocketCine camera — install the OpenPocketCine Camera app and enable its extension".into(),
+                "no camera extension — install the Pocket Monitor Camera app and enable its extension".into(),
             )),
             -2 => Err(Error::Frame("the camera extension's sink stream would not start".into())),
             other => Err(Error::Frame(format!("the camera could not open ({other})"))),
@@ -40,7 +40,7 @@ impl MacCamSink {
 impl Sink for MacCamSink {
     fn describe(&self) -> String {
         format!(
-            "Camera · OpenPocketCine (camera extension) · {}×{}",
+            "Camera · Pocket Monitor (camera extension) · {}×{}",
             self.width, self.height
         )
     }

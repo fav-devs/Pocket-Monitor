@@ -32,7 +32,9 @@ pub use dll::{
 /// The source's class id, as the viewfinder names it to `MFCreateVirtualCamera`.
 pub const CLSID_TEXT: &str = "{6f0b4c1e-8d7a-4f3b-9c2e-5a1d7e9b3c40}";
 /// The name apps show.
-pub const FRIENDLY_NAME: &str = "OpenPocketCine";
+pub const FRIENDLY_NAME: &str = "Pocket Monitor";
+/// The longer name the class id is registered under.
+pub const REGISTERED_NAME: &str = "Pocket Monitor Virtual Camera";
 /// Frames a second the source promises.
 pub const FRAME_RATE: u32 = 30;
 

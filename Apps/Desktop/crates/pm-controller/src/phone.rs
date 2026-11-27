@@ -4,7 +4,7 @@
 //! `sheets.rs`) so the Tauri app joins phones with the very same thread; `opc-monitor`
 //! re-exports it, so its paths are unchanged.
 //!
-//! An iPhone running OpenPocketCine can share its camera session: it holds the datalink,
+//! A phone running the phone app can share its camera session: it holds the datalink,
 //! decodes once, re-encodes, and serves watchers on the camera's Wi-Fi. This is the
 //! viewfinder as one of those watchers. The picture comes in as HEVC access units and
 //! goes down the same decoder, renderer, assists and virtual camera as a direct link;

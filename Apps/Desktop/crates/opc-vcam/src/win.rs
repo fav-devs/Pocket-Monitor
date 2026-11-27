@@ -26,7 +26,7 @@ use crate::wire::{self, Header, PIPE_NAME};
 use crate::{Error, Frame, Sink};
 
 /// The friendly name apps list.
-pub const CAMERA_NAME: &str = "OpenPocketCine";
+pub const CAMERA_NAME: &str = "Pocket Monitor";
 pub use crate::wire::SOURCE_CLSID;
 
 /// The newest NV12 frame waiting for the pipe, and whether we are closing.

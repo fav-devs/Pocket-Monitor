@@ -1,7 +1,7 @@
 //! Diagnostics and the log (`docs/desktop-expo-port.md` Y1, Y2).
 //!
 //! The log is `pocket-monitor.log`: beside the executable for a portable copy or a
-//! developer build, under `%LOCALAPPDATA%\OpenPocketCine\logs` for an installed one
+//! developer build, under `%LOCALAPPDATA%\Pocket Monitor\logs` for an installed one
 //! (D3: `C:\Program Files` is not writable, so the old installed build lost its log).
 //! Each launch keeps the previous session's log as `pocket-monitor.previous.log`.
 //! Line formats are the old ones, which the benchmark parses (§4).

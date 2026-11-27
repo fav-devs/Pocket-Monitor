@@ -144,6 +144,13 @@ fn window_fullscreen(window: tauri::WebviewWindow, on: Option<bool>) -> Result<b
 fn main() {
     // First thing: no power throttling, 1 ms timers (A14, P9).
     pm_controller::platform::keep_timers_fast();
+    // Our own per-user folder ("Pocket Monitor"), before anything reads or writes a file.
+    // The old viewfinder keeps "OpenPocketCine"; its files are copied across next.
+    pm_controller::platform::set_data_folder(pm_controller::platform::DATA_FOLDER);
+    // First run after the rename: copy (never move) the old folder's files across before
+    // the command line is read (`--lut` looks in the LUT folder). Logged once the log is
+    // rotated below.
+    let migrated = pm_controller::platform::migrate_legacy_data();
     // The log (D3): per user when installed, beside the exe when portable.
     pm_controller::platform::set_log_name("pocket-monitor.log");
     // keys / version / --help / headless exit here; a second launch hands over (B6, A1).
@@ -154,6 +161,9 @@ fn main() {
     }
     pm_controller::platform::rotate_log();
     log_line("pm-desktop", "starting");
+    if let Some((paths, done)) = migrated {
+        log_line("migrate", done.summary(&paths));
+    }
     launch::log_args();
     std::panic::set_hook(Box::new(|info| {
         log_line("PANIC", info);

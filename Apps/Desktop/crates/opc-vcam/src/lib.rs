@@ -6,7 +6,7 @@
 //! - [`Backend::Device`] — the platform's own camera: a `v4l2loopback` device on Linux;
 //!   on Windows 11 a Media Foundation virtual camera whose source (`opc_vcam_win.dll`,
 //!   registered once) the Frame Server loads and this crate feeds over a named pipe; on
-//!   macOS the OpenPocketCine camera extension's sink stream, reached through the Swift
+//!   macOS the Pocket Monitor camera extension's sink stream, reached through the Swift
 //!   facade. Every app that opens a webcam (Chrome, Zoom, Teams, OBS, ffmpeg) sees it.
 //! - [`Backend::Stream`] — MJPEG over HTTP on the loopback interface, on every
 //!   platform. OBS reads it as a Media Source and its own Virtual Camera hands it to the
@@ -106,7 +106,7 @@ impl fmt::Display for Error {
         match self {
             Self::NoDevice => write!(
                 f,
-                "no v4l2loopback device — sudo modprobe v4l2loopback exclusive_caps=1 card_label=OpenPocketCine"
+                "no v4l2loopback device — sudo modprobe v4l2loopback exclusive_caps=1 card_label='Pocket Monitor'"
             ),
             Self::Unsupported => write!(
                 f,

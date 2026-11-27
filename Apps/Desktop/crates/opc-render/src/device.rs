@@ -48,7 +48,7 @@ impl Gpu {
             unsafe { Entry::load() }.map_err(|error| RenderError::NoVulkan(error.to_string()))?;
 
         let application = vk::ApplicationInfo::default()
-            .application_name(c"OpenPocketCine")
+            .application_name(c"Pocket Monitor")
             .api_version(vk::make_api_version(0, 1, 1, 0));
         let instance_info = vk::InstanceCreateInfo::default()
             .application_info(&application)

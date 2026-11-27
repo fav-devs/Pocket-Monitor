@@ -22,6 +22,8 @@ pub struct SavedStation {
     pub model_id: Option<i32>,
 }
 
+/// The file's first line: a format tag, not a name users see. Kept as it was so the old
+/// viewfinder and this app read each other's files (and a migrated copy) unchanged.
 const HEADER: &str = "openpocketcine-desktop-station-v1";
 
 impl SavedStation {
@@ -171,6 +173,7 @@ pub struct SavedCamera {
     pub model_id: Option<i32>,
 }
 
+/// The format tag, as [`HEADER`].
 const CAMERA_HEADER: &str = "openpocketcine-desktop-camera-v1";
 
 impl SavedCamera {

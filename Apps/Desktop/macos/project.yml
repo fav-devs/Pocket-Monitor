@@ -1,5 +1,5 @@
-# The OpenPocketCine Camera app: a small host that installs the camera extension, which
-# is what makes "OpenPocketCine" appear as a camera in every macOS app. The viewfinder
+# The Pocket Monitor Camera app: a small host that installs the camera extension, which
+# is what makes the viewfinder appear as a camera in every macOS app. The viewfinder
 # (the Rust binary) writes into the extension's sink stream through the Swift facade.
 #
 #   brew install xcodegen
@@ -28,16 +28,19 @@ targets:
         codeSign: true
     settings:
       base:
+        # Bundle ids are kept from the first build: a new one is a new system extension
+        # (approved again, and the old one left behind). See docs/desktop-expo-port.md §5.11.
         PRODUCT_BUNDLE_IDENTIFIER: com.opencapture.openpocketcine.camera
-        PRODUCT_NAME: OpenPocketCine Camera
+        # opc-vcam's install.rs looks for /Applications/<PRODUCT_NAME>.app.
+        PRODUCT_NAME: Pocket Monitor Camera
         CODE_SIGN_ENTITLEMENTS: CameraHost/CameraHost.entitlements
         DEVELOPMENT_TEAM: "4V4EGQ6LZA"
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: OpenPocketCine Camera
+        INFOPLIST_KEY_CFBundleDisplayName: Pocket Monitor Camera
         INFOPLIST_KEY_NSHumanReadableCopyright: "Apache 2.0"
-        INFOPLIST_KEY_NSSystemExtensionUsageDescription: "OpenPocketCine Camera installs the camera extension that shows the viewfinder as a camera to other apps."
+        INFOPLIST_KEY_NSSystemExtensionUsageDescription: "Pocket Monitor Camera installs the camera extension that shows the viewfinder as a camera to other apps."
         SWIFT_VERSION: "5.0"
 
   OpenPocketCineCameraExtension:

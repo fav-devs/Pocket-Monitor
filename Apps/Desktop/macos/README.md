@@ -1,6 +1,7 @@
-# OpenPocketCine Camera (macOS)
+# Pocket Monitor Camera (macOS)
 
-The camera extension that makes the desktop viewfinder appear as **OpenPocketCine** in
+The camera extension that makes the desktop viewfinder appear as a camera (still named
+**OpenPocketCine** on macOS until the follow-up in `docs/desktop-expo-port.md` §5.11) in
 every app that opens a camera on macOS 13 and later, and the small host app that
 installs it. The viewfinder (`Apps/Desktop`) writes into the extension's sink stream
 through the Swift facade (`Sources/OpenPocketCineDesktopFacade/DesktopVirtualCameraABI.swift`).
@@ -12,9 +13,9 @@ xcodegen generate
 xcodebuild -project OpenPocketCineCamera.xcodeproj -scheme OpenPocketCineCamera -configuration Release
 ```
 
-Copy the built `OpenPocketCine Camera.app` to `/Applications`, open it, press
+Copy the built `Pocket Monitor Camera.app` to `/Applications`, open it, press
 **Install**, approve the extension in System Settings → Privacy & Security. Then in the
-viewfinder's Output tab set **Virtual camera** to **Camera device**.
+app's Output settings set **Virtual camera** to **Camera device**.
 
 What it needs, and why:
 

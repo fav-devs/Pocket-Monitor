@@ -277,7 +277,7 @@ impl WatcherSession {
                 let hello = ffi::decode_hello(payload)?;
                 if hello.version != self.info.version {
                     self.fail(
-                        "Update OpenPocketCine on both devices to watch this feed.",
+                        "Update the app on both devices to watch this feed.",
                         observer,
                     );
                     return Ok(());

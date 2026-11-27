@@ -72,7 +72,8 @@ Set-Content -Path (Join-Path $portableRoot 'README-portable.txt') -Encoding utf8
 Pocket Monitor $version, portable
 
 Run pocket-monitor.exe. Settings, logs and the LUT folder are in
-%LOCALAPPDATA%\OpenPocketCine (shared with an installed copy); a portable copy in a
+%LOCALAPPDATA%\Pocket Monitor (shared with an installed copy; the first run copies an
+older %LOCALAPPDATA%\OpenPocketCine across and leaves it in place); a portable copy in a
 folder you can write to also logs beside itself (pocket-monitor.log).
 
 Needs the Microsoft Edge WebView2 Runtime. Windows 11 has it. If Pocket Monitor says it

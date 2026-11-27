@@ -10,10 +10,13 @@
 /// `OPCV`.
 pub const MAGIC: [u8; 4] = *b"OPCV";
 pub const HEADER_LEN: usize = 16;
-/// The pipe the viewfinder serves on Windows.
-pub const PIPE_NAME: &str = r"\\.\pipe\OpenPocketCineVCam";
+/// The pipe the viewfinder serves on Windows. Both sides (this crate and the
+/// `opc_vcam_win` DLL) read it from here, so an upgrade that installs both moves together.
+pub const PIPE_NAME: &str = r"\\.\pipe\PocketMonitorVCam";
 /// The media source's class id, as `opc_vcam_win` registers it and the viewfinder
-/// names it to `MFCreateVirtualCamera`. Any change here changes both.
+/// names it to `MFCreateVirtualCamera`. Any change here changes both. Never change it:
+/// the installer's upgrade re-registers this class id, so the old "OpenPocketCine"
+/// registration is replaced instead of a second camera appearing.
 pub const SOURCE_CLSID: &str = "{6f0b4c1e-8d7a-4f3b-9c2e-5a1d7e9b3c40}";
 
 /// The header of one frame on the wire.

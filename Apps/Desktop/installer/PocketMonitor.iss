@@ -3,10 +3,13 @@
 ; Compiled by build-tauri-installer.ps1 with Inno Setup 6 after build-tauri-release.ps1 has
 ; staged pocket-monitor.exe and every runtime DLL in target\pm-release.
 ;
-; It replaces the old opc-monitor build in place: the AppId, the install folder and the
-; shortcut names are the old installer's (OpenPocketCine.iss), so an existing install is
-; upgraded rather than installed twice, and settings and the media cache in
-; %LOCALAPPDATA%\OpenPocketCine are left alone (both builds read them). It registers the
+; It replaces the old opc-monitor build in place: the AppId and the shortcut names are the
+; old installer's (OpenPocketCine.iss), so an existing install is upgraded rather than
+; installed twice. A new install goes to {autopf}\Pocket Monitor; an upgrade stays in the
+; folder the PC already has (UsePreviousAppDir, below), which for the first builds is
+; {autopf}\OpenPocketCine. Per-user files are not the installer's business: on its first
+; run the app copies %LOCALAPPDATA%\OpenPocketCine into %LOCALAPPDATA%\Pocket Monitor and
+; leaves the old folder alone (pm_controller::platform::migrate_legacy_data). It registers the
 ; Media Foundation virtual camera source (opc_vcam_win.dll) as before, unregisters it on
 ; uninstall, and installs the Microsoft Edge WebView2 Runtime when the PC lacks it (the
 ; app's interface is a web view). Nothing is signed.
@@ -33,7 +36,15 @@ AppVerName=Pocket Monitor {#AppVersion}
 AppPublisher=Pocket Monitor contributors
 AppPublisherURL=https://github.com/fav-devs/Pocket-Monitor
 AppSupportURL=https://github.com/fav-devs/Pocket-Monitor/issues
-DefaultDirName={autopf}\OpenPocketCine
+DefaultDirName={autopf}\Pocket Monitor
+; Inno's default, spelled out: when this AppId is already installed, Setup takes the
+; previous install's folder instead of DefaultDirName (and, with DisableDirPage=auto, does
+; not ask). An upgrade therefore replaces the old files where they are: one Apps &
+; features entry, one uninstaller, and opc_vcam_win.dll re-registered at the same path
+; under the same CLSID. Moving an upgrade to the new folder would strand the old folder's
+; files and its uninstall log, so it is not done.
+UsePreviousAppDir=yes
+UsePreviousGroup=yes
 DefaultGroupName=Pocket Monitor
 DisableProgramGroupPage=yes
 OutputDir={#OutDir}
@@ -96,8 +107,9 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 Filename: "{app}\pocket-monitor.exe"; Description: "{cm:LaunchProgram,Pocket Monitor}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; The operator's settings, logs and media cache stay (%LOCALAPPDATA%\OpenPocketCine);
-; only what the installer put down goes.
+; The operator's settings, logs and media cache stay (%LOCALAPPDATA%\Pocket Monitor, and
+; the old %LOCALAPPDATA%\OpenPocketCine they were copied from); only what the installer
+; put down goes.
 Type: filesandordirs; Name: "{app}"
 
 [Code]

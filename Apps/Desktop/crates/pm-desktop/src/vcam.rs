@@ -1,7 +1,7 @@
 //! The viewfinder as a camera for other apps (§1.W, the Output settings).
 //!
 //! `opc-vcam` keeps the backends (v4l2loopback, the Windows Media Foundation source over
-//! `\\.\pipe\OpenPocketCineVCam`, the macOS extension, the MJPEG stream on
+//! `\\.\pipe\PocketMonitorVCam`, the macOS extension, the MJPEG stream on
 //! `127.0.0.1:<port>`) and the latest-wins worker. This module owns the setting (saved
 //! in `desktop-prefs.txt` as `vcam`, `vcam_clean`, `vcam_port`), the camera's life, the
 //! platform component (probed at start and after each action, installs and removes on

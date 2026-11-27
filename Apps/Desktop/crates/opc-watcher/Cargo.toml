@@ -1,6 +1,6 @@
 [package]
 name = "opc-watcher"
-description = "Command-line OpenPocketCine watcher: find a shared feed, join it, receive its picture."
+description = "Command-line Pocket Monitor watcher: find a shared feed, join it, receive its picture."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

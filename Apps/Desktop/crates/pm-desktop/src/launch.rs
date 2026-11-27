@@ -60,10 +60,10 @@ pub fn from_command_line() -> LaunchArgs {
             std::process::exit(code);
         }
         Launch::Window(mut launch) => {
-            // Webcam gestures read OPC_GESTURES (B7, B8), as in the old binary.
+            // Webcam gestures read PM_GESTURES (B7, B8), as the old binary read OPC_GESTURES.
             if launch.gestures || settings.gestures {
                 launch.gestures = true;
-                std::env::set_var("OPC_GESTURES", "1");
+                std::env::set_var("PM_GESTURES", "1");
             }
             if launch.route == Route::Viewfinder {
                 if let Some(camera) = launch.camera.as_deref() {

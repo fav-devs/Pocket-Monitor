@@ -972,8 +972,8 @@ For live UI edits, run `npx expo start --web --port 8081` in `Apps\Mobile` and l
 `cargo tauri dev --config '{"build":{"devUrl":"http://localhost:8081"}}'`.
 
 Logs go to `pocket-monitor.log`, in the old line formats: beside the executable for a
-developer build or the portable ZIP, under `%LOCALAPPDATA%\OpenPocketCine\logs\` for an
-installed copy (D3, §5.9). That file gets the `link:` lines and `view: pace:`/`slow:`, plus
+developer build or the portable ZIP, under `%LOCALAPPDATA%\Pocket Monitor\logs\` for an
+installed copy (D3, §5.9, §5.11). That file gets the `link:` lines and `view: pace:`/`slow:`, plus
 new lines: `link: stick tx …`, `input: rest: …`, `view: picture: …` and `pm-desktop: …`.
 
 ### 5.6 First prototype checks on Windows (Spike 1/2 of §3.8)
@@ -1211,8 +1211,9 @@ Bluetooth runs on one `pm-ble` thread that owns the adapter.
   prefilled from `netsh`) runs the core's `Provisioning`, then the LAN search, then remembers
   the station; *Return to camera Wi-Fi* on the setup page; Settings → Connection → This PC
   shows the home-network camera and searches for it. D-6 (media host) is in §5.7.
-- **X1–X3, X5–X7** read and written in place in `%LOCALAPPDATA%\OpenPocketCine`, so the two
-  builds share them while both exist. **Migration**: on the first run on a PC the old
+- **X1–X3, X5–X7** read and written in `%LOCALAPPDATA%\Pocket Monitor` since the rename
+  (§5.11); the first run copies them from the old `%LOCALAPPDATA%\OpenPocketCine`, which
+  `opc-monitor` keeps using. **Migration**: on the first run on a PC the old
   viewfinder used, `prefs_web_seed` turns `desktop-prefs.txt` into patches for the web's
   `pm.preferences.v1` and `pm.assists.v1` (stick sensitivity, shutter angle, gamepad, every
   assist toggle, zebra/peaking/false colour/guides/grid/scope options, the cube as `look:`);
@@ -1220,7 +1221,7 @@ Bluetooth runs on one `pm-ble` thread that owns the adapter.
   `pocket-monitor-web-seeded-v1.txt`. Tested in `prefs::tests`. X4 (presets) is §5.8's.
 - **Y1, D3 fixed**: `pocket-monitor.log` goes beside the exe only when the folder is writable and
   not an install (no `unins000.exe`, not under Program Files); otherwise
-  `%LOCALAPPDATA%\OpenPocketCine\logs\`. The previous run's log is kept as
+  `%LOCALAPPDATA%\Pocket Monitor\logs\` (`opc-monitor`: `…\OpenPocketCine\logs\`). The previous run's log is kept as
   `pocket-monitor.previous.log` instead of being truncated. The shared `link:` logger uses the
   same rule, so an installed old build now keeps its `link:` lines too (under
   `logs\opc-monitor.log`). **Y2** Settings → Support → This PC: write a report
@@ -1228,8 +1229,9 @@ Bluetooth runs on one `pm-ble` thread that owns the adapter.
   log tail), open the log, settings and LUT folders.
 - **Z1–Z4** `build-tauri-release.ps1` (LGPL gate, Swift debug facade, web export, release build,
   staging in `target\pm-release` as `pocket-monitor.exe`, plus `ffmpeg.exe` for gestures, D8);
-  `build-tauri-installer.ps1` + `PocketMonitor.iss`: the **same AppId and folder** as the old
-  installer (upgrade in place, `opc-monitor.exe` removed), `regserver` for the vcam DLL, the
+  `build-tauri-installer.ps1` + `PocketMonitor.iss`: the **same AppId** as the old
+  installer (upgrade in place in the old folder, `opc-monitor.exe` removed; a new install goes to
+  `{autopf}\Pocket Monitor`, §5.11), `regserver` for the vcam DLL, the
   Microsoft-signed WebView2 Evergreen bootstrapper run only when the runtime is missing,
   `CloseApplications`, settings kept on uninstall; `build-tauri-release-assets.ps1`: portable
   ZIP, installer, FFmpeg sources, `SHA256SUMS.txt` in `dist\tauri`. **Portable WebView2 story**:
@@ -1258,7 +1260,7 @@ process); window position across restarts and with a monitor unplugged; first pa
 Bluetooth to SoftAP, the `netsh` profile, the 12 s reconnect at the next launch; station setup
 on a 2.4 GHz network, the LAN search, the next launch finding it; *Return to camera Wi-Fi*;
 *Connect by address* and the *Online* badge; `pocket-monitor.log` beside a portable copy and in
-`%LOCALAPPDATA%\OpenPocketCine\logs` for an installed one; no password in any log
+`%LOCALAPPDATA%\Pocket Monitor\logs` for an installed one; no password in any log
 (`findstr /i` the SSID's password); the installer over an existing `opc-monitor` install (one
 entry in Apps & features, shortcuts open the new app, the virtual camera still registered,
 settings and media cache kept), on a PC without WebView2, and the portable ZIP there.
@@ -1334,7 +1336,7 @@ The web builds the phones' `ScopeBundle` from it (histogram blend and blur, `NDS
 over playback too: the player feeds the same hub. Plates and graticules stay the web's.
 Positions are not persisted (O4, as before).
 
-**LUTs (P1, P3).** `lut_list` (core built-ins, the drop folder `%LOCALAPPDATA%\OpenPocketCine\luts`
+**LUTs (P1, P3).** `lut_list` (core built-ins, the drop folder `%LOCALAPPDATA%\Pocket Monitor\luts`
 by the core's name rules, the folder path, the remembered pick), `lut_load {name, text, id?}`
 (with `custom:<key>` registers a web-storage cube; without, imports: the core validates it and
 the file is written into the drop folder as `<name>.cube`, ` (2)` rather than overwriting),
@@ -1365,3 +1367,97 @@ scene, and `link: transport: ack=` and `view: pace:` with every plate on for 10 
 scope thread must not cost presented frames); a 65³ cube import and a cube dropped in the
 folder while running (`lut_unload` or a restart rereads it); a still written from a Start-menu
 launch; the vcam beside a non-720p window (no `slow:` lines).
+
+### 5.11 Rename: no "OpenPocketCine" in what Pocket Monitor users see (2026-11-27)
+
+Checked in the Linux container (`cargo check --workspace`, `clippy`, the link-free tests, a
+Windows-target check of `opc-vcam` and `opc-vcam-win`, a macOS-target check of `opc-vcam`);
+**nothing here has run on Windows or a Mac**.
+
+**Per-user folder.** `pm_controller::platform` owns the folder name: `set_data_folder` (a
+`OnceLock`, forwarded to `opc_media::cache::set_folder_name`), `data_folder()`,
+`config_root()`, `data_dir()`, `cache_dir()`. The default is still `OpenPocketCine`, so
+`opc-monitor` reads and writes exactly where it did; `pm-desktop` calls
+`set_data_folder("Pocket Monitor")` first thing in `main`. Every path goes through it:
+`homewifi` (the three camera files), `luts::custom_folder` (and through it `selection_file`,
+`prefs::path`, `appsettings`, `presets`, `watcher-id`, the web-seed marker, stills' fallback),
+`opc-media`'s `MediaCache::for_camera`, `opc-monitor`'s `main.rs`/`station.rs` camera files, the
+log (`<data>/logs`), the instance and window files. Result: `%LOCALAPPDATA%\Pocket Monitor` on
+Windows (data and cache are the same folder there); `$XDG_CONFIG_HOME|~/.config/Pocket Monitor`
+and `$XDG_CACHE_HOME|~/.cache/Pocket Monitor` elsewhere.
+
+**Migration** (`platform::migrate`, `migrate_legacy_data`). At startup, before the command
+line is read, if none of the migrated files exists in the new folders and an old
+`OpenPocketCine` folder exists, it **copies** (never moves, overwrites or deletes):
+`desktop-camera-v1.txt`, `desktop-station-v1.txt`, `desktop-lan-camera-v1.txt`,
+`pocket-monitor-window-v1.txt` (data); `desktop-prefs.txt`, `desktop-app-v1.txt`,
+`desktop-gimbal-presets-v1.txt`, `desktop-lut-v1.txt`, `watcher-id`,
+`pocket-monitor-web-seeded-v1.txt` and the `luts\` folder (cache). The media cache, the logs,
+diagnostics reports and the instance file are not copied (the library re-indexes; the
+`logs\` folder the new app creates does not count as data). One `migrate: copied N file(s)
+from … to …; the old folder is left as it was` line goes to the log after rotation. The
+files' first lines (`openpocketcine-desktop-*-v1`) are format tags and stay, so both builds
+read each other's files. Tested in `platform::tests` (temp dirs: split Linux layout, single
+Windows folder, second run is a no-op, existing new data is never overwritten, the default
+folder for the old binary).
+
+**Virtual camera.** Device `Pocket Monitor` (`opc_vcam::win::CAMERA_NAME`,
+`opc_vcam_win::FRIENDLY_NAME`), registry name `Pocket Monitor Virtual Camera`
+(`REGISTERED_NAME`), pipe `\\.\pipe\PocketMonitorVCam` (`wire::PIPE_NAME`, read by both the app
+and the DLL). The CLSID `{6f0b4c1e-…-5a1d7e9b3c40}` is unchanged: `regserver` on upgrade
+rewrites the same `HKLM\SOFTWARE\Classes\CLSID\{…}` key (name and `InprocServer32` path), the
+Output tab's probe reads that key, and uninstall unregisters it, so there is never a second
+camera. Mismatch to know: a *released* old `opc-monitor.exe` (built before this change) cannot
+feed a new DLL (different pipe); the installer removes `opc-monitor.exe`, and anything built from
+this tree uses the new pipe on both sides. Linux: `card_label='Pocket Monitor'`, files
+`/etc/modules-load.d/pocket-monitor.conf` and `/etc/modprobe.d/pocket-monitor.conf` (quoted label);
+Install removes an old `openpocketcine.conf` pair first, Remove deletes both pairs. The MJPEG
+page title is `Pocket Monitor`. macOS: the host app is `Pocket Monitor Camera.app`
+(`project.yml` `PRODUCT_NAME` and display name, `install.rs` `HOST_APP`); the extension's
+source stream, model and manufacturer read Pocket Monitor; bundle ids are unchanged.
+
+**Installer.** `PocketMonitor.iss`: `DefaultDirName={autopf}\Pocket Monitor`, with
+`UsePreviousAppDir=yes` (Inno's default, spelled out) and the default `DisableDirPage=auto`.
+Inno looks up the AppId's previous install and, when there is one, uses its folder and skips
+the folder page: an upgrade from `{autopf}\OpenPocketCine` stays there (one Apps & features
+entry, one uninstaller, the DLL re-registered in place); a fresh install goes to
+`{autopf}\Pocket Monitor`. Forcing upgrades into the new folder would strand the old files and
+uninstall log, so it is not done. Shortcuts are `Pocket Monitor` / `Uninstall Pocket Monitor`.
+`looks_installed` keys on `unins000.exe` or Program Files, never the folder name, so both folders
+(and a custom one) count as installed; tested for both.
+
+**Environment.** `PM_GESTURES`, `PM_WEBCAM`, `PM_PHONE_PASSCODE`, `PM_WIFI_PASSWORD`,
+`PM_DUMP_STREAM` are read first (`platform::env_var`), the `OPC_` names still work; `--help`
+lists the `PM_` names. Also renamed: the relay's version-mismatch text ("Update the app on both
+devices…"), the Vulkan application name, `opc-watcher`'s usage title, `opc-monitor`'s *Source*
+row (`github.com/fav-devs/Pocket-Monitor`), `Apps/Desktop/README.md`.
+
+**Follow-ups (not done).**
+
+- **macOS device name.** `CameraNames.device` / `.sinkStream` (`Apps/Desktop/macos/CameraExtension/Names.swift`)
+  are still `OpenPocketCine` / `OpenPocketCine Sink`, because the facade finds the camera by
+  those names (`VirtualCameraNames.device`/`.sink` in
+  `Sources/OpenPocketCineDesktopFacade/DesktopVirtualCameraABI.swift`). Change all four to
+  `Pocket Monitor` / `Pocket Monitor Sink` together, then on a Mac: `xcodegen generate`, build,
+  install, *Install* in the host, check the camera's name in FaceTime/OBS and that the Output tab
+  reaches *Camera device*. Also there: the Xcode project/target names (`OpenPocketCineCamera`,
+  `OpenPocketCineCameraExtension`) and the bundle ids `com.opencapture.openpocketcine.camera[.extension]`
+  (a new id is a new system extension: re-approval, and the old one must be removed; the Rust
+  `HOST_BUNDLE`, `Info.plist` mach service and both app-group entitlements follow). An old
+  `/Applications/OpenPocketCine Camera.app` is no longer found by `HOST_APP`; it still carries
+  the same extension, so nothing breaks, but the Output tab says the host is missing until the
+  renamed app is installed.
+- The Swift package/product names (`OpenPocketCineDesktop`, `libOpenPocketCineDesktop`,
+  `OpenPocketCineDesktop.dll` in the staging scripts, `Sources/OpenPocketCineDesktopFacade`,
+  `links = "OpenPocketCineDesktop"` in `opc-core-sys`) and the `opc-*` crate names.
+- `OPC_CORE_LIB_DIR` (every `build.rs` and the `build-*.ps1` scripts) and the old binary's
+  internal `OPC_FROM_HOME`; the C ABI constants `OPC_*` from the Swift facade.
+- `opc-monitor`'s own strings and the old `OpenPocketCine.iss` are left (the operator build until
+  §4.3). The `OPCV` wire magic is internal and unchanged.
+- **Verify on Windows.** Upgrade a PC with an `opc-monitor` install in
+  `C:\Program Files\OpenPocketCine`: no folder page, files replaced there, one Apps & features
+  entry, `HKLM\SOFTWARE\Classes\CLSID\{6f0b4c1e-…}` reads `Pocket Monitor Virtual Camera` with the
+  same path, one camera named *Pocket Monitor* in the Camera app/OBS; first launch logs one
+  `migrate:` line, saved cameras, prefs, LUTs and the LUT pick are there, and
+  `%LOCALAPPDATA%\OpenPocketCine` is untouched. A clean PC installs to
+  `C:\Program Files\Pocket Monitor`, logs to `%LOCALAPPDATA%\Pocket Monitor\logs`.

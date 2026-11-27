@@ -14,6 +14,8 @@ pub const SLOTS: usize = 6;
 pub const DEFAULT_SECONDS: f64 = 2.0;
 pub const RECALL_SECONDS: [f64; 6] = [0.5, 1.0, 2.0, 4.0, 8.0, 15.0];
 
+/// The file's first line: a format tag, not a name users see. Kept as it was so the old
+/// viewfinder and this app read each other's files (and a migrated copy) unchanged.
 const HEADER: &str = "openpocketcine-desktop-gimbal-presets-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq)]

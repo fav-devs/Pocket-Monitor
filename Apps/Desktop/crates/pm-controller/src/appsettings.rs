@@ -15,6 +15,8 @@ pub struct AppSettings {
     pub open_camera_at_launch: bool,
 }
 
+/// The file's first line: a format tag, not a name users see. Kept as it was so the old
+/// viewfinder and this app read each other's files (and a migrated copy) unchanged.
 const HEADER: &str = "openpocketcine-desktop-app-v1";
 
 impl AppSettings {

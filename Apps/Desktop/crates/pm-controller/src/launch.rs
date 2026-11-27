@@ -31,13 +31,13 @@ through its saved Windows profile, then Bluetooth pairing. `setup` goes straight
 pairing. `--camera` points the link somewhere else (a LAN camera, a capture, a fake
 camera); a LAN address is remembered for the next launch.
 `watch` takes the feed a phone running Pocket Monitor is sharing; without a NAME it opens
-the list of phones sharing. The passcode may also come from OPC_PHONE_PASSCODE.
+the list of phones sharing. The passcode may also come from PM_PHONE_PASSCODE.
 `headless` runs Bluetooth without a window; `station` reads the network password from
-OPC_WIFI_PASSWORD so it never lands in a command line or a log.
-`--gestures` (or OPC_GESTURES=1) turns webcam gestures on.
-Environment: OPC_WEBCAM picks a webcam, OPC_DUMP_STREAM=PATH writes every access unit
+PM_WIFI_PASSWORD so it never lands in a command line or a log.
+`--gestures` (or PM_GESTURES=1) turns webcam gestures on.
+Environment: PM_WEBCAM picks a webcam, PM_DUMP_STREAM=PATH writes every access unit
 as Annex-B, PM_CAMERA=HOST[:PORT] is --camera, PM_PICTURE_HOST=toplevel draws the
-picture on the window itself.";
+picture on the window itself. The older OPC_ names of these variables still work.";
 
 pub const KEYS: &str = "\
 Viewfinder keys
@@ -97,12 +97,12 @@ pub struct LaunchArgs {
     pub phone: Option<String>,
     /// `--phone-at IP:PORT`.
     pub phone_at: Option<String>,
-    /// `--passcode P` or `OPC_PHONE_PASSCODE`. Kept in the backend: never sent to the web.
+    /// `--passcode P` or `PM_PHONE_PASSCODE` (`OPC_PHONE_PASSCODE`). Kept in the backend: never sent to the web.
     #[serde(skip)]
     pub passcode: Option<String>,
     /// Whether a passcode was given, for the web to skip asking.
     pub has_passcode: bool,
-    /// `--gestures` or `OPC_GESTURES`.
+    /// `--gestures` or `PM_GESTURES` (`OPC_GESTURES`).
     pub gestures: bool,
     /// Kept for the phase-1 web: the same as `route == demo`.
     pub demo: bool,
@@ -125,18 +125,19 @@ pub enum Launch {
 #[derive(Debug, Clone, Default)]
 pub struct Env {
     pub pm_camera: Option<String>,
-    pub opc_gestures: bool,
-    pub opc_phone_passcode: Option<String>,
+    /// `PM_GESTURES`, else `OPC_GESTURES`.
+    pub gestures: bool,
+    /// `PM_PHONE_PASSCODE`, else `OPC_PHONE_PASSCODE`.
+    pub phone_passcode: Option<String>,
 }
 
 impl Env {
     pub fn current() -> Self {
         Self {
             pm_camera: std::env::var("PM_CAMERA").ok().filter(|v| !v.is_empty()),
-            opc_gestures: std::env::var("OPC_GESTURES").is_ok_and(|v| !v.is_empty() && v != "0"),
-            opc_phone_passcode: std::env::var("OPC_PHONE_PASSCODE")
-                .ok()
-                .filter(|v| !v.is_empty()),
+            gestures: crate::platform::env_var("GESTURES")
+                .is_some_and(|v| !v.is_empty() && v != "0"),
+            phone_passcode: crate::platform::env_var("PHONE_PASSCODE").filter(|v| !v.is_empty()),
         }
     }
 }
@@ -176,7 +177,7 @@ fn view_args(args: &[String], env: &Env, mut out: LaunchArgs) -> Result<LaunchAr
     }
     out.passcode = flag(args, "passcode")
         .map(str::to_string)
-        .or_else(|| env.opc_phone_passcode.clone());
+        .or_else(|| env.phone_passcode.clone());
     out.has_passcode = out.passcode.is_some();
     if out.route == Route::Viewfinder {
         if args.iter().any(|argument| argument == "--setup") {
@@ -206,7 +207,7 @@ fn view_args(args: &[String], env: &Env, mut out: LaunchArgs) -> Result<LaunchAr
 /// What the process should do for `args` (without the program name). `open_at_launch`
 /// is the home screen's *Open my camera straight away* setting (A2, A3).
 pub fn parse(args: &[String], env: &Env, open_at_launch: bool) -> Launch {
-    let gestures = env.opc_gestures || args.iter().any(|argument| argument == "--gestures");
+    let gestures = env.gestures || args.iter().any(|argument| argument == "--gestures");
     let rest: Vec<String> = args
         .iter()
         .filter(|argument| *argument != "--gestures")
@@ -352,7 +353,7 @@ mod tests {
         assert_eq!(view.route, Route::Watch);
         assert_eq!(view.phone_at.as_deref(), Some("10.0.0.8:4000"));
         let env = Env {
-            opc_phone_passcode: Some("9999".into()),
+            phone_passcode: Some("9999".into()),
             ..Env::default()
         };
         match parse(&words("watch Studio"), &env, false) {
@@ -394,7 +395,7 @@ mod tests {
         assert_eq!(window("--gestures").route, Route::Home);
         assert!(!window("view").gestures);
         let env = Env {
-            opc_gestures: true,
+            gestures: true,
             ..Env::default()
         };
         match parse(&[], &env, false) {

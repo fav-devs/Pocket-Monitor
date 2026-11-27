@@ -1254,7 +1254,7 @@ fn system_rows(context: Context) -> Vec<RowBuilder> {
         readout("Protocol", "OpenPocketViewCore through the desktop facade"),
         readout("Renderer", &context.setup.renderer),
         RowBuilder::new("Diagnostics").option("Write a report", false, Pick::Diagnostics),
-        RowBuilder::placeholder("Source", "github.com/fav-devs/OpenPocketCine"),
+        RowBuilder::placeholder("Source", "github.com/fav-devs/Pocket-Monitor"),
         RowBuilder::placeholder("Licenses", "Apache 2.0 · THIRD-PARTY-NOTICES.md"),
     ]
 }

@@ -24,19 +24,9 @@ pub struct LutMenu {
     pub folder: String,
 }
 
-/// `<cache>/OpenPocketCine/luts`, beside the media cache.
+/// `<cache>/<folder>/luts`, beside the media cache ([`crate::platform::cache_dir`]).
 pub fn custom_folder() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_CACHE_HOME"))
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("OpenPocketCine").join("luts")
+    crate::platform::cache_dir().join("luts")
 }
 
 /// Keeps only `.cube` entries with safe names, sorted case-insensitively.

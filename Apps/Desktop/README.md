@@ -1,4 +1,4 @@
-# OpenPocketCine desktop shell
+# Pocket Monitor desktop
 
 Two programs, Windows first; macOS and Linux build from the same sources.
 
@@ -10,7 +10,7 @@ Two programs, Windows first; macOS and Linux build from the same sources.
 Full notes: [`docs/DESKTOP.md`](../../docs/DESKTOP.md).
 
 On Windows, `build-release.ps1` builds and stages a runnable `target\release`, and
-`build-installer.ps1` wraps that in an installer (`dist\OpenPocketCine-Setup-<version>.exe`,
+`build-installer.ps1` wraps that in an installer (`dist\PocketMonitor-Setup-<version>.exe`,
 Inno Setup 6) that also registers the virtual camera.
 `build-release-assets.ps1` produces both the installer and a portable ZIP, plus
 `SHA256SUMS.txt`, ready for a GitHub Release. Public assets require a shared LGPL
@@ -19,11 +19,14 @@ FFmpeg build; the release script rejects GPL and nonfree FFmpeg configurations.
 The Tauri app (`pm-desktop`, installed as `pocket-monitor.exe`) has its own scripts beside
 these: `build-tauri-debug.ps1`, `build-tauri-release.ps1` (stages `target\pm-release`),
 `build-tauri-installer.ps1` (`installer\PocketMonitor.iss`: the same AppId, so it upgrades an
-`opc-monitor` install in place, and it installs the WebView2 runtime when missing) and
+`opc-monitor` install in place, a new install goes to `Program Files\Pocket Monitor`, and it
+installs the WebView2 runtime when missing) and
 `build-tauri-release-assets.ps1` (installer, portable ZIP and `SHA256SUMS.txt` in `dist\tauri`).
 Its log is `pocket-monitor.log`: beside a portable or developer copy, in
-`%LOCALAPPDATA%\OpenPocketCine\logs` for an installed one. `pocket-monitor --help` lists the
-command line. See [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5.9.
+`%LOCALAPPDATA%\Pocket Monitor\logs` for an installed one. Its files live in
+`%LOCALAPPDATA%\Pocket Monitor` (`~/.config` and `~/.cache` `/Pocket Monitor` elsewhere);
+the first run copies the old `OpenPocketCine` folder across and leaves it for `opc-monitor`. `pocket-monitor --help` lists the
+command line. See [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5.9, §5.11.
 
 ## Quick start
 

@@ -80,7 +80,7 @@ your own Wi-Fi from the connection screen (Put the camera on my Wi-Fi): it is th
 on this PC's network at every launch, and the PC keeps its internet.
 `--camera` points the link somewhere other than the camera's usual address, which is
 how a capture or a fake camera is driven.
-`watch` takes the feed an iPhone running OpenPocketCine is sharing (Operator Setup ›
+`watch` takes the feed a phone running the phone app is sharing (Operator Setup ›
 Sharing › Share this feed) instead of linking the camera; both must be on the camera's
 Wi-Fi. Without a NAME it opens the list of phones sharing. `view --phone NAME` is the
 same thing. The passcode may also come from OPC_PHONE_PASSCODE.
@@ -531,7 +531,9 @@ fn saved_camera_path() -> Result<std::path::PathBuf, String> {
     let root = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .ok_or("Windows did not provide a local app-data folder")?;
-    Ok(root.join("OpenPocketCine").join("desktop-camera-v1.txt"))
+    Ok(root
+        .join(pm_controller::platform::data_folder())
+        .join("desktop-camera-v1.txt"))
 }
 
 #[cfg(opc_core_linked)]
@@ -806,11 +808,11 @@ mod lan_camera {
     use std::path::PathBuf;
 
     fn path() -> Option<PathBuf> {
-        let root = std::env::var_os("LOCALAPPDATA")
-            .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-        Some(root.join("OpenPocketCine").join("desktop-lan-camera-v1.txt"))
+        let root = pm_controller::platform::config_root()?;
+        Some(
+            root.join(pm_controller::platform::data_folder())
+                .join("desktop-lan-camera-v1.txt"),
+        )
     }
 
     pub fn save(ip: Ipv4Addr, model: Option<i32>) {

@@ -5,13 +5,13 @@
 //! Capture is an `ffmpeg` child (the same FFmpeg the decoder ships with) at 15 fps,
 //! 160×120 RGB24, as the old viewfinder's `webcam.rs` did: DirectShow on Windows (the
 //! first video device that is not software, so this app's own virtual camera is never
-//! read back), V4L2 on Linux, AVFoundation on macOS. `OPC_WEBCAM` names a device.
+//! read back), V4L2 on Linux, AVFoundation on macOS. `PM_WEBCAM` (or `OPC_WEBCAM`) names a device.
 //! `ffmpeg` is looked for beside the executable, on `PATH`, then in winget's
 //! `Gyan.FFmpeg` (D8: the release staging must ship `ffmpeg.exe` for this to work out of
 //! the box). Nothing is recorded or leaves the machine.
 //!
 //! On when the home setting says so (`desktop-app-v1.txt` `gestures`), with
-//! `--gestures`, or `OPC_GESTURES=1`; `gestures_set` turns it on and off live.
+//! `--gestures`, or `PM_GESTURES=1` (`OPC_GESTURES=1`); `gestures_set` turns it on and off live.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -31,7 +31,8 @@ use crate::input::{post, InputMsg};
 const GREY_W: usize = gesture::WIDTH;
 const GREY_H: usize = gesture::HEIGHT;
 
-/// Words that mark a software camera, never the operator's webcam.
+/// Words that mark a software camera, never the operator's webcam. "openpocketcine" is
+/// the name an older install's virtual camera may still carry.
 const SOFTWARE: [&str; 8] = [
     "virtual",
     "obs",
@@ -64,10 +65,10 @@ fn slot() -> &'static Mutex<Capture> {
     SLOT.get_or_init(|| Mutex::new(Capture::default()))
 }
 
-/// `--gestures`, `OPC_GESTURES=1`, or the home setting (B7, B8, T5).
+/// `--gestures`, `PM_GESTURES=1` (`OPC_GESTURES=1`), or the home setting (B7, B8, T5).
 pub fn wanted() -> bool {
     std::env::args().any(|argument| argument == "--gestures")
-        || std::env::var_os("OPC_GESTURES").is_some_and(|value| value != "0")
+        || pm_controller::platform::env_var_os("GESTURES").is_some_and(|value| value != "0")
         || appsettings::load().gestures
 }
 
@@ -134,7 +135,7 @@ fn ffmpeg() -> Option<PathBuf> {
 
 /// The capture input arguments for this platform.
 fn input_args(ffmpeg: &PathBuf) -> Option<(Vec<String>, String)> {
-    let named = std::env::var("OPC_WEBCAM").ok();
+    let named = pm_controller::platform::env_var("WEBCAM");
     if cfg!(windows) {
         let device = named.or_else(|| {
             let output = hidden(&mut Command::new(ffmpeg))

@@ -68,7 +68,7 @@ impl LiveDecoder {
     }
 
     /// Queues one access unit from the camera or a phone. Keyframes are marked from the
-    /// first coded slice only; `OPC_DUMP_STREAM` gets every unit.
+    /// first coded slice only; `PM_DUMP_STREAM` (`OPC_DUMP_STREAM`) gets every unit.
     pub fn push(&mut self, bytes: Vec<u8>) {
         let keyframe = is_keyframe(&bytes);
         dump_unit(&bytes);
@@ -246,14 +246,14 @@ pub fn is_h264_configuration(access_unit: &[u8]) -> bool {
     configuration
 }
 
-/// With `OPC_DUMP_STREAM=<path>` set, appends every access unit to that file as a plain
+/// With `PM_DUMP_STREAM=<path>` (or the old `OPC_DUMP_STREAM`) set, appends every access unit to that file as a plain
 /// Annex-B stream, so ffprobe and ffplay can look at what the camera really sends.
 pub fn dump_unit(bytes: &[u8]) {
     use std::io::Write;
     static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
         std::sync::OnceLock::new();
     let file = FILE.get_or_init(|| {
-        let path = std::env::var_os("OPC_DUMP_STREAM")?;
+        let path = crate::platform::env_var_os("DUMP_STREAM")?;
         std::fs::File::create(path).ok().map(std::sync::Mutex::new)
     });
     if let Some(file) = file {

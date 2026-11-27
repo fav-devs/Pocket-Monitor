@@ -173,7 +173,7 @@ fn create_key(path: &str) -> Result<HKEY> {
 fn register() -> Result<()> {
     let path = module_path()?;
     let key = create_key(REGISTRY_PATH)?;
-    let outcome = set_string(key, None, "OpenPocketCine Virtual Camera");
+    let outcome = set_string(key, None, crate::REGISTERED_NAME);
     // Safety: closing what we opened.
     unsafe {
         let _ = RegCloseKey(key);

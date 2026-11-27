@@ -1410,7 +1410,7 @@ impl Progress for PrintSteps {
 
 /// `pocket-monitor headless scan [--seconds N] | pair | station --ssid NAME`: Bluetooth
 /// from a terminal, every step printed, no window. `station` reads the network password
-/// from `OPC_WIFI_PASSWORD`. Credentials are never printed.
+/// from `PM_WIFI_PASSWORD` (or `OPC_WIFI_PASSWORD`). Credentials are never printed.
 pub fn headless(args: &[String]) -> Result<(), String> {
     let gatt = GattMap::from_core().ok_or("Cannot read GATT map from core.")?;
     let flag = |name: &str| pm_controller::launch::flag(args, name).map(str::to_string);
@@ -1445,8 +1445,8 @@ pub fn headless(args: &[String]) -> Result<(), String> {
                 println!("pairing worked (credentials read; not printed)");
                 Ok(())
             } else {
-                let password = std::env::var("OPC_WIFI_PASSWORD")
-                    .map_err(|_| "set OPC_WIFI_PASSWORD".to_string())?;
+                let password = pm_controller::platform::env_var("WIFI_PASSWORD")
+                    .ok_or_else(|| "set PM_WIFI_PASSWORD".to_string())?;
                 let ssid = ssid.unwrap_or_default();
                 let (identity, confirmed) = station::provision(
                     &mut transport,

@@ -152,13 +152,17 @@ mod platform {
     use std::process::Command;
 
     const PLATFORM: &str = "Linux · v4l2loopback";
-    /// Loads the module now and keeps it across reboots.
-    pub const INSTALL_SCRIPT: &str = "modprobe v4l2loopback exclusive_caps=1 card_label=OpenPocketCine \
-&& printf 'v4l2loopback\\n' > /etc/modules-load.d/openpocketcine.conf \
-&& printf 'options v4l2loopback exclusive_caps=1 card_label=OpenPocketCine\\n' > /etc/modprobe.d/openpocketcine.conf";
+    /// Loads the module now and keeps it across reboots. An older install's
+    /// `openpocketcine.conf` files are removed first so the two option lines never fight.
+    pub const INSTALL_SCRIPT: &str = "rm -f /etc/modules-load.d/openpocketcine.conf /etc/modprobe.d/openpocketcine.conf; \
+modprobe v4l2loopback exclusive_caps=1 card_label='Pocket Monitor' \
+&& printf 'v4l2loopback\\n' > /etc/modules-load.d/pocket-monitor.conf \
+&& printf 'options v4l2loopback exclusive_caps=1 card_label=\"Pocket Monitor\"\\n' > /etc/modprobe.d/pocket-monitor.conf";
+    /// Unloads the module and removes this install's files and an older install's.
     pub const REMOVE_SCRIPT: &str = "modprobe -r v4l2loopback; \
-rm -f /etc/modules-load.d/openpocketcine.conf /etc/modprobe.d/openpocketcine.conf";
-    const MANUAL: &str = "sudo modprobe v4l2loopback exclusive_caps=1 card_label=OpenPocketCine";
+rm -f /etc/modules-load.d/pocket-monitor.conf /etc/modprobe.d/pocket-monitor.conf \
+/etc/modules-load.d/openpocketcine.conf /etc/modprobe.d/openpocketcine.conf";
+    const MANUAL: &str = "sudo modprobe v4l2loopback exclusive_caps=1 card_label='Pocket Monitor'";
 
     pub fn probe() -> ComponentReport {
         let can_act = on_path("pkexec");
@@ -391,8 +395,11 @@ mod platform {
     use std::process::Command;
 
     const PLATFORM: &str = "macOS · camera extension";
+    /// The host app's bundle id. Kept from the first build so the extension it carries
+    /// keeps its identity (and its approval) across the rename.
     const HOST_BUNDLE: &str = "com.opencapture.openpocketcine.camera";
-    const HOST_APP: &str = "/Applications/OpenPocketCine Camera.app";
+    /// `PRODUCT_NAME` in `Apps/Desktop/macos/project.yml`.
+    const HOST_APP: &str = "/Applications/Pocket Monitor Camera.app";
 
     #[cfg(opc_core_linked)]
     fn present() -> Option<bool> {
@@ -411,17 +418,17 @@ mod platform {
             Some(true) => ComponentReport::new(
                 PLATFORM,
                 ComponentState::Installed,
-                "the OpenPocketCine camera extension is active",
+                "the Pocket Monitor camera extension is active",
             ),
             Some(false) if host => ComponentReport::new(
                 PLATFORM,
                 ComponentState::NotInstalled,
-                "Install opens OpenPocketCine Camera; press Install there and approve the extension in System Settings",
+                "Install opens Pocket Monitor Camera; press Install there and approve the extension in System Settings",
             ),
             Some(false) => ComponentReport::new(
                 PLATFORM,
                 ComponentState::NotInstalled,
-                "OpenPocketCine Camera.app is not in /Applications — build Apps/Desktop/macos and drop it there",
+                "Pocket Monitor Camera.app is not in /Applications — build Apps/Desktop/macos and drop it there",
             ),
             None => ComponentReport::new(
                 PLATFORM,
@@ -436,7 +443,7 @@ mod platform {
 
     fn open_host() -> Result<(), String> {
         run(Command::new("open").args(["-b", HOST_BUNDLE])).map_err(|_| {
-            "OpenPocketCine Camera.app is not installed — build Apps/Desktop/macos and drop it in /Applications".to_string()
+            "Pocket Monitor Camera.app is not installed — build Apps/Desktop/macos and drop it in /Applications".to_string()
         })
     }
 
@@ -512,9 +519,17 @@ mod tests {
     #[test]
     fn the_linux_scripts_load_the_module_the_way_the_docs_say() {
         assert!(platform::INSTALL_SCRIPT.contains("exclusive_caps=1"));
-        assert!(platform::INSTALL_SCRIPT.contains("card_label=OpenPocketCine"));
-        assert!(platform::INSTALL_SCRIPT.contains("/etc/modules-load.d/openpocketcine.conf"));
+        assert!(platform::INSTALL_SCRIPT.contains("card_label='Pocket Monitor'"));
+        assert!(platform::INSTALL_SCRIPT
+            .contains(r#"card_label="Pocket Monitor"\n' > /etc/modprobe.d/pocket-monitor.conf"#));
+        assert!(platform::INSTALL_SCRIPT.contains("/etc/modules-load.d/pocket-monitor.conf"));
+        assert!(
+            platform::INSTALL_SCRIPT.starts_with("rm -f /etc/modules-load.d/openpocketcine.conf"),
+            "an older install's options are cleared first"
+        );
         assert!(platform::REMOVE_SCRIPT.starts_with("modprobe -r v4l2loopback"));
+        assert!(platform::REMOVE_SCRIPT.contains("/etc/modprobe.d/pocket-monitor.conf"));
+        assert!(platform::REMOVE_SCRIPT.contains("/etc/modprobe.d/openpocketcine.conf"));
         assert!(!on_path("no-such-program-anywhere"));
     }
 }
