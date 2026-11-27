@@ -5,7 +5,9 @@
  *
  * Effect pipeline (both platforms, in order):
  *   1. colour   — one baked 3D LUT (custom LUT → look, strengths mixed in), keyed by `lutKey`
- *   2. face     — face retouch; receives per-frame face landmarks (placeholder: passes through)
+ *   2. face     — face retouch (`face.ts`): per-frame landmarks (Vision / MediaPipe, tracked and
+ *                 smoothed), skin smoothing + brightening under a skin mask, then the slim and
+ *                 eye warps; skipped entirely (no detection) while every face strength is 0
  *   3. geometry — rotate (cw) → crop (normalized, rotated frame) → flip → scale to output size
  *   4. audio    — gain (0…2), mute drops the track
  * Preview applies 1–2 natively on the player; 3 is React Native transforms over the view.
@@ -24,6 +26,11 @@ export interface PreviewPlan {
   toneMapSdr: boolean;
   /** 0…2; platforms that cannot boost preview at most 1. */
   volume: number;
+  /**
+   * Optional (additive). Look for faces even while every face strength is 0 (the Face panel is
+   * open), so the panel can say "No face found"; the stage reports counts as `onFaceCount`.
+   */
+  faceProbe?: boolean;
 }
 
 export type ExportQuality = 'original' | 'low-res';
@@ -52,7 +59,7 @@ export interface ExportPlan {
   geometryIdentity: boolean;
 }
 
-export function previewPlan(edit: ClipEdit, src: Size, options: { compare: boolean; hdrSource: boolean }): PreviewPlan {
+export function previewPlan(edit: ClipEdit, src: Size, options: { compare: boolean; hdrSource: boolean; faceProbe?: boolean }): PreviewPlan {
   const lutKey = editCubeKey(edit);
   const colour = lutKey != null || hasFace(edit);
   return {
@@ -61,6 +68,7 @@ export function previewPlan(edit: ClipEdit, src: Size, options: { compare: boole
     face: { ...edit.face },
     toneMapSdr: options.hdrSource && edit.hdr === 'sdr',
     volume: edit.volume,
+    faceProbe: !!options.faceProbe,
   };
 }
 

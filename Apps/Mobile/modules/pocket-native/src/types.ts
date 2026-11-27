@@ -181,6 +181,12 @@ export interface PictureEffects {
   lutExposureStops?: number;
   /** Optional (additive). Top-to-bottom flip (MIRROR Vertical). Default false. */
   mirrorVertical?: boolean;
+  /**
+   * Optional (additive). Web demo only: the playback editor's face retouch strengths (0…1, the
+   * clip's `FaceParams`), drawn on the demo studio subject. Native pictures ignore it (the editor's
+   * face stage runs on the player there).
+   */
+  faceRetouch?: { auto: number; smooth: number; brighten: number; slim: number; eyes: number } | null;
 }
 
 export const defaultPictureEffects: PictureEffects = {

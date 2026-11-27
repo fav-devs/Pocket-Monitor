@@ -47,10 +47,11 @@ import { stripClock } from '../PlaybackFilmstrip';
 import { TickSlider } from './TickSlider';
 
 /**
- * Face retouch is rendered by a later stage (`PocketFaceRetouchStage` / `PocketFaceRetouchEffect`
- * in modules/pocket-native). Until it lands the Face panel shows its controls disabled.
+ * Face retouch is rendered by the face stage (`PocketFaceRetouchStage` on iOS, `PocketFaceRetouchEffect`
+ * on Android, the WebGL face pass in the web demo; maths in core/edit/face.ts). When false the Face
+ * panel shows its controls disabled.
  */
-export const FACE_RETOUCH_READY = false;
+export const FACE_RETOUCH_READY = true;
 
 export const TOOL_TITLES: Record<EditTool, string> = {
   filter: 'Filter',
@@ -154,8 +155,8 @@ export function EditorChrome({
   );
 }
 
-/** A round 60 pt choice (Face items, Rotate actions). */
-function RoundChoice({ icon, label, selected, onPress, disabled }: { icon: IconSvgElement; label: string; selected?: boolean; onPress: () => void; disabled?: boolean }) {
+/** A round 60 pt choice (Face items, Rotate actions). `marked`: a dot for a value that is set. */
+function RoundChoice({ icon, label, selected, onPress, disabled, marked }: { icon: IconSvgElement; label: string; selected?: boolean; onPress: () => void; disabled?: boolean; marked?: boolean }) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -177,6 +178,7 @@ function RoundChoice({ icon, label, selected, onPress, disabled }: { icon: IconS
         }}
       >
         <Icon icon={icon} size={26} color="#ffffff" strokeWidth={1.7} />
+        {marked ? <View style={{ position: 'absolute', top: 3, right: 3, width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#fedb2e' }} /> : null}
       </View>
       <Text numberOfLines={1} style={{ fontFamily: fonts.medium, fontSize: 12, color: selected ? '#ffffff' : muted }}>
         {label}
@@ -438,16 +440,28 @@ const FACE_ITEMS: { key: FaceKey; label: string; icon: IconSvgElement }[] = [
   { key: 'eyes', label: 'Eyes', icon: EyeIcon },
 ];
 
-export function FaceBody({ edit, onChange }: { edit: ClipEdit; onChange: Change }) {
-  const [item, setItem] = useState<FaceKey>(FACE_KEYS.find((k) => edit.face[k] > 0) ?? 'smooth');
+/**
+ * Face: Auto · Smooth · Brighten · Slim · Eyes, each with its own strength on the drum (a dot marks
+ * the ones in use). `faceFound`: whether the preview's face stage sees a face in the current frame
+ * (null = not known yet, e.g. no picture); false shows a quiet "No face found".
+ */
+export function FaceBody({ edit, onChange, faceFound }: { edit: ClipEdit; onChange: Change; faceFound?: boolean | null }) {
+  const [item, setItem] = useState<FaceKey>(FACE_KEYS.find((k) => edit.face[k] > 0) ?? 'auto');
   const ready = FACE_RETOUCH_READY;
   return (
-    <View style={{ gap: 10 }}>
+    <View style={{ gap: 6 }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4, paddingHorizontal: 12, flexGrow: 1, justifyContent: 'center' }}>
         {FACE_ITEMS.map((f) => (
-          <RoundChoice key={f.key} icon={f.icon} label={f.label} selected={item === f.key} disabled={!ready} onPress={() => setItem(f.key)} />
+          <RoundChoice key={f.key} icon={f.icon} label={f.label} selected={item === f.key} marked={ready && edit.face[f.key] > 0.001} disabled={!ready} onPress={() => setItem(f.key)} />
         ))}
       </ScrollView>
+      <View style={{ height: 18, alignItems: 'center', justifyContent: 'center' }}>
+        {ready && faceFound === false ? (
+          <Text accessibilityLiveRegion="polite" style={{ fontFamily: fonts.medium, fontSize: 12, color: muted }}>
+            No face found
+          </Text>
+        ) : null}
+      </View>
       <View style={{ height: 56, paddingHorizontal: 16, justifyContent: 'center' }}>
         {ready ? (
           <TickSlider

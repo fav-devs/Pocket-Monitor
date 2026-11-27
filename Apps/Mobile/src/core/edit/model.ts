@@ -1,8 +1,8 @@
 /**
  * Non-destructive per-clip edit (the playback editor). One `ClipEdit` per media item, kept in app
  * storage; nothing here touches the camera original. Preview and export both read this model:
- * the colour stage (look + custom LUT, baked into one cube), the face stage (placeholder until
- * face retouch lands), the geometry stage (rotate → crop → flip) and the audio stage (volume).
+ * the colour stage (look + custom LUT, baked into one cube), the face stage (`face.ts`), the
+ * geometry stage (rotate → crop → flip) and the audio stage (volume).
  *
  * Pure TypeScript: no React / React Native imports. Additive changes only (persisted).
  */
@@ -30,7 +30,7 @@ export interface CropState {
   panY: number;
 }
 
-/** Face retouch strengths 0…1. Rendered by the face stage (not yet implemented: all 0). */
+/** Face retouch strengths 0…1, rendered by the face stage (`face.ts`). All 0 = no face stage. */
 export interface FaceParams {
   auto: number;
   smooth: number;

@@ -13,7 +13,10 @@ import {
   type MonitorTransfer,
 } from '@/core/media';
 import type { DemoScene, PictureEffects } from '@modules/pocket-native/src/types';
+import { buildRetouchGeometry, packFaceUniforms, resolveFaceStrengths } from '@/core/edit/face';
 import { BLUR_FS, COPY_FS, EFFECTS_FS, FULLSCREEN_VS, SCENE_FS } from './shaders';
+import { demoStudioFace } from './demoFace';
+import { FACE_FS } from './faceShader';
 
 const TRANSFER_ID: Record<MonitorTransfer, number> = { rec709: 0, hdr: 1, dlog: 2, dlog2: 3, dlogm: 4 };
 const SCENE_ID: Record<DemoScene, number> = { studio: 0, bars: 1, skin: 2, night: 3 };
@@ -47,11 +50,14 @@ export class WebPictureRenderer {
   private progBlur: WebGLProgram;
   private progCopy: WebGLProgram;
   private progFx: WebGLProgram;
+  private progFace: WebGLProgram;
   private vao: WebGLVertexArrayObject;
   private signal: Target;
   private blurH: Target;
   private blurV: Target;
   private sample: Target;
+  /** The signal after the editor's face stage (web demo playback). */
+  private faced: Target;
   private lutTex: WebGLTexture;
   private lutKey: CubeLUT | null = null;
   private lutSize = 2;
@@ -69,12 +75,13 @@ export class WebPictureRenderer {
     this.progBlur = this.program(BLUR_FS, 'blur');
     this.progCopy = this.program(COPY_FS, 'copy');
     this.progFx = this.program(EFFECTS_FS, 'effects');
+    this.progFace = this.program(FACE_FS, 'face');
     this.vao = gl.createVertexArray()!;
     gl.bindVertexArray(this.vao);
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    for (const p of [this.progScene, this.progBlur, this.progCopy, this.progFx]) {
+    for (const p of [this.progScene, this.progBlur, this.progCopy, this.progFx, this.progFace]) {
       const loc = gl.getAttribLocation(p, 'a_pos');
       if (loc >= 0) {
         gl.enableVertexAttribArray(loc);
@@ -85,6 +92,7 @@ export class WebPictureRenderer {
     this.blurH = this.target(SIGNAL_WIDTH, SIGNAL_HEIGHT, gl.NEAREST);
     this.blurV = this.target(SIGNAL_WIDTH, SIGNAL_HEIGHT, gl.NEAREST);
     this.sample = this.target(192, 108, gl.NEAREST);
+    this.faced = this.target(SIGNAL_WIDTH, SIGNAL_HEIGHT, gl.LINEAR);
     this.lutTex = gl.createTexture()!;
     this.uploadLut(null);
     this.fcTex = gl.createTexture()!;
@@ -211,6 +219,18 @@ export class WebPictureRenderer {
       this.draw(this.blurV, SIGNAL_WIDTH, SIGNAL_HEIGHT);
     }
 
+    // 2b. The playback editor's face stage, on the studio subject (its landmarks are known).
+    const faceUniforms = fx.faceRetouch && inputs.scene === 'studio' ? this.faceUniforms(time, fx.faceRetouch) : null;
+    if (faceUniforms) {
+      gl.useProgram(this.progFace);
+      this.bindTex(0, gl.TEXTURE_2D, this.signal.tex);
+      gl.uniform1i(this.u(this.progFace, 'u_src'), 0);
+      gl.uniform2f(this.u(this.progFace, 'u_res'), SIGNAL_WIDTH, SIGNAL_HEIGHT);
+      gl.uniform1i(this.u(this.progFace, 'u_faces'), 1);
+      gl.uniform4fv(this.u(this.progFace, 'u_face'), faceUniforms);
+      this.draw(this.faced, SIGNAL_WIDTH, SIGNAL_HEIGHT);
+    }
+
     // 3. Tables.
     if (lut !== this.lutKey) this.uploadLut(lut);
     const fcKey = fx.falseColor ? `${fx.falseColor}:${signal}:${clipByte}` : '';
@@ -223,7 +243,7 @@ export class WebPictureRenderer {
     // 4. Effects to the canvas.
     const p = this.progFx;
     gl.useProgram(p);
-    this.bindTex(0, gl.TEXTURE_2D, this.signal.tex);
+    this.bindTex(0, gl.TEXTURE_2D, faceUniforms ? this.faced.tex : this.signal.tex);
     this.bindTex(1, gl.TEXTURE_2D, this.blurV.tex);
     this.bindTex(2, gl.TEXTURE_3D, this.lutTex);
     this.bindTex(3, gl.TEXTURE_2D, this.fcTex);
@@ -273,6 +293,16 @@ export class WebPictureRenderer {
     this.draw(null, canvasW, canvasH);
   }
 
+  /** The studio subject's face uniforms at scene time `t`, or null when there's nothing to do. */
+  private faceUniforms(t: number, face: NonNullable<PictureEffects['faceRetouch']>): Float32Array | null {
+    const points = demoStudioFace(t, SIGNAL_WIDTH, SIGNAL_HEIGHT);
+    const width = Math.hypot(points[8] - points[28], points[9] - points[29]);
+    // The demo's lit skin sits around mid-grey in Rec.709.
+    const strengths = resolveFaceStrengths(face, { faceSize: width / SIGNAL_HEIGHT, skinLuma: 0.45 });
+    const g = buildRetouchGeometry({ points, strengths });
+    return g ? packFaceUniforms(g) : null;
+  }
+
   private pbo: WebGLBuffer | null = null;
   private fence: WebGLSync | null = null;
 
@@ -318,7 +348,7 @@ export class WebPictureRenderer {
 
   dispose() {
     const gl = this.gl;
-    for (const t of [this.signal, this.blurH, this.blurV, this.sample]) {
+    for (const t of [this.signal, this.blurH, this.blurV, this.sample, this.faced]) {
       gl.deleteFramebuffer(t.fb);
       gl.deleteTexture(t.tex);
     }
@@ -326,6 +356,6 @@ export class WebPictureRenderer {
     if (this.pbo) gl.deleteBuffer(this.pbo);
     gl.deleteTexture(this.lutTex);
     gl.deleteTexture(this.fcTex);
-    for (const p of [this.progScene, this.progBlur, this.progCopy, this.progFx]) gl.deleteProgram(p);
+    for (const p of [this.progScene, this.progBlur, this.progCopy, this.progFx, this.progFace]) gl.deleteProgram(p);
   }
 }

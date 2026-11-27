@@ -2,8 +2,8 @@ import { requireOptionalNativeModule } from 'expo';
 import type { VideoPlayer } from 'expo-video';
 
 /**
- * `PocketEdit`: the playback editor's GPU colour stage on the expo-video player (preview) and the
- * clip exporter. iOS: AVVideoComposition with a Core Image handler on the player item, and
+ * `PocketEdit`: the playback editor's GPU colour and face stages on the expo-video player (preview)
+ * and the clip exporter. iOS: AVVideoComposition with a Core Image handler on the player item, and
  * AVAssetExportSession with the same handler plus crop/rotate and an audio mix. Android: a Media3
  * GL effect on the player (`ExoPlayer.setVideoEffects`) and Media3 Transformer for export.
  * Null on web and in builds without the module (the web demo draws looks with WebGL instead).
@@ -31,6 +31,8 @@ export interface EditPreviewRecord {
   face: EditFaceRecord;
   toneMapSdr: boolean;
   volume: number;
+  /** Look for faces even at strength 0 (the Face panel is open). */
+  faceProbe?: boolean;
 }
 
 export interface EditExportRecord {
@@ -62,6 +64,11 @@ export interface EditExportProgressEvent {
   fraction: number;
 }
 
+/** The preview's face stage: faces it sees in the current frame (sent when the count changes). */
+export interface EditFaceCountEvent {
+  count: number;
+}
+
 export interface PocketEditNativeModule {
   /** Register a baked colour cube: `rgb` is size³ RGB float triplets, red fastest. */
   setLut(key: string, size: number, rgb: Float32Array): void;
@@ -75,6 +82,7 @@ export interface PocketEditNativeModule {
   startExport(jobId: string, plan: EditExportRecord): Promise<string>;
   cancelExport(jobId: string): void;
   addListener(event: 'onExportProgress', listener: (e: EditExportProgressEvent) => void): { remove(): void };
+  addListener(event: 'onFaceCount', listener: (e: EditFaceCountEvent) => void): { remove(): void };
 }
 
 const native = requireOptionalNativeModule<PocketEditNativeModule>('PocketEdit');
@@ -101,6 +109,7 @@ export const PocketEdit: PocketEditNativeModule | null = native
       },
       startExport: (jobId, plan) => native.startExport(jobId, plan),
       cancelExport: (jobId) => native.cancelExport(jobId),
-      addListener: (event, listener) => native.addListener(event, listener),
+      addListener: ((event: string, listener: (e: never) => void) =>
+        (native.addListener as unknown as (e: string, l: (e: never) => void) => { remove(): void }).call(native, event, listener)) as PocketEditNativeModule['addListener'],
     }
   : null;

@@ -331,7 +331,7 @@ export default function PlaybackScreen() {
   }, [item?.width, item?.height]);
   const hdrSource = item?.colorMode === 'hlg';
   const editColour = editable && hasColor(edit);
-  const { demoEffects, nativePreview } = useEditPreview({
+  const { demoEffects, nativePreview, faceFound } = useEditPreview({
     edit: editable ? edit : storedEdit,
     engineKind: engine.kind,
     player: engine.kind === 'video' ? baseEngine.player : null,
@@ -340,6 +340,7 @@ export default function PlaybackScreen() {
     source,
     hdrSource,
     itemKey: `${id}|${uri ?? 'sim'}`,
+    faceProbe: tool === 'face',
   });
 
   const openTool = (t: EditTool) => {
@@ -745,7 +746,7 @@ export default function PlaybackScreen() {
   ) : tool === 'volume' ? (
     <VolumeBody edit={edit} onChange={change} />
   ) : tool === 'face' ? (
-    <FaceBody edit={edit} onChange={change} />
+    <FaceBody edit={edit} onChange={change} faceFound={faceFound} />
   ) : (
     <TrimBody edit={edit} onChange={change} position={engine.position} duration={engine.duration} />
   );
