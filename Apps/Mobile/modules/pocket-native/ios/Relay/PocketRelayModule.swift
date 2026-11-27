@@ -50,6 +50,7 @@ struct PocketRelayHostStatusEvent {
   var holder: String
   var joinable: Bool
   var watcherNames: [String]
+  var video: String
 }
 
 @Record
@@ -141,7 +142,7 @@ public final class PocketRelayModule: Module {
         PocketRelayHostStatusEvent(
           state: s.state, error: s.error, watchers: s.watchers,
           pending: s.pendingName.map { PocketRelayPendingRecord(name: $0, watcherId: s.pendingWatcherId ?? "") },
-          holder: s.holder, joinable: s.joinable, watcherNames: s.watcherNames))
+          holder: s.holder, joinable: s.joinable, watcherNames: s.watcherNames, video: s.video))
     }
     h.onCommand = { [weak self] json, watcherId in
       self?.onHostCommand(PocketRelayHostCommandEvent(json: json, watcherId: watcherId))

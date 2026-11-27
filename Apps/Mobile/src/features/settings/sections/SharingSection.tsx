@@ -75,7 +75,9 @@ function shareNote(live: boolean, sharing: boolean, status: FeedSharingStatus): 
   if (status.state === 'failed') return status.error ?? 'Sharing could not start';
   if (!sharing || !status.active) return undefined;
   const watchers = status.watchers === 0 ? 'No watchers' : `${status.watchers} ${status.watchers === 1 ? 'watcher' : 'watchers'}`;
-  return status.joinable || status.watchers > 0 ? `Sharing · ${watchers}` : `Sharing · ${watchers} · New watchers wait for a camera keyframe`;
+  // The host re-encodes with the phone's hardware encoder, so joiners get a keyframe at once. Only
+  // the forwarding fallback (no hardware encoder) can leave a new watcher waiting.
+  return status.video === 'forward' ? `Sharing · ${watchers} · New watchers may wait for a camera keyframe` : `Sharing · ${watchers}`;
 }
 
 /**

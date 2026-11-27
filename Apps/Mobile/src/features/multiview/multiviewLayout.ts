@@ -64,6 +64,8 @@ export interface MultiviewLayout {
 }
 
 const SLOTS = 4;
+/** A tall window keeps the docked tray to about half its height; a phone gives it the column. */
+const dockBottom = (stage: Rect, h: number) => Math.min(maxY(stage), stage.y + Math.max(420, h * 0.55));
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const empty = () => rect();
 
@@ -175,7 +177,7 @@ export function computeMultiviewLayout(input: MultiviewLayoutInput): MultiviewLa
     stage = rect(stageLeft, top, Math.max(1, stageRight - stageLeft), Math.max(1, bottom - top));
     if (!center) {
       tiles = gridTiles(stage, 2, 2, gap);
-      sheet = { dock: { left: stage.x, width: clamp(w * 0.42, 300, 400), top: stage.y, bottom: maxY(stage) }, topInset: 0 };
+      sheet = { dock: { left: stage.x, width: clamp(w * 0.42, 300, 400), top: stage.y, bottom: dockBottom(stage, h) }, topInset: 0 };
     } else {
       const valuesH = READOUT_PAD * 2 + READOUT_TILE_H;
       valuesPerRow = Math.max(1, input.valueCount ?? 7);
@@ -201,7 +203,7 @@ export function computeMultiviewLayout(input: MultiviewLayoutInput): MultiviewLa
       if (stickRoom >= stickSide) stick = rect(maxX(stage) - stickSide, maxY(stage) - stickSide, stickSide, stickSide);
       zoom = rect(maxX(main) - 8 - ZOOM_SIZE, maxY(main) - 8 - ZOOM_SIZE, ZOOM_SIZE, ZOOM_SIZE);
       gimbal = rect(zoom.x - CLUSTER_GAP - ZOOM_SIZE, zoom.y, ZOOM_SIZE, ZOOM_SIZE);
-      sheet = { dock: { left: stage.x, width: Math.min(clamp(w * 0.42, 300, 400), mainW), top: stage.y, bottom: maxY(stage) }, topInset: 0 };
+      sheet = { dock: { left: stage.x, width: Math.min(clamp(w * 0.42, 300, 400), mainW), top: stage.y, bottom: dockBottom(stage, h) }, topInset: 0 };
     }
   }
 

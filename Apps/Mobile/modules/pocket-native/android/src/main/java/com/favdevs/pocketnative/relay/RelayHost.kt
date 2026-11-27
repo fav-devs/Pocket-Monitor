@@ -13,6 +13,8 @@ import android.util.Log
 import com.favdevs.pocketnative.shared.PocketVideoCodec
 import com.favdevs.pocketnative.shared.PocketVideoSink
 import com.favdevs.pocketnative.shared.PocketVideoSinkRegistry
+import com.favdevs.pocketnative.video.PocketVideoSession
+import com.favdevs.pocketnative.video.PocketVideoSessionHub
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.IOException
@@ -20,22 +22,32 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
 /**
- * The sharing host (docs/watcher-relay.md "Ownership and bounds", adapted for forwarding):
+ * The sharing host (docs/watcher-relay.md "Ownership and bounds"; twin of iOS `PocketRelayHost`):
  *
- * - A tap on the camera's video session in [PocketVideoSinkRegistry] receives the camera's Annex-B
- *   access units on the datalink video thread and hands them to [exec]; frames never cross JS.
- * - The Pocket sends no regular keyframes, so the host keeps the current GOP (the last keyframe
- *   with its parameter sets and every frame since). A joiner is served from that keyframe and
- *   catches up (`catchUp` frames); when the GOP outgrows its bound the host stops admitting joiners
- *   until the camera's next keyframe (it never asks the camera for one).
- * - Each authorized watcher has [window] video sends in flight; hello, state and tokens do not use
+ * - Phone-as-encoder: the Pocket sends no regular keyframes and keyframe requests belong to the
+ *   watchdog, so the host re-encodes the decoded picture ([RelayEncoder], hardware HEVC, a keyframe
+ *   at least every 2 s) and a joiner gets a requested sync frame within a second. Frames never
+ *   cross JS: the decoder's SurfaceTexture frames are drawn into the encoder's input Surface on the
+ *   shared GL thread.
+ * - Decoder lifetime: while sharing runs the host holds the camera's [PocketVideoSession] in
+ *   [PocketVideoSessionHub], so decoding (and its reference chain) continues with no picture view
+ *   mounted (server mode with the screen off). The frame tap and the MediaCodec encoder exist only
+ *   while at least one watcher is authorized; the last watcher leaving tears the encoder down.
+ * - Each authorized watcher has [window] video sends in flight; a watcher whose window is full skips
+ *   that frame and waits for a keyframe (others keep receiving). Hello, state and tokens do not use
  *   the window; at most one state send is outstanding per watcher and newer states replace it.
+ * - Bitrate: [RelayBitrate] (10 → 7 → 4.5 → 3 Mb/s), sampled at 5 Hz on [exec].
+ * - Fallback (`video = "forward"`: no hardware HEVC encoder with Surface input, or it failed): a tap
+ *   in [PocketVideoSinkRegistry] forwards the camera's own access units and the host keeps the
+ *   current camera GOP for joiners; past its bound a joiner waits for the camera's next keyframe.
+ *   The host never asks the camera for one (no `0x09/0xa8`) in either mode.
  * - Passcode and version refusals, and an explicit stop, are flushed before the socket closes
  *   (three-second bound).
  * - Control: one holder; a request waits for the operator's Grant / Deny (JS); a dropped holder
@@ -47,7 +59,7 @@ import org.json.JSONObject
 class RelayHost(
   private val context: Context,
   private val listener: Listener,
-) : PocketVideoSink {
+) : PocketVideoSink, RelayEncoder.Listener {
   interface Listener {
     fun hostStatus(status: Map<String, Any?>)
     fun hostCommand(json: String, watcherId: String)
@@ -92,6 +104,17 @@ class RelayHost(
   private var skipped = 0L
   private var keys = 0L
   private var metricsAt = RelayWire.now()
+  /** "reencode" or "forward" (see the class comment). */
+  private var video = VIDEO_REENCODE
+  /** Held while sharing runs (re-encode): keeps the decoder alive without a picture view. */
+  private var videoSession: PocketVideoSession? = null
+  private var encoder: RelayEncoder? = null
+  private var bitrate = RelayBitrate(RelayWire.now())
+  private var ticker: ScheduledFuture<*>? = null
+  private var fpsFrames = 0
+  private var fpsSince = RelayWire.now()
+  private var measuredFps: Double? = null
+  private var baselineFps: Double? = null
 
   private class Unit(val index: Long, val au: ByteArray, val codec: PocketVideoCodec, val key: Boolean, val sets: List<ByteArray>?, val at: Double)
 
@@ -102,7 +125,9 @@ class RelayHost(
     var closing = false
     var name = "Watcher"
     var watcherId: String? = null
-    /** Absolute GOP index of the next frame to send; -1 waits for a keyframe. */
+    /** Re-encode: skips frames until the next keyframe (a joiner, or after a full send window). */
+    var needsKey = true
+    /** Forward: absolute GOP index of the next frame to send; -1 waits for a keyframe. */
     var cursor = -1L
     var inFlight = 0
     var stateInFlight = false
@@ -120,6 +145,8 @@ class RelayHost(
         running = true
         generation += 1
         error = null
+        video = if (RelayEncoder.hardware != null) VIDEO_REENCODE else VIDEO_FORWARD
+        joinable = video == VIDEO_REENCODE
         setStateLocked("starting")
         val socket = ServerSocket()
         socket.reuseAddress = true
@@ -133,7 +160,13 @@ class RelayHost(
         server = socket
         val gen = generation
         Thread({ acceptLoop(socket, gen) }, "pocket.relay.accept").apply { isDaemon = true }.start()
-        PocketVideoSinkRegistry.addTap(next.cameraSessionId, this)
+        if (video == VIDEO_REENCODE) {
+          bitrate = RelayBitrate(RelayWire.now())
+          videoSession = PocketVideoSessionHub.acquire(next.cameraSessionId)
+        } else {
+          PocketVideoSinkRegistry.addTap(next.cameraSessionId, this)
+        }
+        Log.i(TAG, "relay: listening video=$video")
         register(next, socket.localPort, gen)
         done(null)
       } catch (t: Throwable) {
@@ -156,6 +189,7 @@ class RelayHost(
       if (!allowsControl) pending = null
       publishStatusLocked()
       for (peer in peers.values) pump(peer)
+      refreshDemandLocked()
     }
   }
 
@@ -200,6 +234,9 @@ class RelayHost(
   private fun stopLocked(reason: String?) {
     val o = options
     if (o != null) PocketVideoSinkRegistry.removeTap(o.cameraSessionId, this)
+    stopEncodingLocked()
+    videoSession?.let { PocketVideoSessionHub.release(it) }
+    videoSession = null
     registration?.let { l -> runCatching { nsd()?.unregisterService(l) } }
     registration = null
     runCatching { server?.close() }
@@ -333,6 +370,8 @@ class RelayHost(
     runCatching { peer.socket.close() }
     peer.writer.shutdownNow()
     if (pending === peer) pending = null
+    updateEncodingLocked()
+    refreshDemandLocked()
     if (holder === peer) {
       holder = null
       val id = peer.watcherId
@@ -391,7 +430,10 @@ class RelayHost(
         } else {
           sendToken(peer)
         }
-        peer.cursor = if (joinable && gop.isNotEmpty()) gop.first().index else -1
+        peer.needsKey = true
+        peer.cursor = if (video == VIDEO_FORWARD && joinable && gop.isNotEmpty()) gop.first().index else -1
+        updateEncodingLocked()
+        refreshDemandLocked()
         pump(peer)
         Log.i(TAG, "relay host: watcher joined (${peers.values.count { it.authorized }})")
         publishStatusLocked()
@@ -443,11 +485,12 @@ class RelayHost(
 
   override fun receive(accessUnit: ByteArray, codec: PocketVideoCodec, presentationTimeUs: Long) {
     val at = RelayWire.now()
-    exec.execute { if (running) ingest(accessUnit, codec, at) }
+    exec.execute { if (running && video == VIDEO_FORWARD) ingest(accessUnit, codec, at) }
   }
 
   override fun reset() {
     exec.execute {
+      if (video != VIDEO_FORWARD) return@execute
       clearGopLocked()
       if (joinable) {
         joinable = false
@@ -511,6 +554,7 @@ class RelayHost(
   }
 
   private fun pump(peer: Peer) {
+    if (video != VIDEO_FORWARD) return
     val o = options ?: return
     if (!peer.authorized || peer.closing) return
     while (peer.cursor >= 0 && peer.inFlight < o.window) {
@@ -525,6 +569,137 @@ class RelayHost(
         pump(peer)
       }
     }
+  }
+
+  // ───────────────────────────── Re-encode ─────────────────────────────
+
+  private fun ready(peer: Peer): Boolean {
+    val o = options ?: return false
+    return peer.authorized && !peer.closing && peer.inFlight < o.window
+  }
+
+  /** Encoder and frame tap while at least one watcher is authorized; torn down at zero. */
+  private fun updateEncodingLocked() {
+    val session = videoSession
+    if (!running || video != VIDEO_REENCODE || session == null) return
+    val wanted = peers.values.any { it.authorized && !it.closing }
+    if (wanted && encoder == null) {
+      val e = RelayEncoder(this)
+      e.setBitrate(bitrate.bitsPerSecond)
+      encoder = e
+      session.addFrameTap(e)
+      baselineFps = null
+      measuredFps = null
+      fpsFrames = 0
+      fpsSince = RelayWire.now()
+      ticker = exec.scheduleAtFixedRate({
+        // An exception would cancel every later tick.
+        try { tickLocked() } catch (t: Throwable) { Log.w(TAG, "relay tick failed", t) }
+      }, TICK_MS, TICK_MS, TimeUnit.MILLISECONDS)
+      Log.i(TAG, "relay: encoder on")
+    } else if (!wanted && encoder != null) {
+      stopEncodingLocked()
+      Log.i(TAG, "relay: encoder off (no watchers)")
+    }
+  }
+
+  private fun stopEncodingLocked() {
+    ticker?.cancel(false)
+    ticker = null
+    val e = encoder ?: return
+    encoder = null
+    videoSession?.removeFrameTap(e)
+    e.close()
+  }
+
+  /** What the GL thread may draw: any watcher with room, and whether one waits for a keyframe. */
+  private fun refreshDemandLocked() {
+    val e = encoder ?: return
+    var frames = false
+    var key = false
+    for (peer in peers.values) {
+      if (!ready(peer)) continue
+      frames = true
+      if (peer.needsKey) key = true
+    }
+    e.wantFrames = frames
+    e.wantKey = key
+  }
+
+  override fun encoded(encoder: RelayEncoder, au: ByteArray, key: Boolean, sets: List<ByteArray>?) {
+    val at = RelayWire.now()
+    runCatching { exec.execute { if (running && this.encoder === encoder) broadcastLocked(au, key, sets, at) } }
+  }
+
+  override fun encoderFailed(encoder: RelayEncoder, reason: String) {
+    runCatching { exec.execute { failOverLocked(encoder, reason) } }
+  }
+
+  private fun failOverLocked(encoder: RelayEncoder, reason: String) {
+    if (!running || this.encoder !== encoder) return
+    val o = options ?: return
+    Log.w(TAG, "relay: $reason; forwarding the camera's own picture instead")
+    stopEncodingLocked()
+    videoSession?.let { PocketVideoSessionHub.release(it) }
+    videoSession = null
+    video = VIDEO_FORWARD
+    joinable = false
+    for (peer in peers.values) peer.cursor = -1
+    PocketVideoSinkRegistry.addTap(o.cameraSessionId, this)
+    publishStatusLocked()
+  }
+
+  private fun broadcastLocked(au: ByteArray, key: Boolean, sets: List<ByteArray>?, at: Double) {
+    val o = options ?: return
+    if (key) keys += 1
+    val head = RelayWire.frameHead(PocketVideoCodec.HEVC, key, sets, recording, false, at, false, au.size)
+    for (peer in peers.values) {
+      if (!peer.authorized || peer.closing) continue
+      if (peer.inFlight >= o.window) {
+        // Dropping after encode breaks this watcher's reference chain: it resumes at a keyframe.
+        peer.needsKey = true
+        skipped += 1
+        continue
+      }
+      if (peer.needsKey && !key) continue
+      peer.needsKey = false
+      peer.inFlight += 1
+      sent += 1
+      write(peer, listOf(head, au)) {
+        peer.inFlight = maxOf(0, peer.inFlight - 1)
+        refreshDemandLocked()
+      }
+    }
+    refreshDemandLocked()
+  }
+
+  /** 5 Hz: camera delivery rate (decoded frames reaching the tap), saturation, bitrate, counters. */
+  private fun tickLocked() {
+    val e = encoder ?: return
+    if (!running) return
+    val now = RelayWire.now()
+    fpsFrames += e.takeFrames()
+    val elapsed = now - fpsSince
+    if (elapsed >= 1.0) {
+      val fps = fpsFrames / elapsed
+      measuredFps = fps
+      if (fps > 0) baselineFps = maxOf(baselineFps ?: fps, fps)
+      fpsFrames = 0
+      fpsSince = now
+    }
+    val measured = measuredFps
+    val starving = if (measured != null && measured > 0) {
+      measured < (baselineFps ?: measured) * RelayBitrate.STARVATION_FRACTION
+    } else {
+      baselineFps != null
+    }
+    val authorized = peers.values.filter { it.authorized && !it.closing }
+    val saturated = authorized.isNotEmpty() && authorized.none { ready(it) }
+    bitrate.tick(saturated, starving, now)?.let { bps ->
+      e.setBitrate(bps)
+      Log.i(TAG, "relay: bitrate $bps")
+    }
+    logMetricsLocked()
   }
 
   // ───────────────────────────── Status ─────────────────────────────
@@ -544,19 +719,27 @@ class RelayHost(
       "holder" to (holder?.name ?: "Host"),
       "joinable" to joinable,
       "watcherNames" to peers.values.filter { it.authorized && !it.closing }.map { it.name },
+      "video" to video,
     )
     if (status == lastStatus) return
     lastStatus = status
     listener.hostStatus(status)
   }
 
-  /** Console counters every five seconds; no peer names or codes. */
+  /** Console counters every five seconds (docs/watcher-relay.md); no peer names or codes. */
   private fun logMetricsLocked() {
     val now = RelayWire.now()
     if (now - metricsAt < 5) return
     val seconds = now - metricsAt
     metricsAt = now
-    Log.i(TAG, "relay: peers=${peers.values.count { it.authorized }} sent=$sent skipped=$skipped keys=$keys gop=${gop.size}/${gopBytes / 1024}KiB over ${"%.0f".format(seconds)}s")
+    val authorized = peers.values.count { it.authorized }
+    if (authorized == 0) {
+      // Nothing to report while nobody watches.
+    } else if (video == VIDEO_REENCODE) {
+      Log.i(TAG, "relay: peers=$authorized bps=${bitrate.bitsPerSecond} sent=$sent skipped=$skipped keys=$keys cameraFPS=${"%.1f".format(measuredFps ?: 0.0)}")
+    } else {
+      Log.i(TAG, "relay: peers=$authorized sent=$sent skipped=$skipped keys=$keys gop=${gop.size}/${gopBytes / 1024}KiB over ${"%.0f".format(seconds)}s (forwarding)")
+    }
     sent = 0
     skipped = 0
     keys = 0
@@ -564,6 +747,9 @@ class RelayHost(
 
   companion object {
     private const val TAG = "PocketRelay"
+    const val VIDEO_REENCODE = "reencode"
+    const val VIDEO_FORWARD = "forward"
+    private const val TICK_MS = 200L
     private const val MAX_PEERS = 16
     private const val PARK_SECONDS = 20.0
     private const val CLOSE_SECONDS = 3L

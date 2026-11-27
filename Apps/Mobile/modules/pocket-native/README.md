@@ -140,6 +140,26 @@ Network denial or Android camera network lost.
 iOS `CMHeadphoneMotionManager` quaternion `(x, y, z, w)` + `CMDeviceMotion.timestamp`, and
 connect/disconnect events. Android reports `isAvailable() == false` and `start()` rejects.
 
+### PocketRelay host picture
+
+Phone-as-encoder (`docs/watcher-relay.md`): while sharing runs the host holds the camera's video
+session in `PocketVideoSessionHub`; while at least one watcher is authorized it re-encodes the
+decoded picture with the hardware encoder and the last watcher leaving tears the encoder down.
+
+| | iOS (`ios/Relay/PocketRelayEncoder.swift`) | Android (`relay/RelayEncoder.kt`) |
+| --- | --- | --- |
+| Input | decoder `CVPixelBuffer` frame tap (as PiP) | OES frame drawn into the encoder input Surface on the shared GL context |
+| Codec | HEVC Main, identity size (720p from the Pocket/Nano) | same, hardware, Surface input; long edge capped at 1920 |
+| Keyframes | `MaxKeyFrameInterval` 50 / `…Duration` 2 s; `ForceKeyFrame` on join | `KEY_I_FRAME_INTERVAL` 2 s; `PARAMETER_KEY_REQUEST_SYNC_FRAME` on join |
+| Bitrate | 10 → 7 → 4.5 → 3 Mb/s ladder, steps on saturation / camera starvation | same |
+| Latency | real time, no reordering, `MaxFrameDelayCount` 1 | `KEY_PRIORITY` 0, `KEY_MAX_B_FRAMES` 0, `KEY_LATENCY` 1 (API 30+), CBR when offered |
+
+Forced keyframes are at least one second apart. Frames go out as codec 1 (HEVC), so upstream
+OpenPocketCine watchers can watch a Nano host too. Without a hardware HEVC encoder (or when the
+Android encoder fails) the host forwards the camera's own access units with its GOP cache
+(`status.video = "forward"`; Settings says new watchers may wait for a camera keyframe). The host
+never sends `0x09/0xa8` in either mode.
+
 ## Threading summary
 
 | Work | iOS | Android |

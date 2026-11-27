@@ -314,7 +314,11 @@ export interface RelayHostsEvent {
 }
 
 export interface RelayHostStartOptions {
-  /** The camera's native video session (`VideoSource.sessionId`) whose access units are forwarded. */
+  /**
+   * The camera's native video session (`VideoSource.sessionId`). The host keeps its decoder running
+   * while sharing and re-encodes the decoded picture for watchers (or, without a hardware encoder,
+   * forwards its access units).
+   */
   cameraSessionId: string;
   /** Bonjour instance name; empty = this device's name. */
   hostName: string;
@@ -335,10 +339,19 @@ export interface RelayHostStatusEvent {
   pending: { name: string; watcherId: string } | null;
   /** Who holds control: "Host" or a watcher name. */
   holder: string;
-  /** False while no camera keyframe is cached (a new watcher waits for one). */
+  /**
+   * A new watcher gets a picture promptly: always true while re-encoding; when forwarding, false
+   * while no camera keyframe is cached (a new watcher waits for one).
+   */
   joinable: boolean;
   /** Names of the authorized watchers, in join order. */
   watcherNames?: string[];
+  /**
+   * `reencode`: the phone's hardware HEVC encode, a keyframe at least every 2 s and on join.
+   * `forward`: no hardware encoder, the camera's own access units (new watchers may wait for a
+   * camera keyframe). Absent from older native builds.
+   */
+  video?: 'reencode' | 'forward';
 }
 
 /** A command from the watcher holding control (already admitted natively). JSON per `encodeCommand`. */

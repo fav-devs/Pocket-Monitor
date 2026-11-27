@@ -17,8 +17,10 @@ export interface RelayHostStatus {
   names: string[];
   /** Who holds control: "Host" or a watcher name. */
   holder: string | null;
-  /** False while no camera keyframe is cached yet. */
+  /** A new watcher gets a picture promptly (always while re-encoding; see `RelayHostStatusEvent`). */
   joinable: boolean;
+  /** `forward`: no hardware encoder on this phone, new watchers may wait for a camera keyframe. */
+  video?: 'reencode' | 'forward';
   error?: string | null;
   /** The camera video session being shared. */
   sessionId: string | null;
@@ -102,6 +104,7 @@ export function createRelayHost(relay: PocketRelayNativeModule | null, clock: Se
           names: namesOf(e),
           holder: e.holder || null,
           joinable: e.joinable,
+          video: e.video,
           error: e.error ?? null,
         });
       });

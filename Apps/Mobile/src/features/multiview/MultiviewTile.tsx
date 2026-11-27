@@ -82,6 +82,8 @@ function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPres
   const format = useCamera((s) => formatChip(s.format.resolution, s.format.fps));
   const effects = useTileEffects(look);
   const compact = rect.width < 200;
+  // Thumbnails: name and REC dot; the take time and format belong to the large picture.
+  const small = !large && rect.width < 300;
   const recording = tile.recording;
   const live = tile.phase === 'live';
   const badge = lookBadge(look);
@@ -107,13 +109,13 @@ function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPres
       </Pressable>
 
       {/* Name and tally, top leading. */}
-      <View pointerEvents="none" style={[styles.topRow, compact && styles.topRowCompact]}>
+      <View pointerEvents="none" style={[styles.topRow, small && styles.topRowSmall, compact && styles.topRowCompact]}>
         <View style={[styles.namePill, compact && styles.namePillCompact]}>
           {recording ? <View style={[styles.recDot, { backgroundColor: colors.dotPink }]} /> : null}
           <Text numberOfLines={1} style={[styles.name, compact && styles.nameCompact]}>
             {tile.camera!.name}
           </Text>
-          {recording && elapsed >= 0 ? <Text style={[styles.elapsed, compact && styles.nameCompact]}>{elapsedLabel(elapsed)}</Text> : null}
+          {recording && elapsed >= 0 && !small ? <Text style={styles.elapsed}>{elapsedLabel(elapsed)}</Text> : null}
         </View>
       </View>
 
@@ -201,6 +203,7 @@ function createStyles(colors: ThemeColors) {
     },
     emptyCaption: { fontFamily: fonts.medium, fontSize: 12, color: onVideo.inkMuted },
     topRow: { position: 'absolute' as const, left: 8, top: 8, right: 96, flexDirection: 'row' as const },
+    topRowSmall: { right: 52 },
     topRowCompact: { left: 5, top: 5, right: 5 },
     namePill: {
       flexDirection: 'row' as const,

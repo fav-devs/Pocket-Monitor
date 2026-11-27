@@ -24,6 +24,9 @@ datalink receive queue ── PocketVideoSink.receive(AU) ──► PocketVideoS
 
 - **Decoder** (`PocketVideoSession.swift`): one per `sessionId`, shared and ref-counted by the
   views (`PocketVideoSessionHub`), registered in `PocketVideoSinkRegistry` while any view uses it.
+  Picture in Picture and the watcher relay host also hold a reference (the relay for as long as
+  sharing runs, so decoding survives the view unmounting) and read decoded pictures through a frame
+  tap (`addFrameTap`; Android `PocketVideoSession.FrameTap`, called on the GL thread after latch).
   Parameter sets are taken from the AUs; a changed set rebuilds the format description, and the
   session is recreated when `VTDecompressionSessionCanAcceptFormatDescription` says no. After a
   (re)create, `reset()`, a codec change or a decode error, non-IRAP AUs are dropped until an IRAP

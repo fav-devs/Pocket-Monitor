@@ -1,12 +1,13 @@
 /**
  * The sharing host (Settings → Feed sharing → Share this feed). While the switch is on and a real
- * camera is live, the native relay advertises `_pocket-mon._tcp` on the camera Wi-Fi and forwards
- * the camera's encoded picture to watchers natively (frames never cross JS). JS samples the camera
- * state for watchers at 5 Hz, carries out commands from the watcher holding control, and asks the
- * operator to Grant / Deny control requests.
+ * camera is live, the native relay advertises `_pocket-mon._tcp` on the camera Wi-Fi and sends
+ * watchers the phone's own hardware re-encode of the decoded picture (frames never cross JS). JS
+ * samples the camera state for watchers at 5 Hz, carries out commands from the watcher holding
+ * control, and asks the operator to Grant / Deny control requests.
  *
- * Sharing survives a camera recovery (watchers wait for the next camera keyframe) and stops, with
- * an explicit reason sent to watchers, when the camera disconnects or the switch goes off.
+ * Sharing survives a camera recovery (watchers hold their last picture until the decoder resumes)
+ * and stops, with an explicit reason sent to watchers, when the camera disconnects or the switch
+ * goes off.
  *
  * Mounted once at the root (`<FeedSharingHost />`). Web and builds without the relay module never
  * advertise; the Settings rows say so.
@@ -35,6 +36,8 @@ export interface FeedSharingStatus {
   watchers: number;
   holder: string;
   joinable: boolean;
+  /** `forward`: no hardware encoder, new watchers may wait for a camera keyframe. */
+  video?: 'reencode' | 'forward';
   error: string | null;
 }
 
@@ -90,6 +93,7 @@ export function useFeedSharing() {
         watchers: e.watchers,
         holder: e.holder,
         joinable: e.joinable,
+        video: e.video,
         error: e.error ?? null,
       });
       const key = e.pending ? `${e.pending.watcherId}:${e.pending.name}` : '';

@@ -114,6 +114,8 @@ class PocketVideoSession(val sessionId: String) : PocketVideoSink {
     private set
   /** Effects of the most recently drawn picture (for `snapshot(withEffects)`). */
   @Volatile var lastEffects = PocketPictureEffects()
+  /** [FrameTap]s, called on the GL thread for each latched frame. */
+  private val frameTaps = java.util.concurrent.CopyOnWriteArrayList<FrameTap>()
 
   init {
     PocketVideoGl.post {
@@ -145,10 +147,35 @@ class PocketVideoSession(val sessionId: String) : PocketVideoSink {
     }
     frameArrivedNanos = System.nanoTime()
     frameSequence += 1
+    for (tap in frameTaps) {
+      try {
+        tap.onFrame(this)
+      } catch (t: Throwable) {
+        Log.w(TAG, "frame tap failed", t)
+      }
+    }
+  }
+
+  /**
+   * A consumer of every decoded picture that is not a view (the watcher relay's encoder). Runs on
+   * the GL thread right after the frame is latched: [oesTexture] and [transform] hold it. Must not
+   * block; the tap restores no GL state the views rely on (they set their own each draw).
+   */
+  fun interface FrameTap {
+    fun onFrame(session: PocketVideoSession)
+  }
+
+  fun addFrameTap(tap: FrameTap) {
+    frameTaps.addIfAbsent(tap)
+  }
+
+  fun removeFrameTap(tap: FrameTap) {
+    frameTaps.remove(tap)
   }
 
   fun shutdown() {
     closed = true
+    frameTaps.clear()
     synchronized(pending) { pending.clear() }
     codecHandler.post {
       releaseCodec()

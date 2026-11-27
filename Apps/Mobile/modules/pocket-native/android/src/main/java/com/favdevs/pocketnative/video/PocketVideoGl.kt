@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Choreographer
+import android.view.Surface
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -31,6 +32,8 @@ interface PocketGlTarget {
  */
 object PocketVideoGl {
   private const val TAG = "PocketVideoGl"
+  /** `EGL_RECORDABLE_ANDROID` (EGLExt has no constant for it). */
+  private const val EGL_RECORDABLE_ANDROID = 0x3142
   private val thread = HandlerThread("pocket-video-gl", android.os.Process.THREAD_PRIORITY_DISPLAY).apply { start() }
   val handler = Handler(thread.looper)
 
@@ -113,16 +116,24 @@ object PocketVideoGl {
     display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
     val version = IntArray(2)
     check(EGL14.eglInitialize(display, version, 0, version, 1)) { "eglInitialize failed" }
-    val attribs = intArrayOf(
-      EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
-      EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
-      EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT,
-      EGL14.EGL_NONE,
-    )
-    val configs = arrayOfNulls<EGLConfig>(1)
-    val count = IntArray(1)
-    check(EGL14.eglChooseConfig(display, attribs, 0, configs, 0, 1, count, 0) && count[0] > 0) { "no ES3 config" }
-    config = configs[0]
+    // Recordable first, so the relay encoder's input Surface can share this context and config
+    // (`createWindowSurface(Surface)`); plain ES3 when the device has no recordable config.
+    fun choose(recordable: Boolean): EGLConfig? {
+      val attribs = intArrayOf(
+        EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
+        EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
+        EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT,
+        *(if (recordable) intArrayOf(EGL_RECORDABLE_ANDROID, 1) else intArrayOf()),
+        EGL14.EGL_NONE,
+      )
+      val configs = arrayOfNulls<EGLConfig>(1)
+      val count = IntArray(1)
+      return if (EGL14.eglChooseConfig(display, attribs, 0, configs, 0, 1, count, 0) && count[0] > 0) configs[0] else null
+    }
+    val recordableConfig = choose(true)
+    recordable = recordableConfig != null
+    config = recordableConfig ?: choose(false)
+    check(config != null) { "no ES3 config" }
     context = EGL14.eglCreateContext(
       display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0,
     )
@@ -140,6 +151,20 @@ object PocketVideoGl {
     ensureContext()
     return EGL14.eglCreateWindowSurface(display, config, texture, intArrayOf(EGL14.EGL_NONE), 0)
   }
+
+  /** The config is recordable (encoder input surfaces render through it). GL thread. */
+  var recordable = false
+    private set
+
+  /** EGL surface on a codec input Surface (relay encoder); null when EGL refuses it. GL thread. */
+  fun createWindowSurface(surface: Surface): EGLSurface? {
+    ensureContext()
+    val created = EGL14.eglCreateWindowSurface(display, config, surface, intArrayOf(EGL14.EGL_NONE), 0)
+    return if (created == null || created == EGL14.EGL_NO_SURFACE) null else created
+  }
+
+  /** Stamps the next swap of an encoder surface (`eglPresentationTimeANDROID`). GL thread. */
+  fun setPresentationTime(surface: EGLSurface, nanos: Long): Boolean = EGLExt.eglPresentationTimeANDROID(display, surface, nanos)
 
   fun makeCurrent(surface: EGLSurface): Boolean = EGL14.eglMakeCurrent(display, surface, surface, context)
 

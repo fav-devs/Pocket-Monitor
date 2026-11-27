@@ -5,8 +5,10 @@
  *
  * What runs where while serving with the screen off:
  * - Native (`relay/RelayHost.kt`): listener socket, NSD `_pocket-mon._tcp`, per-watcher send
- *   windows, the GOP cache and forwarding of the camera's encoded access units straight from the
- *   datalink's video sink. No JS timer is involved, so it keeps running in the background.
+ *   windows, and the relay picture: the host holds the camera's decoder session (it keeps decoding
+ *   with the picture view unmounted) and, while a watcher is attached, re-encodes it with the
+ *   hardware HEVC encoder (`relay/RelayEncoder.kt`, keyframe every 2 s and on join). No JS timer is
+ *   involved, so it keeps running in the background.
  * - JS (here): the ≤ 5 Hz host state message (REC tally, format, ISO…). It runs on the session
  *   clock, which server mode moves onto the service's native heartbeat in the background.
  *
