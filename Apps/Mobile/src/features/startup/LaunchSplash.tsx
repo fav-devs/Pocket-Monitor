@@ -47,13 +47,22 @@ export function LaunchSplashContent({ compact }: { compact?: boolean }) {
 
 let launchSplashShown = false;
 
+/** A page the browser or desktop web view isn't showing: no frames run, so no splash either. */
+function documentHidden() {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
 /**
  * Cold-start splash overlay (`MonitorLaunchSplashOverlay`). Shows once per process, for the
  * shared launch duration, then fades out and stops taking touches.
+ *
+ * It leaves on a plain timer, not on the fade's completion: the fade runs on animation frames,
+ * which a hidden or occluded web view (a browser tab in the background, the desktop app's window
+ * behind another) never delivers, and the splash used to wait on them for good.
  */
 export function LaunchSplashOverlay() {
   const styles = useThemedStyles(createStyles);
-  const [visible, setVisible] = useState(() => !launchSplashShown);
+  const [visible, setVisible] = useState(() => !launchSplashShown && !documentHidden());
   const opacity = useRef(new Animated.Value(1)).current;
   const lockup = useRef(new Animated.Value(0)).current;
 
@@ -67,15 +76,19 @@ export function LaunchSplashOverlay() {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     }).start();
-    const timer = setTimeout(() => {
+    const fade = setTimeout(() => {
       Animated.timing(opacity, {
         toValue: 0,
         duration: launchTiming.fadeOutMs,
         easing: Easing.inOut(Easing.quad),
         useNativeDriver: false,
-      }).start(() => setVisible(false));
+      }).start();
     }, launchTiming.visibleMs);
-    return () => clearTimeout(timer);
+    const gone = setTimeout(() => setVisible(false), launchTiming.visibleMs + launchTiming.fadeOutMs + 50);
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(gone);
+    };
   }, [visible, opacity, lockup]);
 
   if (!visible) return null;
