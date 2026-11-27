@@ -15,7 +15,6 @@ import {
   type PicturePoint,
   type PictureRect,
 } from '@/camera';
-import AssistBar from '@/features/assists/AssistBar';
 import { BackgroundMonitor, PictureInPictureButton, hasBackgroundFeatures } from '@/features/background';
 import AssistOverlays from '@/features/assists/AssistOverlays';
 import {
@@ -30,27 +29,23 @@ import LivePicture from '@/features/picture/LivePicture';
 import { useAssists } from '@/state/assists';
 import { usePreferences } from '@/state/preferences';
 import { useTheme } from '@/constants/theme';
+import { monitorStrip } from '@/constants/monitor';
 import { CaptureReadout } from './capture/CaptureReadout';
-import { MonitorExposureGauge } from './capture/MonitorExposureGauge';
 import { LiveSheetHost } from './chrome/LiveSheetHost';
 import { MonitorTransientNotice } from './chrome/MonitorTransientNotice';
 import { Slot, onVideo, rectStyle } from './chrome/primitives';
 import { SessionRecoveryOverlay } from './chrome/SessionRecoveryOverlay';
-import {
-  LiveDispToggle,
-  LiveLockButton,
-  LiveMediaButton,
-  LiveSettingsButton,
-  PortraitAspectToggle,
-} from './chrome/SystemButtons';
+import { BackButton, DispButton, LeadingControls, MediaButton, QuickIcons } from './chrome/StripControls';
+import { PortraitAspectToggle } from './chrome/SystemButtons';
 import { FeedGestureWell } from './feed/FeedGestureWell';
+import { FocusEvBox } from './feed/FocusEvBox';
 import { MonitorTrackingOverlay } from './feed/MonitorTrackingOverlay';
 import { GimbalLockChip, LiveGimbalButton } from './gimbal/LiveGimbalControls';
 import { LiveGimbalStick } from './gimbal/LiveGimbalStick';
 import { MotionPathOverlay, MotionRunPill } from './gimbal/MotionControl';
 import { ZoomChip } from './gimbal/ZoomChip';
 import { cancelZoomRamp, stepStop } from './gimbal/zoom';
-import { RAIL_H, RAIL_W, computeFieldMonitorLayout, maxX, maxY } from './layout/fieldMonitorLayout';
+import { computeFieldMonitorLayout, maxY, midY } from './layout/fieldMonitorLayout';
 import { useLiveUi } from './liveUiStore';
 import { LiveRecordButton, RecordCountdownOverlay } from './record/LiveRecordButton';
 import { MonitorRecordingBorder } from './record/MonitorRecordingBorder';
@@ -84,11 +79,13 @@ function ShutterFlash({ trigger }: { trigger: number }) {
 }
 
 /**
- * The live field monitor (`MonitorOperatorLiveScreen`), picture first (compared against DJI
- * Mimo): a black root with the picture in charge, one status cluster per side on top, the
- * shooting-mode rail beside the record ring, a rail of circle buttons, the exposure readout as
- * text along the bottom and the gimbal cluster floating over it. Panels (exposure, camera
- * settings, format, gimbal) open in the shared preview Sheet so the picture stays visible.
+ * The live field monitor (`MonitorOperatorLiveScreen`), laid out like DJI Mimo's camera screen.
+ * Landscape: the picture between two black letterbox strips that carry the chrome — back,
+ * AUTO/M, the format chip, tracking, assists and `…` down the leading strip; the rotated mode
+ * rail, the record disc and media down the trailing strip. Over the picture only status, a
+ * column of quick icons (flip, DISP, recenter, lock), the gimbal cluster, the focus box with its
+ * EV sun and the exposure readout. Panels dock against the leading strip, dark and compact.
+ * Portrait: the picture on top, the same controls in rows under it.
  */
 export default function LiveScreen() {
   const { colors } = useTheme();
@@ -318,6 +315,12 @@ export default function LiveScreen() {
   const feedHandlers = useMemo(
     () => ({
       onTap: (pt: PicturePoint) => {
+        // Mimo: a tap on the picture while a panel is open closes the panel.
+        const u = useLiveUi.getState();
+        if (u.captureSheet || u.gimbalPanel === 'sheet') {
+          u.set({ captureSheet: null, gimbalPanel: 'none', zoomDialOpen: false });
+          return;
+        }
         const s = session.getState();
         const p = usePreferences.getState();
         const box = s.tracking.status !== 'idle' ? s.tracking.box : undefined;
@@ -353,21 +356,29 @@ export default function LiveScreen() {
   const fill = { position: 'absolute' as const, left: 0, top: 0, right: 0, bottom: 0 };
   const lockable = { ...fill, opacity: locked ? 0.4 : 1 };
   const belowStatus = maxY(layout.status) + (portrait ? 12 : 8);
+  const recordSize = layout.record.width;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.preview }}>
       <StatusBar hidden={Platform.OS !== 'web'} style="light" />
+      {/* The letterbox strips (landscape): solid black under the chrome; the picture is never cropped by them. */}
+      {!portrait ? (
+        <>
+          <View pointerEvents="none" style={[rectStyle(layout.leadStrip), { backgroundColor: monitorStrip }]} />
+          <View pointerEvents="none" style={[rectStyle(layout.trailStrip), { backgroundColor: monitorStrip }]} />
+        </>
+      ) : null}
       {/* Picture */}
       <View pointerEvents="none" style={[rectStyle(layout.picture), { backgroundColor: colors.preview, overflow: 'hidden' }]}>
         <LivePicture source={session.video} resizeMode={prefs.pictureFit} onPictureRect={setDrawn} />
       </View>
       <View pointerEvents="box-none" style={fill}>
-        <AssistOverlays pictureRect={pictureRect} context="live" />
+        <AssistOverlays pictureRect={pictureRect} context="live" sheetPlacement={layout.sheet} locked={locked} />
       </View>
 
       {/* Feed touches sit above the picture and under the chrome. */}
       <FeedGestureWell picture={pictureRect} enabled={live && !locked} handlers={feedHandlers} />
-      <MonitorTrackingOverlay picture={pictureRect} />
+      <MonitorTrackingOverlay picture={pictureRect} focusBox={false} />
       {(ui.gimbalPanel !== 'none' || programActive) && hasWaypoints ? <MotionPathOverlay picture={pictureRect} /> : null}
       <RecordCountdownOverlay />
       <ShutterFlash trigger={flash} />
@@ -376,22 +387,26 @@ export default function LiveScreen() {
       {chromeShown ? (
         <View pointerEvents="box-none" style={[fill, { opacity: chromeOpacity }]}>
           <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
-            <LiveStatusChrome layout={layout} onBack={exit} />
-            <Slot rect={layout.exposureGauge} pointerEvents="none">
-              <MonitorExposureGauge width={layout.exposureGauge.width} height={layout.exposureGauge.height} />
+            <FocusEvBox picture={pictureRect} enabled={live && !locked} />
+            <LiveStatusChrome layout={layout} />
+            <CaptureReadout rect={layout.values} exposureOnly />
+
+            {/* Leading strip (a row in portrait): back, AUTO/M, format, tracking, assists, `…`. */}
+            <Slot rect={layout.back} style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <BackButton onPress={exit} />
             </Slot>
-            <CaptureReadout rect={layout.values} />
+            <LeadingControls layout={layout} notice={stableNotice} />
+
+            {/* Trailing strip: the mode rail beside record, media at the foot. */}
             <ShootingModeRail
               rect={layout.modeRail}
               axis={portrait ? 'horizontal' : 'vertical'}
-              center={portrait ? w / 2 - layout.modeRail.x : layout.record.y + layout.record.height / 2 - layout.modeRail.y}
+              center={portrait ? w / 2 - layout.modeRail.x : midY(layout.record) - layout.modeRail.y}
               notice={stableNotice}
             />
-            <View pointerEvents="box-none" style={{ position: 'absolute', left: layout.assists.x, bottom: h - maxY(layout.assists) }}>
-              <AssistBar orientation={portrait ? 'portrait' : 'landscape'} />
-            </View>
+            <MediaButton rect={layout.media} onPress={() => router.push('/media')} />
             {portrait ? (
-              <Slot rect={layout.aspectToggle}>
+              <Slot rect={layout.aspectToggle} style={{ alignItems: 'center', justifyContent: 'center' }}>
                 <PortraitAspectToggle
                   fill={prefs.pictureFit === 'fill'}
                   onPress={() => prefs.set('pictureFit', prefs.pictureFit === 'fill' ? 'fit' : 'fill')}
@@ -399,7 +414,7 @@ export default function LiveScreen() {
               </Slot>
             ) : null}
 
-            {/* Gimbal cluster: stick trailing-bottom, zoom above it, the controls button leading of zoom. */}
+            {/* Gimbal cluster (CONTEXT.md): stick trailing-bottom, zoom above it, the controls button leading of zoom. */}
             <Slot rect={layout.zoom}>
               <ZoomChip size={layout.zoom.width} disabled={!live} onOpenDial={() => ui.set({ zoomDialOpen: true, captureSheet: null, gimbalPanel: 'none' })} />
             </Slot>
@@ -410,6 +425,7 @@ export default function LiveScreen() {
                 </Slot>
                 <Slot rect={layout.stick}>
                   <LiveGimbalStick
+                    look="chevrons"
                     size={layout.stick.width}
                     enabled={live && !locked && !programActive}
                     getMapping={getMapping}
@@ -418,7 +434,7 @@ export default function LiveScreen() {
                   />
                 </Slot>
                 {lockedAllAxes ? (
-                  <View pointerEvents="box-none" style={{ position: 'absolute', right: w - layout.stick.x + 8, top: maxY(layout.stick) - 28 }}>
+                  <View pointerEvents="box-none" style={{ position: 'absolute', right: w - layout.gimbal.x + 8, top: layout.gimbal.y + 8 }}>
                     <GimbalLockChip
                       onUnlock={() => {
                         session.gimbal.setLockedAllAxes(false);
@@ -429,40 +445,23 @@ export default function LiveScreen() {
                 ) : null}
               </>
             ) : null}
-
-            <Slot rect={layout.settings}>
-              <LiveSettingsButton
-                active={ui.captureSheet === 'camera'}
-                onPress={() =>
-                  ui.set({ captureSheet: ui.captureSheet === 'camera' ? null : 'camera', gimbalPanel: 'none', zoomDialOpen: false })
-                }
-              />
-            </Slot>
-            <Slot rect={layout.media}>
-              <LiveMediaButton onPress={() => router.push('/media')} />
-            </Slot>
-            {/* Picture in Picture (iOS): trailing, under the status rows. */}
-            {hasBackgroundFeatures ? (
-              <Slot rect={{ x: maxX(layout.status) - RAIL_W, y: belowStatus, width: RAIL_W, height: RAIL_H }}>
-                <PictureInPictureButton />
-              </Slot>
-            ) : null}
           </View>
 
-          {/* Lock stays reachable while locked. */}
-          <Slot rect={layout.lock}>
-            <LiveLockButton />
-          </Slot>
+          {/* Quick icons over the picture; lock stays reachable while locked. */}
+          <QuickIcons layout={layout} onFlip={() => actions.flip()} extra={hasBackgroundFeatures ? <PictureInPictureButton /> : null} />
         </View>
-      ) : null}
-
-      {/* DISP and record survive DISP 2. */}
-      <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
-        <Slot rect={layout.display}>
-          <LiveDispToggle />
+      ) : (
+        // DISP 2: only DISP (to come back) and record.
+        <Slot rect={{ ...layout.quick, height: 48, width: portrait ? 48 : layout.quick.width }} style={{ alignItems: 'center' }}>
+          <DispButton />
         </Slot>
+      )}
+
+      {/* Record survives DISP 2. */}
+      <View pointerEvents={locked ? 'none' : 'box-none'} style={lockable}>
         <Slot rect={layout.record} style={{ alignItems: 'center', justifyContent: 'center' }}>
           <LiveRecordButton
+            size={recordSize}
             onPress={() => record.toggle()}
             onHold={() => ui.set({ captureSheet: 'mode', gimbalPanel: 'none', zoomDialOpen: false })}
           />

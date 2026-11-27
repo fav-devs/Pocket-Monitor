@@ -6,15 +6,15 @@ import {
   RulerIcon,
   Target02Icon,
 } from '@hugeicons/core-free-icons';
+import type { IconSvgElement } from '@hugeicons/react-native';
+import { MinusSignCircleIcon, PlusSignCircleIcon } from '@hugeicons/core-free-icons';
 import { Pressable, Text, View } from 'react-native';
 import { useCamera, useCameraSession, type GimbalSpeed } from '@/camera';
-import { ChipRow } from '@/components/field-section';
-import { Chip } from '@/components/chip';
 import { Icon } from '@/components/icon';
-import { SettingsRow } from '@/components/settings-ui';
-import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { monitorPanel } from '@/constants/monitor';
+import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { usePreferences } from '@/state/preferences';
-import { FieldLabel, ModeBar, StepperRow, ToggleRow, ToolWell } from '../capture/controls';
+import { PanelGrid, PanelHeading, PanelKey, PanelRow, PanelSegments, PanelSwitch, RowValue } from '../panel/kit';
 import { GIMBAL_MODE_LABEL, GIMBAL_SPEED_LABEL, angleLabel } from '../format';
 import { haptics } from '../haptics';
 import { ZOOM_RAMP_CHOICES, rampLabel, useLiveUi, useZoomPresets } from '../liveUiStore';
@@ -51,10 +51,34 @@ export function LiveGimbalButton({ size, disabled }: { size: number; disabled?: 
 
 const SPEEDS: GimbalSpeed[] = ['slow', 'normal', 'fast'];
 
+/** A labelled icon key in the gimbal panel's tool row (Recenter, Level, Flip, Lock axes). */
+function GimbalTool({ icon, label, onPress, on = false }: { icon: IconSvgElement; label: string; onPress: () => void; on?: boolean }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: on }}
+      onPress={() => {
+        haptics.light();
+        onPress();
+      }}
+      style={({ pressed }) => [styles.tool, pressed && styles.pressed]}
+    >
+      <View style={[styles.toolWell, on && styles.toolWellOn]}>
+        <Icon icon={icon} size={22} color={on ? monitorPanel.dark : monitorPanel.text} strokeWidth={on ? 2 : 1.7} />
+      </View>
+      <Text numberOfLines={1} style={styles.toolLabel}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 /**
- * `LiveGimbalControls` body: mode, speed, recenter/level/flip, all-axes lock, Direction Lock,
- * zoom preset ramp, and the Motion Control entry. Follow / speed / ramp / A·B·C live here, not
- * leading of the stick (CONTEXT.md Gimbal cluster).
+ * The gimbal panel (camera settings' Gimbal tab): pose, recenter / level / flip / lock axes,
+ * mode, speed, Direction Lock, zoom preset ramp, and the Motion Control entry. Follow / speed /
+ * ramp / A·B·C live here, not leading of the stick (CONTEXT.md Gimbal cluster).
  */
 export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' | 'warning' | 'error' | 'success') => void }) {
   const styles = useThemedStyles(createStyles);
@@ -70,25 +94,25 @@ export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' 
   const setCount = [program.a, program.b, program.c].filter(Boolean).length;
 
   return (
-    <View style={styles.stack}>
+    <View testID="monitor.panel.gimbal">
       <Text style={styles.pose}>
         Pan {angleLabel(g.yaw)} · Tilt {angleLabel(g.pitch)}
       </Text>
       <View style={styles.tools}>
-        <ToolWell icon={Refresh01Icon} label={g.recentering ? 'Centring…' : 'Recenter'} onPress={() => gimbal.recenter().catch(() => {})} />
-        <ToolWell icon={RulerIcon} label="Level" onPress={() => gimbal.level().catch(() => {})} />
+        <GimbalTool icon={Refresh01Icon} label={g.recentering ? 'Centring…' : 'Recenter'} onPress={() => gimbal.recenter().catch(() => {})} />
+        <GimbalTool icon={RulerIcon} label="Level" onPress={() => gimbal.level().catch(() => {})} />
         {selfieFlip ? (
-          <ToolWell
+          <GimbalTool
             icon={FlipHorizontalIcon}
             label={g.face === 'selfie' ? 'Selfie' : 'Flip'}
-            selected={g.face === 'selfie'}
+            on={g.face === 'selfie'}
             onPress={() => gimbal.flip().catch(() => {})}
           />
         ) : null}
-        <ToolWell
+        <GimbalTool
           icon={LockIcon}
           label="Lock axes"
-          selected={g.lockedAllAxes}
+          on={g.lockedAllAxes}
           onPress={() => {
             const next = !g.lockedAllAxes;
             gimbal.setLockedAllAxes(next);
@@ -96,57 +120,47 @@ export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' 
           }}
         />
       </View>
-
-      <View style={styles.group}>
-        <FieldLabel>Mode</FieldLabel>
-        <ChipRow>
-          {g.modeOptions.map((m) => (
-            <Chip
-              key={m}
-              label={GIMBAL_MODE_LABEL[m]}
-              selected={m === g.mode}
-              onPress={() => {
-                haptics.selection();
-                gimbal.setMode(m).catch(() => notice('Gimbal mode not changed', 'error'));
-              }}
-            />
-          ))}
-        </ChipRow>
-      </View>
-      <View style={styles.group}>
-        <FieldLabel>Speed</FieldLabel>
-        <ModeBar
+      <PanelHeading>Mode</PanelHeading>
+      <PanelGrid
+        accessibilityLabel="Gimbal mode"
+        columns={g.modeOptions.length > 4 ? 3 : 2}
+        cells={g.modeOptions.map((m) => ({
+          key: m,
+          label: GIMBAL_MODE_LABEL[m],
+          chosen: m === g.mode,
+          onPress: () => gimbal.setMode(m).catch(() => notice('Gimbal mode not changed', 'error')),
+        }))}
+      />
+      <PanelHeading>Speed</PanelHeading>
+      <View style={styles.pad}>
+        <PanelSegments
           accessibilityLabel="Gimbal speed"
-          tabs={SPEEDS.map((s) => GIMBAL_SPEED_LABEL[s])}
+          options={SPEEDS.map((s) => GIMBAL_SPEED_LABEL[s])}
           selected={SPEEDS.indexOf(g.speed)}
           onSelect={(i) => gimbal.setSpeed(SPEEDS[i]).catch(() => {})}
         />
       </View>
-
-      <View>
-        <ToggleRow title="Direction Lock" value={directionLock} onChange={(v) => setPref('directionLock', v)} />
-        <StepperRow
-          title="Zoom ramp"
-          value={rampLabel(rampSeconds)}
-          minusLabel="Shorter ramp"
-          plusLabel="Longer ramp"
-          minusDisabled={rampIndex <= 0}
-          plusDisabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
-          onMinus={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
-          onPlus={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
+      <PanelRow title="Direction Lock">
+        <PanelSwitch label="Direction Lock" value={directionLock} onChange={(v) => setPref('directionLock', v)} />
+      </PanelRow>
+      <PanelRow title="Zoom ramp">
+        <PanelKey
+          icon={MinusSignCircleIcon}
+          label="Shorter ramp"
+          disabled={rampIndex <= 0}
+          onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.max(0, rampIndex - 1)])}
         />
-      </View>
-
-      <View testID="monitor.gimbal.motion" style={styles.motionRow}>
-        <SettingsRow
-          icon={Route01Icon}
-          title="Motion Control"
-          subtitle={setCount === 0 ? undefined : `${setCount} point${setCount === 1 ? '' : 's'} set`}
-          chevron
-          last
-          onPress={() => set({ gimbalPanel: 'editor' })}
+        <Text style={styles.stepValue}>{rampLabel(rampSeconds)}</Text>
+        <PanelKey
+          icon={PlusSignCircleIcon}
+          label="Longer ramp"
+          disabled={rampIndex >= ZOOM_RAMP_CHOICES.length - 1}
+          onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
         />
-      </View>
+      </PanelRow>
+      <PanelRow testID="monitor.gimbal.motion" icon={Route01Icon} title="Motion Control" onPress={() => set({ gimbalPanel: 'editor', captureSheet: null })}>
+        <RowValue value={setCount === 0 ? '' : `${setCount} point${setCount === 1 ? '' : 's'}`} />
+      </PanelRow>
     </View>
   );
 }
@@ -173,11 +187,35 @@ function createStyles(colors: ThemeColors) {
     circle: { alignItems: 'center' as const, justifyContent: 'center' as const, backgroundColor: onVideo.pill },
     dim: { opacity: 0.4 },
     pressed: { opacity: 0.7 },
-    stack: { gap: spacing.md },
-    group: { gap: spacing.sm },
-    pose: { fontFamily: fonts.medium, fontSize: 13, color: colors.mutedForeground, fontVariant: ['tabular-nums' as const] },
-    tools: { flexDirection: 'row' as const, gap: spacing.xs },
-    motionRow: { borderRadius: 16, backgroundColor: colors.surface, paddingHorizontal: spacing.sm + 4, overflow: 'hidden' as const },
+    pose: {
+      fontFamily: fonts.medium,
+      fontSize: 13,
+      color: monitorPanel.muted,
+      fontVariant: ['tabular-nums' as const],
+      paddingHorizontal: 16,
+      paddingTop: 10,
+    },
+    tools: { flexDirection: 'row' as const, paddingHorizontal: 8, paddingVertical: 10 },
+    tool: { flex: 1, alignItems: 'center' as const, gap: 6, minWidth: 56 },
+    toolWell: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      backgroundColor: monitorPanel.wellStrong,
+    },
+    toolWellOn: { backgroundColor: '#ffffff' },
+    toolLabel: { fontFamily: fonts.medium, fontSize: 11, color: monitorPanel.muted },
+    pad: { paddingHorizontal: 16, paddingVertical: 6 },
+    stepValue: {
+      minWidth: 44,
+      textAlign: 'center' as const,
+      fontFamily: fonts.semibold,
+      fontSize: 15,
+      color: monitorPanel.text,
+      fontVariant: ['tabular-nums' as const],
+    },
     lockChip: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,

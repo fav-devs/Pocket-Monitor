@@ -38,7 +38,7 @@ export function runDesktopKeyAction(action: DesktopKeyAction, a: LiveInputAction
       ui.set({ gimbalPanel: ui.gimbalPanel === 'editor' ? 'none' : 'editor', captureSheet: null, zoomDialOpen: false });
       break;
     case 'toggle-assists':
-      // TODO(desktop-expo-port §5): the assist strip keeps its open state inside AssistBar.
+      ui.set({ captureSheet: ui.captureSheet === 'assists' ? null : 'assists', gimbalPanel: 'none', zoomDialOpen: false });
       break;
     case 'toggle-zebra':
       a.toggleAssist('zebra');

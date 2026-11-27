@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import { ArrowUp01Icon } from '@hugeicons/core-free-icons';
+import { Icon } from '@/components/icon';
 import { useTheme } from '@/constants/theme';
 import {
   DOUBLE_TAP_WINDOW_MS,
@@ -27,12 +29,15 @@ export function LiveGimbalStick({
   getMapping,
   onDoubleTap,
   onTripleTap,
+  look = 'ring',
 }: {
   size: number;
   enabled: boolean;
   getMapping: () => StickMapping;
   onDoubleTap: () => void;
   onTripleTap: () => void;
+  /** Optional (additive). `chevrons`: Mimo's small translucent knob with direction chevrons, no ring. */
+  look?: 'ring' | 'chevrons';
 }) {
   const { colors } = useTheme();
   const knob = size * KNOB_FRACTION;
@@ -129,6 +134,8 @@ export function LiveGimbalStick({
   });
 
   const ink = contact ? colors.accent : onVideo.ink;
+  const mimo = look === 'chevrons';
+  const knobSide = mimo ? size * 0.42 : knob;
   return (
     <GestureDetector gesture={pan}>
       <View
@@ -138,49 +145,73 @@ export function LiveGimbalStick({
         accessibilityHint="Drag to move the gimbal. Double-tap to level. Triple-tap to flip."
         style={{ width: size, height: size, opacity: enabled ? 1 : 0.4 }}
       >
-        <View
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            borderWidth: 1.5,
-            borderColor: contact ? colors.accent : 'rgba(255,255,255,0.7)',
-            backgroundColor: onVideo.rail,
-          }}
-        />
-        {/* Cardinal ticks: where the stick's travel ends. */}
-        {[0, 90, 180, 270].map((deg) => (
-          <View
-            key={deg}
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: size / 2 - 1,
-              top: 6,
-              width: 2,
-              height: 6,
-              borderRadius: 1,
-              backgroundColor: 'rgba(255,255,255,0.45)',
-              transform: [{ translateY: size / 2 - 9 }, { rotate: `${deg}deg` }, { translateY: -(size / 2 - 9) }],
-            }}
-          />
-        ))}
+        {mimo ? (
+          // Direction chevrons where the stick's travel ends.
+          [0, 90, 180, 270].map((deg) => (
+            <View
+              key={deg}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: size / 2 - 6,
+                top: size / 2 - 6,
+                width: 12,
+                height: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                transform: [{ rotate: `${deg}deg` }, { translateY: -(size / 2 - 7) }],
+              }}
+            >
+              <Icon icon={ArrowUp01Icon} size={14} color={contact ? colors.accent : 'rgba(255,255,255,0.7)'} strokeWidth={2.2} />
+            </View>
+          ))
+        ) : (
+          <>
+            <View
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: size,
+                height: size,
+                borderRadius: size / 2,
+                borderWidth: 1.5,
+                borderColor: contact ? colors.accent : 'rgba(255,255,255,0.7)',
+                backgroundColor: onVideo.rail,
+              }}
+            />
+            {/* Cardinal ticks: where the stick's travel ends. */}
+            {[0, 90, 180, 270].map((deg) => (
+              <View
+                key={deg}
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  left: size / 2 - 1,
+                  top: 6,
+                  width: 2,
+                  height: 6,
+                  borderRadius: 1,
+                  backgroundColor: 'rgba(255,255,255,0.45)',
+                  transform: [{ translateY: size / 2 - 9 }, { rotate: `${deg}deg` }, { translateY: -(size / 2 - 9) }],
+                }}
+              />
+            ))}
+          </>
+        )}
         <View
           pointerEvents="none"
           style={{
             position: 'absolute',
-            left: (size - knob) / 2 + offset.x,
-            top: (size - knob) / 2 + offset.y,
-            width: knob,
-            height: knob,
-            borderRadius: knob / 2,
-            backgroundColor: ink,
+            left: (size - knobSide) / 2 + offset.x,
+            top: (size - knobSide) / 2 + offset.y,
+            width: knobSide,
+            height: knobSide,
+            borderRadius: knobSide / 2,
+            backgroundColor: mimo ? (contact ? colors.accent : 'rgba(255,255,255,0.42)') : ink,
             opacity: contact ? 1 : 0.9,
             shadowColor: '#000',
-            shadowOpacity: 0.35,
+            shadowOpacity: mimo ? 0.2 : 0.35,
             shadowRadius: 6,
             shadowOffset: { width: 0, height: 2 },
           }}

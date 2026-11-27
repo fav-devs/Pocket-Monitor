@@ -1,10 +1,12 @@
+import { MinusSignCircleIcon, PlusSignCircleIcon } from '@hugeicons/core-free-icons';
 import { useEffect, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
-import { useCamera, useCameraSession, type CameraState } from '@/camera';
-import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { useCamera, useCameraSession, type CameraState, type VideoFormatOption } from '@/camera';
+import { monitorPanel as P } from '@/constants/monitor';
+import { fonts, spacing, useThemedStyles } from '@/constants/theme';
 import { COLOR_LABEL, MODE_LABEL, WB_PRESET_LABEL, isPhotoMode } from '../format';
 import { useLiveUi, type CameraTab, type CaptureSheetId } from '../liveUiStore';
-import { ChoiceChips, FieldLabel, Hint, ModeBar, StepperRow, ToggleRow } from './controls';
+import { PanelGrid, PanelHeading, PanelHint, PanelKey, PanelLabel, PanelSegments } from '../panel/kit';
 import { MonitorValueDrum } from './MonitorValueDrum';
 
 export const nearestIndex = (options: number[], value: number | null | undefined) => {
@@ -29,8 +31,9 @@ export function Stack({ children, gap = spacing.md - 4 }: { children: ReactNode;
 
 const WB_PRESETS = ['daylight', 'cloudy', 'incandescent', 'fluorescent'] as const;
 
-/** White balance: Auto, presets, or kelvin with G–M tint (the old WB sheet). */
+/** White balance detail (Mimo's White Balance page): Auto, presets, or kelvin with G–M tint. */
 export function WbControls({ s }: { s: CameraState }) {
+  const styles = useThemedStyles(createStyles);
   const { control } = useCameraSession();
   const write = useWrite();
   const wb = s.whiteBalance;
@@ -39,133 +42,122 @@ export function WbControls({ s }: { s: CameraState }) {
   for (let k = wb.kelvinMin; k <= wb.kelvinMax; k += wb.kelvinStep) kelvins.push(k);
   const tint = wb.tint ?? 0;
   return (
-    <Stack>
-      <ModeBar
-        accessibilityLabel="White balance mode"
-        tabs={['Auto', 'Preset', 'Kelvin']}
-        selected={tab}
-        onSelect={(i) =>
-          write(
-            i === 0
-              ? control.setWhiteBalance({ preset: 'auto' })
-              : i === 1
-                ? control.setWhiteBalance({ preset: 'daylight' })
-                : control.setWhiteBalance({ kelvin: wb.kelvin ?? 5600 }),
-          )
-        }
-      />
+    <View>
+      <View style={styles.pad}>
+        <PanelSegments
+          accessibilityLabel="White balance mode"
+          options={['Auto', 'Preset', 'Kelvin']}
+          selected={tab}
+          onSelect={(i) =>
+            write(
+              i === 0
+                ? control.setWhiteBalance({ preset: 'auto' })
+                : i === 1
+                  ? control.setWhiteBalance({ preset: 'daylight' })
+                  : control.setWhiteBalance({ kelvin: wb.kelvin ?? 5600 }),
+            )
+          }
+        />
+      </View>
       {tab === 2 ? (
         <>
+          <PanelLabel>Temperature</PanelLabel>
           <MonitorValueDrum
+            tone="panel"
+            compact
             accessibilityLabel="Colour temperature"
             options={kelvins.map((k) => `${k}K`)}
             index={nearestIndex(kelvins, wb.kelvin)}
             onChange={(i) => write(control.setWhiteBalance({ kelvin: kelvins[i] }))}
           />
-          <StepperRow
-            title="Tint G–M"
-            value={tint > 0 ? `+${tint}` : String(tint)}
-            minusLabel="Tint toward green"
-            plusLabel="Tint toward magenta"
-            minusDisabled={tint <= wb.tintMin}
-            plusDisabled={tint >= wb.tintMax}
-            onMinus={() => write(control.setWhiteBalance({ tint: Math.max(wb.tintMin, tint - 1) }))}
-            onPlus={() => write(control.setWhiteBalance({ tint: Math.min(wb.tintMax, tint + 1) }))}
-          />
+          <PanelLabel>Tint G–M</PanelLabel>
+          <View style={styles.stepper}>
+            <PanelKey
+              icon={MinusSignCircleIcon}
+              label="Tint toward green"
+              disabled={tint <= wb.tintMin}
+              onPress={() => write(control.setWhiteBalance({ tint: Math.max(wb.tintMin, tint - 1) }))}
+            />
+            <Text style={styles.stepperValue}>{tint > 0 ? `+${tint}` : String(tint)}</Text>
+            <PanelKey
+              icon={PlusSignCircleIcon}
+              label="Tint toward magenta"
+              disabled={tint >= wb.tintMax}
+              onPress={() => write(control.setWhiteBalance({ tint: Math.min(wb.tintMax, tint + 1) }))}
+            />
+          </View>
         </>
       ) : tab === 1 ? (
-        <ChoiceChips
-          options={[...WB_PRESETS]}
-          value={wb.preset as (typeof WB_PRESETS)[number]}
-          label={(p) => WB_PRESET_LABEL[p]}
-          onSelect={(p) => write(control.setWhiteBalance({ preset: p }))}
+        <PanelGrid
+          accessibilityLabel="White balance preset"
+          columns={2}
+          cells={WB_PRESETS.map((p) => ({
+            key: p,
+            label: WB_PRESET_LABEL[p],
+            chosen: wb.preset === p,
+            onPress: () => write(control.setWhiteBalance({ preset: p })),
+          }))}
         />
       ) : null}
-    </Stack>
+    </View>
   );
 }
 
 const MF_STEPS = Array.from({ length: 21 }, (_, i) => i / 20);
 
-/** Focus mode, and the focus-distance drum in MF. */
-export function FocusControls({ s }: { s: CameraState }) {
+/** The manual-focus distance drum (under the Focus row while in MF). */
+export function ManualFocusDrum({ s }: { s: CameraState }) {
   const { control } = useCameraSession();
   const write = useWrite();
-  const f = s.focus;
-  const modes = ['afc', 'afs', 'mf'] as const;
   return (
-    <Stack>
-      <ModeBar
-        accessibilityLabel="Focus mode"
-        tabs={['AF-C', 'AF-S', 'MF']}
-        selected={modes.indexOf(f.mode)}
-        onSelect={(i) => {
-          if (modes[i] === 'mf' && !s.capabilities.manualFocus) return;
-          write(control.setFocusMode(modes[i]));
-        }}
-      />
-      {f.mode === 'mf' ? (
-        <MonitorValueDrum
-          accessibilityLabel="Manual focus distance"
-          options={MF_STEPS.map((v) => (v === 0 ? 'Near' : v === 1 ? 'Far' : `${Math.round(v * 100)}`))}
-          index={nearestIndex(MF_STEPS, f.manualPosition ?? 0.5)}
-          onChange={(i) => write(control.setManualFocus(MF_STEPS[i]))}
-        />
-      ) : null}
-    </Stack>
+    <MonitorValueDrum
+      tone="panel"
+      compact
+      accessibilityLabel="Manual focus distance"
+      options={MF_STEPS.map((v) => (v === 0 ? 'Near' : v === 1 ? 'Far' : `${Math.round(v * 100)}`))}
+      index={nearestIndex(MF_STEPS, s.focus.manualPosition ?? 0.5)}
+      onChange={(i) => write(control.setManualFocus(MF_STEPS[i]))}
+    />
   );
 }
 
-function Meter({ label, db }: { label: string; db: number }) {
-  const { colors } = useTheme();
+/** Live L / R meters (shown under the audio rows). */
+export function AudioMeters() {
   const styles = useThemedStyles(createStyles);
-  const frac = Math.max(0, Math.min(1, (db + 60) / 60));
-  const tint = db > -6 ? colors.destructive : db > -18 ? colors.warning : colors.success;
-  return (
-    <View style={styles.meterRow}>
-      <Text style={styles.meterLabel}>{label}</Text>
-      <View style={styles.meterTrack}>
-        <View style={[styles.meterFill, { width: `${frac * 100}%`, backgroundColor: tint }]} />
+  const a = useCamera((s) => s.audio);
+  const meter = (label: string, db: number) => {
+    const frac = Math.max(0, Math.min(1, (db + 60) / 60));
+    const tint = db > -6 ? '#ff6b6b' : db > -18 ? '#fbbf24' : '#22c55e';
+    return (
+      <View style={styles.meterRow} key={label}>
+        <Text style={styles.meterLabel}>{label}</Text>
+        <View style={styles.meterTrack}>
+          <View style={[styles.meterFill, { width: `${frac * 100}%`, backgroundColor: tint }]} />
+        </View>
       </View>
+    );
+  };
+  return (
+    <View accessible accessibilityLabel="Audio levels" style={styles.meters}>
+      {meter('L', a.left.rmsDb)}
+      {meter('R', a.right.rmsDb)}
     </View>
   );
 }
 
-/** Meters, channel, directional audio, wind reduction, vocal boost. */
-export function AudioControls() {
-  const { control } = useCameraSession();
-  const write = useWrite();
-  const a = useCamera((s) => s.audio);
-  const dirs = ['off', 'front', 'rear', 'surround'] as const;
-  return (
-    <Stack>
-      <View style={{ gap: 6 }}>
-        <Meter label="L" db={a.left.rmsDb} />
-        <Meter label="R" db={a.right.rmsDb} />
-      </View>
-      <ModeBar
-        accessibilityLabel="Channels"
-        tabs={['Stereo', 'Mono']}
-        selected={a.channel === 'stereo' ? 0 : 1}
-        onSelect={(i) => write(control.setAudio({ channel: i === 0 ? 'stereo' : 'mono' }))}
-      />
-      <FieldLabel>Directional</FieldLabel>
-      <ModeBar
-        accessibilityLabel="Directional"
-        tabs={['Off', 'Front', 'Rear', 'Surround']}
-        selected={dirs.indexOf(a.directional)}
-        onSelect={(i) => write(control.setAudio({ directional: dirs[i] }))}
-      />
-      <View>
-        <ToggleRow title="Wind reduction" value={a.windReduction} onChange={(v) => write(control.setAudio({ windReduction: v }))} />
-        <ToggleRow title="Vocal boost" value={a.vocalBoost} onChange={(v) => write(control.setAudio({ vocalBoost: v }))} />
-      </View>
-    </Stack>
-  );
+const ASPECT_ORDER: VideoFormatOption['aspect'][] = ['16:9', '4:3', '3:2', '1:1', '9:16'];
+
+/** A resolution cell's label: Mimo's `2160P(1:1)` style for the non-16:9 variants. */
+export function resolutionCellLabel(o: VideoFormatOption) {
+  return o.aspect === '16:9' ? o.resolution : `${o.resolution} (${o.aspect})`;
 }
 
-/** `CaptureFormatPicker` + `CaptureCodecColorPanel`: resolution, frame-rate drum, codec, bitrate. */
+/**
+ * The format panel (Mimo's Resolution + Video Frame Rate): a grid of the resolutions the camera
+ * reports, one row per aspect, then the frame-rate drum, codec and bitrate, and colour mode.
+ */
 export function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
+  const styles = useThemedStyles(createStyles);
   const { control } = useCameraSession();
   const write = useWrite();
   const f = s.format;
@@ -173,51 +165,72 @@ export function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) 
   const opt = f.options[optIndex];
   const fpsList = opt?.fps ?? [f.fps];
   const bitrates = ['low', 'normal', 'high'] as const;
+  // Rows by aspect (16:9 first), each row smallest to largest like Mimo.
+  const byAspect = [...f.options].sort(
+    (a, b) => ASPECT_ORDER.indexOf(a.aspect) - ASPECT_ORDER.indexOf(b.aspect) || a.width * a.height - b.width * b.height,
+  );
+  const choose = (next: VideoFormatOption) => {
+    const fps = next.fps.includes(f.fps) ? f.fps : next.fps[nearestIndex(next.fps, f.fps)];
+    write(control.setFormat({ resolution: next.resolution, fps }));
+  };
   return (
-    <Stack>
-      <ModeBar
+    <View testID="monitor.panel.format">
+      {locked ? <PanelHint tone="warning">Stop recording to change this.</PanelHint> : null}
+      <PanelHeading>Resolution</PanelHeading>
+      <PanelGrid
         accessibilityLabel="Resolution"
-        tabs={f.options.map((o) => o.resolution)}
         disabled={locked}
-        selected={optIndex}
-        details={f.options.map((o) => `${o.width}×${o.height}`)}
-        onSelect={(i) => {
-          const next = f.options[i];
-          const fps = next.fps.includes(f.fps) ? f.fps : next.fps[nearestIndex(next.fps, f.fps)];
-          write(control.setFormat({ resolution: next.resolution, fps }));
-        }}
+        columns={3}
+        cells={byAspect.map((o) => ({
+          key: `${o.resolution}-${o.aspect}`,
+          label: resolutionCellLabel(o),
+          chosen: o.resolution === f.resolution,
+          onPress: () => choose(o),
+        }))}
       />
+      <View style={styles.gap} />
+      <PanelHeading>Frame rate</PanelHeading>
       <MonitorValueDrum
+        tone="panel"
+        compact
+        chosenTint
         accessibilityLabel="Frame rate"
         disabled={locked}
-        options={fpsList.map((v) => `${v}p`)}
+        options={fpsList.map(String)}
         index={nearestIndex(fpsList, f.fps)}
         onChange={(i) => write(control.setFormat({ fps: fpsList[i] }))}
       />
-      <FieldLabel>Codec{f.bitrate ? ' and bitrate' : ''}</FieldLabel>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        <View style={{ flex: 1 }}>
-          <ModeBar
-            accessibilityLabel="Codec"
-            tabs={['H.264', 'H.265']}
-            disabled={locked}
-            selected={f.codec === 'h264' ? 0 : 1}
-            onSelect={(i) => write(control.setFormat({ codec: i === 0 ? 'h264' : 'h265' }))}
-          />
-        </View>
-        {f.bitrate ? (
-          <View style={{ flex: 1.4 }}>
-            <ModeBar
+      <PanelHeading>Codec</PanelHeading>
+      <View style={styles.pad}>
+        <PanelSegments
+          accessibilityLabel="Codec"
+          options={['H.264', 'H.265']}
+          disabled={locked}
+          selected={f.codec === 'h264' ? 0 : 1}
+          onSelect={(i) => write(control.setFormat({ codec: i === 0 ? 'h264' : 'h265' }))}
+        />
+      </View>
+      {f.bitrate ? (
+        <>
+          <PanelHeading>Bitrate</PanelHeading>
+          <View style={styles.pad}>
+            <PanelSegments
               accessibilityLabel="Bitrate"
-              tabs={['Low', 'Normal', 'High']}
+              options={['Low', 'Normal', 'High']}
               disabled={locked}
               selected={bitrates.indexOf(f.bitrate)}
               onSelect={(i) => write(control.setFormat({ bitrate: bitrates[i] }))}
             />
           </View>
-        ) : null}
-      </View>
-    </Stack>
+        </>
+      ) : null}
+      {f.colorModeOptions.length > 0 ? (
+        <>
+          <PanelHeading>Color</PanelHeading>
+          <ColorControls s={s} locked={locked} />
+        </>
+      ) : null}
+    </View>
   );
 }
 
@@ -225,12 +238,16 @@ export function ColorControls({ s, locked }: { s: CameraState; locked: boolean }
   const { control } = useCameraSession();
   const write = useWrite();
   return (
-    <ChoiceChips
-      options={s.format.colorModeOptions}
-      value={s.format.colorMode}
+    <PanelGrid
+      accessibilityLabel="Color mode"
       disabled={locked}
-      label={(c) => COLOR_LABEL[c]}
-      onSelect={(c) => write(control.setFormat({ colorMode: c }))}
+      columns={3}
+      cells={s.format.colorModeOptions.map((c) => ({
+        key: c,
+        label: COLOR_LABEL[c],
+        chosen: c === s.format.colorMode,
+        onPress: () => write(control.setFormat({ colorMode: c })),
+      }))}
     />
   );
 }
@@ -239,18 +256,27 @@ export function ModeSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   const { control } = useCameraSession();
   const write = useWrite();
   return (
-    <ChoiceChips
-      options={s.format.shootingModeOptions}
-      value={s.format.shootingMode}
+    <PanelGrid
+      accessibilityLabel="Shooting mode"
       disabled={locked}
-      label={(m) => MODE_LABEL[m]}
-      onSelect={(m) => write(control.setShootingMode(m))}
+      columns={2}
+      cells={s.format.shootingModeOptions.map((m) => ({
+        key: m,
+        label: MODE_LABEL[m],
+        chosen: m === s.format.shootingMode,
+        onPress: () => write(control.setShootingMode(m)),
+      }))}
     />
   );
 }
 
-/** Which sheet a capture id opens: one exposure panel, one camera settings sheet, format, mode. */
-export type CapturePanel = { kind: 'exposure' } | { kind: 'camera'; tab: CameraTab } | { kind: 'format' } | { kind: 'mode' };
+/** Which panel a capture id opens. */
+export type CapturePanel =
+  | { kind: 'exposure' }
+  | { kind: 'camera'; tab: CameraTab }
+  | { kind: 'format' }
+  | { kind: 'mode' }
+  | { kind: 'assists' };
 
 export function capturePanelFor(id: CaptureSheetId, cameraTab: CameraTab): CapturePanel {
   switch (id) {
@@ -263,39 +289,43 @@ export function capturePanelFor(id: CaptureSheetId, cameraTab: CameraTab): Captu
     case 'wb':
     case 'focus':
     case 'color':
-      return { kind: 'camera', tab: 'video' };
     case 'audio':
-      return { kind: 'camera', tab: 'audio' };
+      return { kind: 'camera', tab: 'camera' };
     case 'camera':
       return { kind: 'camera', tab: cameraTab };
     case 'format':
       return { kind: 'format' };
     case 'mode':
       return { kind: 'mode' };
+    case 'assists':
+      return { kind: 'assists' };
   }
 }
 
-/** Sheet titles: short, in the words the readout uses. */
+/** Panel titles: short, in the words the readout uses. */
 export const CAPTURE_PANEL_TITLES: Record<CapturePanel['kind'], string> = {
   exposure: 'Exposure',
   camera: 'Camera',
   format: 'Recording format',
   mode: 'Shooting mode',
+  assists: 'Assists',
 };
 
-/** The format and shooting-mode sheets' bodies (the Sheet itself is the live screen's). */
+/** The format and shooting-mode panels' bodies. */
 export function CaptureSheetBody({ id }: { id: 'format' | 'mode' }) {
   const s = useCamera((st) => st);
   const locked = s.recording.recording;
+  if (id === 'format') return <FormatSheet s={s} locked={locked} />;
   return (
-    <Stack>
-      {locked ? <Hint tone="warning">Stop recording to change this.</Hint> : null}
-      {id === 'format' ? <FormatSheet s={s} locked={locked} /> : <ModeSheet s={s} locked={locked} />}
-    </Stack>
+    <View testID="monitor.panel.mode">
+      <PanelHeading>Shooting mode</PanelHeading>
+      {locked ? <PanelHint tone="warning">Stop recording to change this.</PanelHint> : null}
+      <ModeSheet s={s} locked={locked} />
+    </View>
   );
 }
 
-/** Retire sheets the camera no longer offers (`CaptureReadoutAdmission`). */
+/** Retire panels the camera no longer offers (`CaptureReadoutAdmission`). */
 export function useCaptureSheetAdmission() {
   const sheet = useLiveUi((s) => s.captureSheet);
   const locked = useLiveUi((s) => s.locked);
@@ -305,15 +335,20 @@ export function useCaptureSheetAdmission() {
     if (!sheet) return;
     if (locked) set({ captureSheet: null });
     else if (photo && sheet === 'format') set({ captureSheet: null });
-    else if (photo && sheet === 'audio') set({ captureSheet: 'camera', cameraTab: 'video' });
+    else if (photo && sheet === 'audio') set({ captureSheet: 'camera', cameraTab: 'camera' });
   }, [sheet, locked, photo, set]);
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles() {
   return {
+    pad: { paddingHorizontal: 16, paddingVertical: 6 },
+    gap: { height: 6 },
+    stepper: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 12 },
+    stepperValue: { minWidth: 48, textAlign: 'center' as const, fontFamily: fonts.semibold, fontSize: 17, color: P.text, fontVariant: ['tabular-nums' as const] },
+    meters: { gap: 6, paddingHorizontal: 16, paddingVertical: 10 },
     meterRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 10 },
-    meterLabel: { width: 12, fontFamily: fonts.semibold, fontSize: 11, color: colors.mutedForeground },
-    meterTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.surfaceStrong, overflow: 'hidden' as const },
-    meterFill: { height: 6, borderRadius: 3 },
+    meterLabel: { width: 12, fontFamily: fonts.semibold, fontSize: 11, color: P.muted },
+    meterTrack: { flex: 1, height: 5, borderRadius: 3, backgroundColor: P.wellStrong, overflow: 'hidden' as const },
+    meterFill: { height: 5, borderRadius: 3 },
   };
 }

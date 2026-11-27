@@ -27,6 +27,13 @@ export interface AssistBarProps {
   context?: AssistContext;
   /** Interface lock: chips ignore taps. */
   locked?: boolean;
+  /**
+   * Optional (additive). `panel`: every tool in its sections as a wrapping grid, for embedding the
+   * palette in a docked panel (the live view's Assists panel). No plate, no collapse arrow.
+   */
+  variant?: 'strip' | 'panel';
+  /** Optional (additive). Mount the long-press options host here (default true). */
+  inspector?: boolean;
 }
 
 /**
@@ -64,7 +71,7 @@ export function AssistChip({ tool, on, onPress, onLongPress }: { tool: AssistToo
  * most recently used tools (one in portrait) beside an arrow; open it is every tool in its sections, a scrolling row
  * in landscape and a column in portrait. Tap toggles, hold opens the tool's options.
  */
-export default function AssistBar({ orientation, context = 'live', locked }: AssistBarProps) {
+export default function AssistBar({ orientation, context = 'live', locked, variant = 'strip', inspector = true }: AssistBarProps) {
   const [expanded, setExpanded] = useState(false);
   const order = useAssists((s) => s.chipOrder);
   const on = useAssists((s) => (context === 'live' ? s.on : s.playbackOn));
@@ -91,6 +98,20 @@ export default function AssistBar({ orientation, context = 'live', locked }: Ass
       {g.tools.map(chip)}
     </Fragment>
   ));
+
+  if (variant === 'panel') {
+    return (
+      <View accessibilityLabel="View assists" style={styles.panel}>
+        {ASSIST_GROUPS.map((g) => (
+          <View key={g.title} style={styles.panelGroup}>
+            <Text style={styles.panelTitle}>{g.title}</Text>
+            <View style={styles.panelGrid}>{g.tools.map(chip)}</View>
+          </View>
+        ))}
+        {inspector ? <AssistInspectorHost /> : null}
+      </View>
+    );
+  }
 
   const arrowIcon = portrait ? (expanded ? ArrowDown01Icon : ArrowUp01Icon) : expanded ? ArrowLeft01Icon : ArrowRight01Icon;
   const arrow = (
@@ -137,7 +158,7 @@ export default function AssistBar({ orientation, context = 'live', locked }: Ass
   return (
     <View pointerEvents="box-none" accessibilityLabel="View assists">
       {body}
-      <AssistInspectorHost />
+      {inspector ? <AssistInspectorHost /> : null}
     </View>
   );
 }
@@ -165,5 +186,9 @@ function createStyles(colors: ThemeColors) {
   arrowPortrait: { height: ARROW, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
   dividerV: { width: 1, height: 36, marginHorizontal: 8, backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'center', marginBottom: 18 },
   dividerH: { height: 1, width: 36, backgroundColor: 'rgba(255,255,255,0.18)' },
+  panel: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 4, gap: 10 },
+  panelGroup: { gap: 8 },
+  panelTitle: { fontFamily: fonts.semibold, fontSize: 13, color: 'rgba(255,255,255,0.56)', paddingHorizontal: 6 },
+  panelGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 },
   });
 }

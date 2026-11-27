@@ -1,9 +1,13 @@
 /**
- * Live monitor geometry after OpenCine `FieldMonitorLayout` + `GimbalCluster`, laid out picture
- * first (compared against DJI Mimo): one status cluster per side on top, the shooting-mode rail
- * beside the record ring, a rail of circle buttons, and the readout as text along the bottom.
- * Pure geometry: every chrome region of the live monitor for a viewport, safe area and
- * picture aspect. No React here so it can be unit tested.
+ * Live monitor geometry, laid out like DJI Mimo's camera screen. In landscape the picture sits
+ * between two solid black letterbox strips that hold the chrome: the leading strip (back,
+ * exposure mode, format, tracking, assists, more) and the trailing strip (the rotated
+ * shooting-mode rail, the record disc and media). Over the picture only a few small things
+ * float: status, a column of quick icons, the gimbal cluster and the exposure readout.
+ * Portrait keeps the picture on top and turns the strips into rows under it.
+ *
+ * Pure geometry: every chrome region for a viewport, safe area and picture aspect. No React
+ * here so it can be unit tested. Multiview reuses the constants and `readoutRows`.
  */
 
 export interface Rect {
@@ -48,70 +52,88 @@ function fitting(r: Rect, aspect: number): Rect {
   return rect(r.x, r.y + (r.height - h) / 2, r.width, h);
 }
 
-/** Rail button: a 40pt circle over an 11pt caption (ai-cut camera rail). */
+/** Multiview's rail button: a 40pt circle over an 11pt caption. */
 export const RAIL_CIRCLE = 40;
 export const RAIL_W = 56;
 export const RAIL_H = 58;
-/** ai-cut record button: 84pt ring around a record-red core. */
+/** Multiview's record ring (ai-cut, 84pt). The live view uses `RECORD_DISC`. */
 export const RECORD_SIZE = 84;
-/** Status row height (one cluster per side). */
+/** The live view's record disc (Mimo's plain red disc), phone and tablet. */
+export const RECORD_DISC = 56;
+export const RECORD_DISC_TABLET = 74;
+/** Status row height. */
 export const STATUS_ROW = 32;
 export const STATUS_GAP = 6;
 export const MIN_TAP = 44;
-/** `MonitorJoystickSize.medium`. */
+/** `MonitorJoystickSize.medium` (Multiview). The live stick is `LIVE_STICK`. */
 export const STICK_SIDE = 101;
+/** The live view's small translucent stick (Mimo). */
+export const LIVE_STICK = 92;
+export const LIVE_STICK_TABLET = 112;
 /** `GimbalCluster` constants. */
 export const ZOOM_SIZE = 44;
 export const CLUSTER_GAP = 8;
-/** Shooting-mode rail: a column of words (landscape) or a row (portrait). */
-export const MODE_RAIL_W = 74;
-export const MODE_ITEM_H = 44;
+/** Leading strip width (landscape), phone and tablet, before the safe area. */
+export const LEAD_STRIP = 64;
+export const LEAD_STRIP_TABLET = 88;
+/** Trailing strip width (landscape): the record column plus the mode rail. */
+export const TRAIL_STRIP = 94;
+export const TRAIL_STRIP_TABLET = 124;
+/** The rotated shooting-mode rail's thickness (landscape). */
+export const MODE_RAIL_W = 28;
+export const MODE_RAIL_W_TABLET = 34;
+/** Portrait mode rail row and leading/quick rows. */
 export const MODE_ROW_H = 36;
+export const LEAD_ROW_H = 56;
+export const QUICK_SIZE = 44;
+/** Legacy (Multiview): a vertical rail word. */
+export const MODE_ITEM_H = 44;
 /** One line of the bottom readout text. */
 export const READOUT_LINE_H = 26;
 /** Readout strip (Multiview): tile height and the plate's padding. */
 export const READOUT_TILE_H = 44;
 export const READOUT_PAD = 4;
 export const READOUT_MIN_TILE = 50;
-const FRAME_ASPECT = 16 / 9;
-/** The assist palette's cell (owned by AssistBar) and its padding. */
-const ASSIST_CELL = 48;
-const PALETTE_PADDING = 4;
-const PALETTE_SPACING = 6;
-const PALETTE_EXPANSION = 16;
-const PALETTE_INSETS = PALETTE_PADDING * 2 + PALETTE_SPACING + PALETTE_EXPANSION;
 
-/** Where the monitor's sheets sit: docked beside the picture (landscape) or under it (portrait). */
+/** Where the monitor's panels sit: docked against the leading strip (landscape) or under the picture (portrait). */
 export interface MonitorSheetPlacement {
   dock: { left: number; width: number; top: number; bottom: number } | null;
-  /** Portrait: room kept above the tray, so the picture stays in view. */
+  /** Portrait: the panel's top edge, so the picture stays in view. */
   topInset: number;
+  /** Optional (additive). Portrait: room kept under the panel (the mode rail and record stay reachable). */
+  bottomInset?: number;
 }
 
 export interface FieldMonitorLayout {
   viewport: Rect;
   picture: Rect;
-  /** The status row: one cluster leading (REC), one trailing (camera). */
+  /** Landscape: the solid black letterbox strips. Portrait: empty. */
+  leadStrip: Rect;
+  trailStrip: Rect;
+  /** Exposure mode, format, tracking, assists, more: a column in the leading strip, a row in portrait. */
+  leading: Rect;
+  /** Back to cameras: the top of the leading strip, or the status row's leading end in portrait. */
+  back: Rect;
+  /** Quick icons (flip, DISP, recenter, lock): a column over the picture's trailing edge, a row in portrait. */
+  quick: Rect;
+  axis: 'vertical' | 'horizontal';
+  /** Camera status (battery, card, link), right-aligned in this rect. */
   status: Rect;
   statusRows: 1 | 2;
-  /** The capture readout: shadowed text along the bottom edge (a tile strip in Multiview). */
+  /** REC + timecode, left-aligned in this rect. */
+  statusLead: Rect;
+  /** The exposure readout text (a tile strip in Multiview). */
   values: Rect;
-  /** Readout tiles per row of the strip (Multiview), or text lines of the readout. */
   valuesPerRow: number;
-  /** The shooting-mode rail: vertical at the trailing edge (landscape), a row under record (portrait). */
+  /** The shooting-mode rail: rotated words down the trailing edge (landscape), a row (portrait). */
   modeRail: Rect;
-  system: Rect;
-  lock: Rect;
-  settings: Rect;
-  media: Rect;
   record: Rect;
-  display: Rect;
-  assists: Rect;
+  media: Rect;
+  /** Portrait: Fit / Fill beside record. Empty in landscape. */
+  aspectToggle: Rect;
   stick: Rect;
   zoom: Rect;
   gimbal: Rect;
-  aspectToggle: Rect;
-  exposureGauge: Rect;
   sheet: MonitorSheetPlacement;
   portrait: boolean;
   tablet: boolean;
@@ -142,141 +164,127 @@ function portraitHeaderSafeTop(w: number, h: number, safeTop: number) {
   return h > w && w < 600 ? Math.max(44, safeTop) : Math.max(12, safeTop);
 }
 
-/**
- * The largest `aspect` frame in `room`, `cut` clear of the leading edge and against it, so the
- * spare width gathers at the trailing side under the record column and the mode rail (Mimo).
- */
-function landscapeFrameIn(room: Rect, cut: number, aspect: number): Rect {
-  const left = room.x + cut;
-  const width = Math.max(1, maxX(room) - left);
-  const imageW = Math.min(width, room.height * aspect);
-  const imageH = imageW / aspect;
-  return rect(left, room.y + (room.height - imageH) / 2, imageW, imageH);
-}
-
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** The panel's width: Mimo's panels cover at most ~40 % of the screen. */
+export function panelWidth(viewportWidth: number, room: number) {
+  return Math.round(Math.min(room, clamp(viewportWidth * 0.4, 290, 380)));
+}
 
 export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): FieldMonitorLayout {
   const safeArea = input.safeArea ?? { top: 0, leading: 0, bottom: 0, trailing: 0 };
   const showsValues = input.showsValues ?? true;
-  const stickSide = input.stickSide ?? STICK_SIDE;
   const w = Math.max(1, Number.isFinite(input.width) ? input.width : 1);
   const h = Math.max(1, Number.isFinite(input.height) ? input.height : 1);
   const aspect = input.sourceAspect && input.sourceAspect > 0 ? input.sourceAspect : 16 / 9;
   const viewport = rect(0, 0, w, h);
   const portrait = h > w;
   const tablet = Math.min(w, h) >= 600;
-  const rec = RECORD_SIZE;
+  const disc = tablet ? RECORD_DISC_TABLET : RECORD_DISC;
+  const stickSide = input.stickSide ?? (tablet ? LIVE_STICK_TABLET : LIVE_STICK);
   const edge = tablet ? 20 : portrait ? 16 : 12;
   const lead = safeArea.leading + edge;
   const trail = w - safeArea.trailing - edge;
-  const assistHeightLandscape = ASSIST_CELL * 2 + PALETTE_PADDING * 2 + PALETTE_SPACING;
 
-  let picture: Rect, status: Rect, values: Rect, system: Rect, lock: Rect;
-  let settings: Rect, media: Rect, record: Rect, display: Rect, assists: Rect, stick: Rect;
-  let aspectToggle: Rect, exposureGauge: Rect, modeRail: Rect;
+  let picture: Rect, leadStrip: Rect, trailStrip: Rect, leading: Rect, back: Rect, quick: Rect;
+  let status: Rect, statusLead: Rect, values: Rect, modeRail: Rect, record: Rect, media: Rect;
+  let aspectToggle: Rect, stick: Rect;
   let fillsPicture: boolean;
   let sheet: MonitorSheetPlacement;
-  let valuesPerRow: number;
-  const statusRows: 1 | 2 = 1;
 
   if (portrait) {
     const headerTop = portraitHeaderSafeTop(w, h, safeArea.top);
-    status = rect(lead, headerTop, trail - lead, STATUS_ROW);
-    // Bottom rail: lock and DISP, record, media and settings; the mode rail runs under record.
-    const systemH = rec + 16 + MODE_ROW_H;
-    const systemY = Math.max(0, h - Math.max(8, safeArea.bottom - 14) - systemH);
-    system = rect(0, systemY, w, h - systemY);
-    const cy = systemY + 6 + rec / 2;
-    record = rect((w - rec) / 2, cy - rec / 2, rec, rec);
-    modeRail = rect(lead, maxY(record) + 10, trail - lead, MODE_ROW_H);
-    const railY = cy - RAIL_H / 2;
-    // Each pair centres in its side, but never drifts far from record on a wide tablet.
-    const leftMid = Math.max((lead + record.x - 8) / 2, record.x - 96);
-    const rightMid = Math.min((maxX(record) + 8 + trail) / 2, maxX(record) + 96);
-    lock = rect(leftMid - RAIL_W - 4, railY, RAIL_W, RAIL_H);
-    display = rect(leftMid + 4, railY, RAIL_W, RAIL_H);
-    media = rect(rightMid - RAIL_W - 4, railY, RAIL_W, RAIL_H);
-    settings = rect(rightMid + 4, railY, RAIL_W, RAIL_H);
-    // The readout text sits just above the rail: two lines on a phone, one on a tablet.
-    valuesPerRow = trail - lead >= 560 ? 1 : 2;
-    const valuesH = showsValues ? valuesPerRow * READOUT_LINE_H : 0;
-    values = rect(lead, systemY - 4 - valuesH, trail - lead, valuesH);
-    const floor = values.y - (showsValues ? 6 : 0);
-    fillsPicture = !!input.fill || aspect < 1;
-    const ratio = fillsPicture ? Math.min(aspect, 9 / 16) : aspect;
+    leadStrip = rect();
+    trailStrip = rect();
+    back = rect(lead - 10, headerTop + STATUS_ROW / 2 - MIN_TAP / 2, MIN_TAP, MIN_TAP);
+    statusLead = rect(maxX(back) + 2, headerTop, w / 2 - maxX(back) - 2, STATUS_ROW);
+    status = rect(w / 2, headerTop, trail - w / 2, STATUS_ROW);
+    // Bottom: record centred, Fit/Fill leading of it, media trailing; the mode rail above it.
+    const bottomY = h - Math.max(14, safeArea.bottom);
+    record = rect((w - disc) / 2, bottomY - disc, disc, disc);
+    const sideMid = (maxX(record) + trail) / 2;
+    media = rect(Math.min(sideMid, maxX(record) + 110) - MIN_TAP / 2, midY(record) - MIN_TAP / 2, MIN_TAP, MIN_TAP);
+    const leadMid = (lead + record.x) / 2;
+    aspectToggle = rect(Math.max(leadMid, record.x - 110) - MIN_TAP / 2, midY(record) - MIN_TAP / 2, MIN_TAP, MIN_TAP);
+    modeRail = rect(lead, record.y - 8 - MODE_ROW_H, trail - lead, MODE_ROW_H);
+    stick = rect(trail - stickSide, modeRail.y - 10 - stickSide, stickSide, stickSide);
+
     const ceiling = maxY(status) + 8;
-    const pillarbox = tablet && w / ratio > Math.max(0, floor - ceiling);
-    const pictureH = pillarbox ? Math.max(1, floor - ceiling) : w / ratio;
-    const pictureW = pillarbox ? pictureH * ratio : w;
-    let pictureY: number;
-    let vertical: Rect | null = null;
-    if (aspect < 1 && !pillarbox) {
-      const room = Math.max(1, systemY - Math.max(0, safeArea.top));
-      const fittedH = Math.min(w / aspect, room);
-      const fittedW = fittedH * aspect;
-      pictureY = Math.max(Math.max(0, safeArea.top), systemY - fittedH);
-      vertical = rect((w - fittedW) / 2, pictureY, fittedW, fittedH);
-    } else if (pictureH > h || pictureH > floor - ceiling) {
-      pictureY = (h - pictureH) / 2;
+    fillsPicture = !!input.fill || aspect < 1;
+    const rowsH = (showsValues ? READOUT_LINE_H + 8 : 0) + QUICK_SIZE + 8 + LEAD_ROW_H + 8;
+    // Room for the picture above the rows and the gimbal cluster.
+    const clusterTop = stick.y - CLUSTER_GAP - ZOOM_SIZE - 8;
+    const room = Math.max(1, clusterTop - rowsH - ceiling);
+    let overlaid = false;
+    if (fillsPicture) {
+      // Vertical or Fill: the picture takes the screen under the status row; rows float over it.
+      const area = rect(0, ceiling, w, Math.max(1, modeRail.y - 8 - ceiling));
+      picture = aspect < 1 && !input.fill ? fitting(area, aspect) : area;
+      overlaid = true;
     } else {
-      // Centred between the status row and the top of the gimbal cluster, so the cluster sits
-      // under the picture rather than over its corner when there is room.
-      const clusterTop = floor - 12 - stickSide - CLUSTER_GAP - ZOOM_SIZE - 8;
-      const room = clusterTop - ceiling;
-      const ideal = room >= pictureH ? ceiling + (room - pictureH) / 2 : (h - pictureH) / 2;
-      pictureY = Math.max(ceiling, Math.min(ideal, floor - pictureH));
+      const fullH = w / aspect;
+      picture = fullH <= room ? rect(0, ceiling, w, fullH) : fitting(rect(0, ceiling, w, room), aspect);
     }
-    picture = vertical ?? rect((w - pictureW) / 2, pictureY, pictureW, pictureH);
-    stick = rect(trail - stickSide, floor - 12 - stickSide, stickSide, stickSide);
-    const assistH = ASSIST_CELL + 35;
-    assists = rect(lead, floor - 12 - assistH, ASSIST_CELL + 8, assistH);
-    aspectToggle = rect(w / 2 - RAIL_W / 2, floor - 12 - RAIL_H, RAIL_W, RAIL_H);
-    const gaugeTop = Math.max(maxY(status) + 12, picture.y + 12);
-    const gaugeRoom = Math.min(maxY(picture), stick.y - 60) - 12 - gaugeTop;
-    exposureGauge = rect(lead, gaugeTop, 34, clamp(gaugeRoom, 110, 170));
-    const below = fillsPicture ? h * 0.5 : maxY(picture) + 10;
-    sheet = { dock: null, topInset: clamp(below, h * 0.36, h * 0.68) };
+    if (overlaid) {
+      leading = rect(lead, ceiling + 6, trail - lead, LEAD_ROW_H);
+      quick = rect(lead, maxY(leading) + 4, trail - lead, QUICK_SIZE);
+      const valuesH = showsValues ? READOUT_LINE_H : 0;
+      values = rect(lead, stick.y - CLUSTER_GAP - ZOOM_SIZE - 12 - valuesH, trail - lead, valuesH);
+    } else {
+      const valuesH = showsValues ? READOUT_LINE_H : 0;
+      values = rect(lead, maxY(picture) + 8, trail - lead, valuesH);
+      quick = rect(lead, maxY(values) + (showsValues ? 8 : 0), trail - lead, QUICK_SIZE);
+      leading = rect(lead, maxY(quick) + 8, trail - lead, LEAD_ROW_H);
+    }
+    const below = overlaid ? h * 0.5 : maxY(picture) + 6;
+    sheet = { dock: null, topInset: clamp(below, h * 0.3, h * 0.68), bottomInset: h - modeRail.y + 4 };
   } else {
     fillsPicture = false;
-    const cut = Math.max(0, Math.max(safeArea.leading, safeArea.trailing) - 14);
-    const top = Math.max(8, safeArea.top + 6);
-    const bottom = h - (safeArea.bottom > 0 ? safeArea.bottom + 4 : 10);
-    // Trailing edge: the mode rail; inside it the record column (settings and media above
-    // record, DISP and lock below, record centred).
-    const railW = tablet ? MODE_RAIL_W + 8 : MODE_RAIL_W;
-    modeRail = rect(trail - railW, top, railW, bottom - top);
-    // Clear of the recording ring (it grows 15 %).
-    const colX = modeRail.x - 8 - rec;
-    // The picture fills the room leading of the mode rail (Mimo: the words sit beside it).
-    const room = rect(0, 0, Math.max(1, modeRail.x - 2), h);
-    const frame = landscapeFrameIn(room, cut, FRAME_ASPECT);
-    picture = aspect < FRAME_ASPECT ? fitting(frame, aspect) : landscapeFrameIn(room, cut, aspect);
-    system = rect();
-    const colMid = colX + rec / 2;
-    const gap = clamp((bottom - top - RAIL_H * 4 - rec) / 4, 4, tablet ? 28 : 18);
-    record = rect(colX, (top + bottom) / 2 - rec / 2, rec, rec);
-    media = rect(colMid - RAIL_W / 2, record.y - gap - RAIL_H, RAIL_W, RAIL_H);
-    settings = rect(media.x, media.y - gap - RAIL_H, RAIL_W, RAIL_H);
-    display = rect(media.x, maxY(record) + gap, RAIL_W, RAIL_H);
-    lock = rect(media.x, maxY(display) + gap, RAIL_W, RAIL_H);
-    status = rect(lead, top, colX - 12 - lead, STATUS_ROW);
-    stick = rect(colX - 16 - stickSide, bottom - stickSide, stickSide, stickSide);
-    assists = rect(lead, bottom - assistHeightLandscape, ASSIST_CELL + PALETTE_INSETS, assistHeightLandscape);
-    const stripLeft = maxX(assists) + 12;
-    const stripRight = stick.x - 12;
-    valuesPerRow = 1;
-    const valuesH = showsValues ? READOUT_LINE_H + 4 : 0;
-    values = rect(stripLeft, bottom - valuesH, stripRight - stripLeft, valuesH);
+    const leadW = (tablet ? LEAD_STRIP_TABLET : LEAD_STRIP) + safeArea.leading;
+    const trailW = (tablet ? TRAIL_STRIP_TABLET : TRAIL_STRIP) + safeArea.trailing;
+    const leftEdge = leadW;
+    const rightEdge = w - trailW;
+    // The picture may tuck a few points under each strip's empty edge to keep its full height.
+    const slack = tablet ? 0 : 6;
+    const fitted = fitting(rect(leftEdge - slack, 0, Math.max(1, rightEdge - leftEdge + slack * 2), h), aspect);
+    // Centred on the screen like Mimo when the strips allow it.
+    const px = clamp((w - fitted.width) / 2, leftEdge - slack, rightEdge + slack - fitted.width);
+    picture = rect(px, fitted.y, fitted.width, fitted.height);
+    leadStrip = rect(0, 0, leftEdge, h);
+    trailStrip = rect(rightEdge, 0, w - rightEdge, h);
+
+    const top = Math.max(6, safeArea.top + 4);
+    const bottom = h - Math.max(6, safeArea.bottom);
+    const leadX = safeArea.leading + ((tablet ? LEAD_STRIP_TABLET : LEAD_STRIP) - MIN_TAP) / 2;
+    back = rect(leadX, top, MIN_TAP, MIN_TAP);
+    leading = rect(safeArea.leading, maxY(back), tablet ? LEAD_STRIP_TABLET : LEAD_STRIP, bottom - maxY(back));
+
+    // Trailing strip: the rotated mode rail against the edge, the record column inside it.
+    const railW = tablet ? MODE_RAIL_W_TABLET : MODE_RAIL_W;
+    modeRail = rect(w - safeArea.trailing - railW, 0, railW, h);
+    const colMid = (Math.max(rightEdge, maxX(picture)) + modeRail.x) / 2;
+    record = rect(colMid - disc / 2, h / 2 - disc / 2, disc, disc);
+    media = rect(colMid - MIN_TAP / 2, bottom - MIN_TAP - 4, MIN_TAP, MIN_TAP);
     aspectToggle = rect();
-    const gaugeX = Math.max(lead, picture.x + 10);
-    const gaugeTopY = maxY(status) + 12;
-    exposureGauge = rect(gaugeX, gaugeTopY, 34, clamp(assists.y - 12 - gaugeTopY, 90, 200));
-    const dockWidth = Math.min(clamp(w * 0.42, 300, 400), stick.x - 12 - lead);
-    const dockTop = maxY(status) + 8;
-    // A tall window keeps the docked tray to about half its height; a phone gives it the column.
-    const dockBottom = Math.min(bottom, dockTop + Math.max(420, h * 0.55));
-    sheet = { dock: { left: lead, width: dockWidth, top: dockTop, bottom: dockBottom }, topInset: 0 };
+
+    // Over the picture: quick icons down its trailing edge, status beside the top one, the
+    // gimbal cluster bottom-trailing leading of the column, the readout bottom-centre.
+    const picTop = Math.max(picture.y, safeArea.top) + 6;
+    const picBottom = Math.min(maxY(picture), h - safeArea.bottom) - 6;
+    quick = rect(maxX(picture) - 8 - QUICK_SIZE, picTop, QUICK_SIZE, picBottom - picTop);
+    status = rect(midX(picture), picTop + 2, quick.x - 4 - midX(picture), 28);
+    statusLead = rect(picture.x + 12, picTop + 2, midX(picture) - picture.x - 12, 28);
+    stick = rect(quick.x - 8 - stickSide, picBottom - 4 - stickSide, stickSide, stickSide);
+    const centre = midX(picture);
+    const half = Math.max(60, Math.min(centre - picture.x - 12, stick.x - 8 - centre));
+    const valuesH = showsValues ? READOUT_LINE_H : 0;
+    values = rect(centre - half, picBottom - valuesH, half * 2, valuesH);
+
+    const dockTop = Math.max(0, safeArea.top);
+    sheet = {
+      dock: { left: picture.x, width: panelWidth(w, Math.max(200, quick.x - 8 - picture.x)), top: dockTop, bottom: h - Math.max(0, safeArea.bottom) },
+      topInset: 0,
+    };
   }
 
   // Gimbal cluster (CONTEXT.md): zoom stacks above the stick, trailing-aligned; the gimbal
@@ -287,23 +295,24 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
   return {
     viewport,
     picture,
+    leadStrip,
+    trailStrip,
+    leading,
+    back,
+    quick,
+    axis: portrait ? 'horizontal' : 'vertical',
     status,
-    statusRows,
+    statusRows: 1,
+    statusLead,
     values,
-    valuesPerRow,
-    system,
-    lock,
-    settings,
-    media,
+    valuesPerRow: 1,
+    modeRail,
     record,
-    display,
-    assists,
+    media,
+    aspectToggle,
     stick,
     zoom,
     gimbal,
-    aspectToggle,
-    exposureGauge,
-    modeRail,
     sheet,
     portrait,
     tablet,
@@ -311,4 +320,3 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     safeArea,
   };
 }
-

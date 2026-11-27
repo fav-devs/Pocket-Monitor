@@ -40,10 +40,39 @@ export function MonitorRecordLamp({ recording, photo }: { recording: boolean; ph
 }
 
 /**
- * `LiveRecordButton` / `MonitorCaptureButton`: tap records (or takes a still in a photo mode),
- * hold opens the shooting-mode sheet. The lock and a pending countdown keep it inert.
+ * The live view's record control (Mimo): a plain record-red disc; recording, a white rounded
+ * square (stop) sits in it. Stills: a white disc.
  */
-export function LiveRecordButton({ onPress, onHold, disabled }: { onPress: () => void; onHold?: () => void; disabled?: boolean }) {
+export function RecordDisc({ size, recording, photo }: { size: number; recording: boolean; photo: boolean }) {
+  const t = useSharedValue(recording ? 1 : 0);
+  useEffect(() => {
+    t.value = withTiming(recording ? 1 : 0, { duration: 200 });
+  }, [recording, t]);
+  const stop = useAnimatedStyle(() => ({ opacity: t.value, transform: [{ scale: 0.6 + 0.4 * t.value }] }));
+  const side = Math.round(size * 0.36);
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: photo && !recording ? onVideo.ink : recordRed, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={[{ width: side, height: side, borderRadius: side * 0.2, backgroundColor: onVideo.ink }, stop]} />
+    </View>
+  );
+}
+
+/**
+ * `LiveRecordButton` / `MonitorCaptureButton`: tap records (or takes a still in a photo mode),
+ * hold opens the shooting-mode panel. The lock and a pending countdown keep it inert.
+ */
+export function LiveRecordButton({
+  onPress,
+  onHold,
+  disabled,
+  size,
+}: {
+  onPress: () => void;
+  onHold?: () => void;
+  disabled?: boolean;
+  /** Optional (additive): draw Mimo's plain disc at this size instead of the ringed lamp. */
+  size?: number;
+}) {
   const recording = useCamera((s) => s.recording.recording);
   const photo = useCamera((s) => isPhotoMode(s.format.shootingMode));
   const busy = useCamera((s) => s.recording.countdown != null || s.recording.capturingStill);
@@ -65,7 +94,7 @@ export function LiveRecordButton({ onPress, onHold, disabled }: { onPress: () =>
         transform: [{ scale: pressed ? 0.94 : 1 }],
       })}
     >
-      <MonitorRecordLamp recording={recording} photo={photo} />
+      {size ? <RecordDisc size={size} recording={recording} photo={photo} /> : <MonitorRecordLamp recording={recording} photo={photo} />}
     </Pressable>
   );
 }

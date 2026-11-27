@@ -17,7 +17,6 @@ import { usePreferences } from '@/state/preferences';
 import { DASH, elapsedLabel, isPhotoMode, storageForms, timecodeComponents } from '../format';
 import { STATUS_ROW, type FieldMonitorLayout } from '../layout/fieldMonitorLayout';
 import { useLiveUi } from '../liveUiStore';
-import { LiveBackButton } from '../chrome/SystemButtons';
 import { onVideo, textShadow } from '../chrome/primitives';
 import { GaugeBars, batteryTint, linkTint } from './LiveTelemetry';
 
@@ -26,8 +25,9 @@ const CLUSTER_FILL = 'rgba(0,0,0,0.32)';
 
 function Cluster({ children, tint, label }: { children: ReactNode; tint?: string; label?: string }) {
   const styles = useThemedStyles(createStyles);
+  // Mimo: status is bare shadowed text over the picture; only REC keeps a soft red wash.
   return (
-    <View accessibilityLabel={label} style={[styles.cluster, tint ? { backgroundColor: tint } : null]}>
+    <View accessibilityLabel={label} style={[styles.cluster, tint ? { backgroundColor: tint } : styles.bare]}>
       {children}
     </View>
   );
@@ -47,7 +47,7 @@ function Readout({ children, color, mono = true }: { children: ReactNode; color?
  * standby, on a red-tinted capsule while recording), REC / STBY and the take's elapsed time, then the camera's timecode when it reports one
  * and Display → Timecode is on. Never invents a clock.
  */
-export function RecordingReadout() {
+export function RecordingReadout({ idle = 'stby' }: { idle?: 'stby' | 'timecode' } = {}) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
   const rec = useCamera((s) => s.recording);
@@ -55,6 +55,18 @@ export function RecordingReadout() {
   const recording = rec.recording;
   const tc = showTimecode ? rec.timecode : undefined;
   const { base, accent } = timecodeComponents(tc ?? '');
+  // At standby the live view shows only the camera's timecode (Mimo shows nothing).
+  if (!recording && idle === 'timecode') {
+    if (!tc) return null;
+    return (
+      <Cluster>
+        <Text numberOfLines={1} style={[styles.text, styles.mono, styles.clock]} accessibilityLabel={`Timecode ${tc}`}>
+          {base}
+          <Text style={{ color: colors.accent }}>{accent}</Text>
+        </Text>
+      </Cluster>
+    );
+  }
   return (
     <Cluster tint={recording ? recordRedSoft : undefined}>
       <View
@@ -157,21 +169,29 @@ export function CameraStatusCluster() {
 }
 
 /**
- * `LiveStatusChrome`, picture first: back, then one cluster per side — REC and timecode leading,
- * the camera's battery, card and link trailing. Format, colour and mode live in their own
- * controls (the readout and the mode rail), so nothing here repeats them.
+ * Status over the picture (Mimo): REC, elapsed time and timecode at the top-leading corner while
+ * recording (the timecode alone at standby), and the camera's battery, card time left and link
+ * at the top-trailing corner. Bare shadowed text, no plates. Format, colour and mode live in their
+ * own controls (the strip's format chip, the mode rail), so nothing here repeats them.
  */
-export function LiveStatusChrome({ layout, onBack }: { layout: FieldMonitorLayout; onBack: () => void }) {
+export function LiveStatusChrome({ layout }: { layout: FieldMonitorLayout }) {
   const styles = useThemedStyles(createStyles);
   const photo = useCamera((s) => isPhotoMode(s.format.shootingMode));
-  const { status } = layout;
+  const { status, statusLead } = layout;
   return (
-    <View pointerEvents="box-none" style={[styles.row, { left: status.x, top: status.y, width: status.width }]}>
-      <LiveBackButton onPress={onBack} />
-      {!photo ? <RecordingReadout /> : null}
-      <View style={styles.spacer} />
-      <CameraStatusCluster />
-    </View>
+    <>
+      {!photo ? (
+        <View pointerEvents="box-none" style={[styles.row, { left: statusLead.x, top: statusLead.y, width: statusLead.width, height: statusLead.height }]}>
+          <RecordingReadout idle="timecode" />
+        </View>
+      ) : null}
+      <View
+        pointerEvents="box-none"
+        style={[styles.row, styles.trailing, { left: status.x, top: status.y, width: status.width, height: status.height }]}
+      >
+        <CameraStatusCluster />
+      </View>
+    </>
   );
 }
 
@@ -184,7 +204,8 @@ function createStyles(colors: ThemeColors) {
       gap: 6,
       height: STATUS_ROW,
     },
-    spacer: { flex: 1, minWidth: 4 },
+    trailing: { justifyContent: 'flex-end' as const },
+    bare: { backgroundColor: 'transparent', paddingHorizontal: 2 },
     cluster: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,

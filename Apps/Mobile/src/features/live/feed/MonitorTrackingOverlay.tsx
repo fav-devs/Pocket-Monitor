@@ -23,7 +23,7 @@ function Brackets({ w, h, color, len = 14 }: { w: number; h: number; color: stri
  * Tracking box (ActiveTrack) and the tap-focus box, in picture coordinates. Searching is
  * dashed, tracking is accent brackets with the subject label, lost is amber.
  */
-export function MonitorTrackingOverlay({ picture }: { picture: Rect }) {
+export function MonitorTrackingOverlay({ picture, focusBox = true }: { picture: Rect; /** Optional (additive): draw the tap-focus box (the live view draws its own with the EV sun). */ focusBox?: boolean }) {
   const { colors } = useTheme();
   const tracking = useCamera((s) => s.tracking);
   const focus = useCamera((s) => s.focus);
@@ -34,7 +34,7 @@ export function MonitorTrackingOverlay({ picture }: { picture: Rect }) {
       pointerEvents="none"
       style={{ position: 'absolute', left: picture.x, top: picture.y, width: picture.width, height: picture.height, overflow: 'hidden' }}
     >
-      {!box && focus.hasPoint ? (
+      {focusBox && !box && focus.hasPoint ? (
         <View
           accessible
           accessibilityLabel="Focus point"

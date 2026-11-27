@@ -101,7 +101,19 @@ function Group({
  * in place of the boxed strip. Format opens the format sheet, the exposure values open the one
  * exposure panel, and WB / focus / audio open the camera settings sheet at their tab.
  */
-export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?: 'center' | 'leading' }) {
+export function CaptureReadout({
+  rect,
+  align = 'center',
+  exposureOnly = false,
+}: {
+  rect: Rect;
+  align?: 'center' | 'leading';
+  /**
+   * Optional (additive). Mimo's readout: only `1/60 · ISO 400 · −0.3` (the format chip and the
+   * settings panel carry the rest, and the strip shows AUTO / M).
+   */
+  exposureOnly?: boolean;
+}) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const angle = usePreferences((p) => !!p.shutterUsesAngle);
@@ -120,7 +132,7 @@ export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?:
     });
   const exposureOpen = open === 'exposure' || open === 'iso' || open === 'shutter' || open === 'ev' || open === 'aperture';
   const cameraOpen = (id: 'wb' | 'focus' | 'audio') =>
-    open === id || (open === 'camera' && tab === (id === 'audio' ? 'audio' : 'video'));
+    open === id || (open === 'camera' && tab === 'camera');
   const tint = (on: boolean) => (on ? { color: colors.accent } : null);
 
   return (
@@ -128,7 +140,7 @@ export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?:
       pointerEvents={locked ? 'none' : 'box-none'}
       style={[rectStyle(rect), styles.root, align === 'leading' && styles.rootLeading, locked && styles.locked]}
     >
-      {r.format ? (
+      {r.format && !exposureOnly ? (
         <Group testID="monitor.capture.format" label="Recording format" value={r.format} active={open === 'format'} onPress={() => toggle('format')}>
           <Text numberOfLines={1} style={[styles.text, tint(open === 'format')]}>
             {r.format}
@@ -142,9 +154,11 @@ export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?:
         active={exposureOpen}
         onPress={() => toggle('exposure')}
       >
-        <View style={[styles.badge, exposureOpen && { borderColor: colors.accent }]}>
-          <Text style={[styles.badgeText, tint(exposureOpen)]}>{r.program}</Text>
-        </View>
+        {!exposureOnly ? (
+          <View style={[styles.badge, exposureOpen && { borderColor: colors.accent }]}>
+            <Text style={[styles.badgeText, tint(exposureOpen)]}>{r.program}</Text>
+          </View>
+        ) : null}
         {r.exposure.map((v, i) => (
           <Fragment key={i}>
             {i > 0 ? <Dot /> : null}
@@ -154,6 +168,7 @@ export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?:
           </Fragment>
         ))}
       </Group>
+      {exposureOnly ? null : (
       <View style={styles.words}>
         {r.camera.map((c, i) => (
           <Fragment key={c.id}>
@@ -163,7 +178,7 @@ export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?:
               label={c.label}
               value={c.value}
               active={cameraOpen(c.id)}
-              onPress={() => toggle('camera', c.id === 'audio' ? 'audio' : 'video')}
+              onPress={() => toggle('camera', 'camera')}
             >
               <Text numberOfLines={1} style={[styles.text, styles.muted, tint(cameraOpen(c.id))]}>
                 {c.value}
@@ -172,6 +187,7 @@ export function CaptureReadout({ rect, align = 'center' }: { rect: Rect; align?:
           </Fragment>
         ))}
       </View>
+      )}
     </View>
   );
 }
