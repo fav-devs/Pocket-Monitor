@@ -42,6 +42,9 @@ pub struct MaterialRequest {
     /// The web's colour scheme (Mica's light or dark variant).
     #[serde(default)]
     dark: bool,
+    /// macOS, while native glass controls are on: the page colour, drawn right of
+    /// `leading` under the web view (which then clears its page backgrounds around them).
+    page: Option<String>,
     #[serde(default = "one")]
     dpr: f64,
 }
@@ -151,8 +154,13 @@ mod platform {
 
     pub fn material(window: WebviewWindow, request: MaterialRequest) -> Result<(), String> {
         let width = request.on.then_some(request.leading);
+        let page = request
+            .page
+            .as_deref()
+            .and_then(pm_surface::glass::parse_color)
+            .map(|color| (request.leading, color));
         with_host(&window, move |host| {
-            host.set_material(width, request.dpr);
+            host.set_material(width, page, request.dpr);
             log_once(match width {
                 Some(width) => format!("sidebar vibrancy on ({width:.0} px)"),
                 None => "sidebar vibrancy off".to_string(),

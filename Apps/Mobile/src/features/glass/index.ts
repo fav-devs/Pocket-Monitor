@@ -1,6 +1,6 @@
 export { GlassContext, useGlass, useGlassControl, type GlassControl } from './context';
 export { bootGlass, notePictureHole, useGlassEnv } from './env';
-export { glassSync } from './dom';
+export { glassSync, previewMaterial } from './dom';
 export {
   defaultGlassMode,
   flatGlass,

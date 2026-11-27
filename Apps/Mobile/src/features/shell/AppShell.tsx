@@ -11,6 +11,7 @@ import {
   glassSync,
   installGlassStyles,
   materialStripWidth,
+  previewMaterial,
   resolveGlass,
   setGlassScheme,
   useGlassEnv,
@@ -68,20 +69,24 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   // The native material: on behind the sidebar strip while the shell shows, off on full-bleed
   // pages (and with Glass off), so nothing native sits over the picture there.
+  // With native glass controls the desktop also paints the page colour under the page (`page`),
+  // since the web clears the page's backgrounds above each native control.
+  const page = glass.controls === 'native' ? colors.background : null;
   useEffect(() => {
-    if (!caps || caps.preview || !isTauri()) return;
+    if (!caps) return;
+    if (caps.preview) {
+      previewMaterial({ on: glass.material, leading: strip, page });
+      return;
+    }
+    if (!isTauri()) return;
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    invoke('glass_material', { request: { on: glass.material, leading: strip, dark: scheme === 'dark', dpr } }).catch(() => {});
-  }, [caps, glass.material, strip, scheme]);
+    invoke('glass_material', { request: { on: glass.material, leading: strip, dark: scheme === 'dark', dpr, page } }).catch(() => {});
+  }, [caps, glass.material, strip, scheme, page]);
 
   // Native glass controls follow the shell; a route or theme change re-measures them.
   useEffect(() => {
-    glassSync()?.configure({
-      enabled: glass.controls === 'native',
-      materialWidth: glass.material ? strip : 0,
-      underlay: colors.background,
-    });
-  }, [glass.controls, glass.material, strip, colors.background]);
+    glassSync()?.configure({ enabled: glass.controls === 'native' });
+  }, [glass.controls]);
   useEffect(() => {
     if (glass.controls === 'native') glassSync()?.schedule();
   }, [pathname, scheme, glass.controls]);
@@ -91,7 +96,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <GlassContext.Provider value={glass}>
       <View style={[styles.root, glass.material && styles.clear]}>
-        {sidebar ? <Sidebar pathname={pathname} material={glass.material} preview={!!caps?.preview} /> : null}
+        {sidebar ? <Sidebar pathname={pathname} material={glass.material} /> : null}
         <View style={[styles.content, glass.material && styles.opaque]}>
           <ContentFrameContext.Provider value={frame}>{children}</ContentFrameContext.Provider>
         </View>

@@ -10,7 +10,7 @@ import { Icon } from '@/components/icon';
 import { ToolbarButton } from '@/components/page-toolbar';
 import { SETTINGS_LIST_WIDTH, TOOLBAR_HEIGHT } from '@/constants/layout';
 import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
-import { useGlass, useGlassControl, useGlassEnv } from '@/features/glass';
+import { useGlass, useGlassControl } from '@/features/glass';
 import { connectionPhaseLabel } from '@/features/pairing/presentation';
 import { useSeeThrough } from '@/features/shell/Sidebar';
 import { appVersion } from './diagnostics';
@@ -32,11 +32,9 @@ export function SettingsNav() {
   const live = phase === 'live';
   const desktop = gesturesAvailable();
   const { material } = useGlass();
-  const preview = useGlassEnv((s) => !!s.caps?.preview);
   const ref = useRef<ComponentRef<typeof View> | null>(null);
   useSeeThrough(ref, material);
   const card = useGlassControl('card', { radius: 12 });
-  const chrome = chromeRegion() as { dataSet?: Record<string, string> };
 
   const open = (id: SettingsSectionId) => {
     if (id !== selected) router.replace(`/settings/${id}`);
@@ -47,11 +45,7 @@ export function SettingsNav() {
   };
 
   return (
-    <View
-      ref={ref}
-      style={[styles.column, material && styles.clear]}
-      {...({ dataSet: material && preview ? { ...chrome.dataSet, pocketMaterialPreview: '' } : chrome.dataSet } as object)}
-    >
+    <View ref={ref} style={[styles.column, material && styles.clear]} {...chromeRegion()}>
       <View style={styles.head} {...dragRegion('deep')}>
         <Text accessibilityRole="header" style={styles.heading}>
           Settings

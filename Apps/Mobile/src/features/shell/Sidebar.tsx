@@ -58,7 +58,7 @@ export function useSeeThrough(ref: { current: unknown }, on: boolean) {
 }
 
 /** The wide layout's sidebar (macOS Finder / System Settings): the app, its places, the link. */
-export function Sidebar({ pathname, material = false, preview = false }: { pathname: string; material?: boolean; preview?: boolean }) {
+export function Sidebar({ pathname, material = false }: { pathname: string; material?: boolean }) {
   const styles = useThemedStyles(createStyles);
   const active = activeDestination(pathname);
   const phase = useCamera((s) => s.connection.phase);
@@ -66,11 +66,9 @@ export function Sidebar({ pathname, material = false, preview = false }: { pathn
   const places = shellDestinations({ server: !desktopCameraEnabled });
   const ref = useRef<ComponentRef<typeof View> | null>(null);
   useSeeThrough(ref, material);
-  const chrome = chromeRegion() as { dataSet?: Record<string, string> };
-  const dataSet = material && preview ? { ...chrome.dataSet, pocketMaterialPreview: '' } : chrome.dataSet;
 
   return (
-    <View ref={ref} style={[styles.sidebar, material && styles.sidebarClear]} accessibilityRole="menu" {...({ dataSet } as object)}>
+    <View ref={ref} style={[styles.sidebar, material && styles.sidebarClear]} accessibilityRole="menu" {...chromeRegion()}>
       {macOverlayTitleBar ? <View style={styles.titleBarStrip} {...dragRegion('self')} /> : null}
       <View style={[styles.brand, macOverlayTitleBar && styles.brandUnderLights]} {...dragRegion('deep')}>
         <AppLogo size={26} />

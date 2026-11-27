@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { invoke, isTauri } from '@/camera/desktop/tauri';
+import { punchThrough } from '@/features/picture/desktop/hole';
 import { createGlassSync, type GlassNode, type GlassSync, type NativeGlassItem, type RectLike } from './sync';
 
 /**
@@ -34,13 +35,35 @@ function intersectRect(a: RectLike, b: RectLike): RectLike {
   };
 }
 
-function previewSend(items: NativeGlassItem[]): Promise<void> {
-  let layer = document.getElementById('pm-glass-preview');
+function previewLayer(id: string): HTMLElement {
+  let layer = document.getElementById(id);
   if (!layer) {
     layer = document.createElement('div');
-    layer.id = 'pm-glass-preview';
+    layer.id = id;
     document.body.appendChild(layer);
   }
+  return layer;
+}
+
+/**
+ * The web preview's stand-ins for `glass_material`: the sidebar material (a CSS blur of the fake
+ * desktop) left of `leading` and the page fill right of it, under the web page in the same order
+ * as the native views, with the glass outlines above them.
+ */
+export function previewMaterial({ on, leading, page }: { on: boolean; leading: number; page: string | null }) {
+  if (typeof document === 'undefined') return;
+  const material = previewLayer('pm-glass-preview-material');
+  const fill = previewLayer('pm-glass-preview-page');
+  const glass = previewLayer('pm-glass-preview');
+  document.body.append(material, fill, glass);
+  material.style.width = `${leading}px`;
+  material.style.display = on ? 'block' : 'none';
+  fill.style.left = `${leading}px`;
+  fill.style.background = page ?? 'transparent';
+}
+
+function previewSend(items: NativeGlassItem[]): Promise<void> {
+  const layer = previewLayer('pm-glass-preview');
   layer.replaceChildren(
     ...items.map((item) => {
       const box = document.createElement('div');
@@ -50,7 +73,8 @@ function previewSend(items: NativeGlassItem[]): Promise<void> {
         width: `${item.width}px`,
         height: `${item.height}px`,
         borderRadius: `${item.radius}px`,
-        background: item.tint ? `${item.tint.slice(0, 7)}33` : 'transparent',
+        // The tint stands in for tinted native glass, so a label on it stays readable.
+        background: item.tint ?? 'transparent',
       });
       return box;
     }),
@@ -71,6 +95,11 @@ export function glassSync(): GlassSync | null {
     viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
     dpr: () => window.devicePixelRatio || 1,
     clipOf,
+    // The control itself is cleared by the glass CSS; its ancestors by the picture hole's rule.
+    reveal: (node) => {
+      const parent = (node as unknown as HTMLElement).parentElement;
+      return parent ? punchThrough(parent) : () => {};
+    },
     setTimer: (run, ms) => window.setTimeout(run, ms),
     clearTimer: (timer) => window.clearTimeout(timer as number),
   });

@@ -9,9 +9,11 @@
 //! - **macOS**: one host view (flipped, `hitTest:` → nil, so every click stays with the
 //!   `WKWebView` above it) holding, bottom to top: an `NSVisualEffectView` (sidebar
 //!   material, behind-window blending, following the window's active state) under the
-//!   sidebar strip; flat underlays under glass that sits on page content; and on macOS 26+
-//!   a pool of `NSGlassEffectView`s (in an `NSGlassEffectContainerView`) at the rects the
-//!   web reports, which draws those controls with a transparent background.
+//!   sidebar strip; the *page*, a flat fill in the page colour right of it while native
+//!   glass is on (the web then draws the page's backgrounds transparent along each glass
+//!   control's ancestors, so the glass under it shows and nothing else changes); and on
+//!   macOS 26+ a pool of `NSGlassEffectView`s (in an `NSGlassEffectContainerView`) at the
+//!   rects the web reports, which draws those controls with a transparent background.
 //! - **Windows 11**: Mica on the window (DWM), and the picture's child window slid right
 //!   by the sidebar strip so DWM's backdrop shows there (`PictureSurface::set_leading_inset`).
 //!   No native glass controls; the web draws them.
@@ -265,6 +267,18 @@ mod platform {
         NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, a)
     }
 
+    /// A borderless, untitled, hidden fill (`NSBox` custom: colour and corner radius
+    /// without a layer).
+    fn flat_box(mtm: MainThreadMarker) -> Retained<NSBox> {
+        let fill = NSBox::initWithFrame(mtm.alloc(), NSRect::ZERO);
+        fill.setBoxType(NSBoxType::Custom);
+        fill.setTitlePosition(NSTitlePosition::NoTitle);
+        fill.setBorderWidth(0.0);
+        fill.setTransparent(false);
+        fill.setHidden(true);
+        fill
+    }
+
     fn has_class(name: &std::ffi::CStr) -> bool {
         AnyClass::get(name).is_some()
     }
@@ -287,6 +301,8 @@ mod platform {
         webview: Retained<NSView>,
         host: Retained<NSView>,
         material: Retained<NSVisualEffectView>,
+        /// The page colour right of the material while native glass is on.
+        page: Retained<NSBox>,
         underlays: Retained<NSView>,
         /// Where glass views go: the container's content view, or a plain view before 26.
         glass_parent: Retained<NSView>,
@@ -338,6 +354,10 @@ mod platform {
             material.setHidden(true);
             host.addSubview(&material);
 
+            let page = flat_box(mtm);
+            page.setAutoresizingMask(fill());
+            host.addSubview(&page);
+
             let underlays = passthrough(mtm, bounds);
             underlays.setAutoresizingMask(fill());
             host.addSubview(&underlays);
@@ -366,6 +386,7 @@ mod platform {
                 webview,
                 host,
                 material,
+                page,
                 underlays,
                 glass_parent,
                 slots: Vec::new(),
@@ -411,18 +432,35 @@ mod platform {
             }
         }
 
-        /// The sidebar material under the leading `width` CSS px, or none.
-        pub fn set_material(&self, width: Option<f64>, device_pixel_ratio: f64) {
+        /// The sidebar material under the leading `width` CSS px (or none), and the page
+        /// colour right of `leading` CSS px (or none).
+        pub fn set_material(
+            &self,
+            width: Option<f64>,
+            page: Option<(f64, Rgba)>,
+            device_pixel_ratio: f64,
+        ) {
             self.keep_in_place();
+            let factor = self.factor(device_pixel_ratio);
+            let size = self.host.bounds().size;
             match width.filter(|w| w.is_finite() && *w >= 1.0) {
                 Some(width) => {
-                    let height = self.host.bounds().size.height;
-                    let width = width * self.factor(device_pixel_ratio);
+                    let width = width * factor;
                     self.material
-                        .setFrame(ns_rect(Rect::new(0.0, 0.0, width, height)));
+                        .setFrame(ns_rect(Rect::new(0.0, 0.0, width, size.height)));
                     self.material.setHidden(false);
                 }
                 None => self.material.setHidden(true),
+            }
+            match page.filter(|(leading, _)| leading.is_finite()) {
+                Some((leading, color)) => {
+                    let x = (leading * factor).clamp(0.0, size.width);
+                    self.page
+                        .setFrame(ns_rect(Rect::new(x, 0.0, size.width - x, size.height)));
+                    self.page.setFillColor(&ns_color(color));
+                    self.page.setHidden(false);
+                }
+                None => self.page.setHidden(true),
             }
         }
 
@@ -479,12 +517,7 @@ mod platform {
         }
 
         fn slot(&self) -> Slot {
-            let underlay = NSBox::initWithFrame(self.mtm.alloc(), NSRect::ZERO);
-            underlay.setBoxType(NSBoxType::Custom);
-            underlay.setTitlePosition(NSTitlePosition::NoTitle);
-            underlay.setBorderWidth(0.0);
-            underlay.setTransparent(false);
-            underlay.setHidden(true);
+            let underlay = flat_box(self.mtm);
             self.underlays.addSubview(&underlay);
             let glass = NSGlassEffectView::initWithFrame(self.mtm.alloc(), NSRect::ZERO);
             glass.setHidden(true);

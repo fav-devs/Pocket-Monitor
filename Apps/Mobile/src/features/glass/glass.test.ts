@@ -67,8 +67,9 @@ describe('which glass the shell gets', () => {
   it('puts Mica behind the sidebar on Windows 11, except while a picture is on screen', () => {
     expect(resolveGlass(inputs({ caps: windows11 }))).toEqual({ material: true, controls: 'css' });
     expect(resolveGlass(inputs({ caps: windows11, pictureOnScreen: true }))).toEqual({ material: false, controls: 'css' });
-    // macOS layers its material above the picture, so a picture changes nothing there.
-    expect(resolveGlass(inputs({ pictureOnScreen: true }))).toEqual({ material: true, controls: 'native' });
+    // macOS layers its material above the picture, so it stays; native controls need the page
+    // fill under the web view, which would cover the picture, so they fall back to the web glass.
+    expect(resolveGlass(inputs({ pictureOnScreen: true }))).toEqual({ material: true, controls: 'css' });
   });
 
   it('keeps the sidebar solid without a material (Windows 10, Linux)', () => {
@@ -133,7 +134,9 @@ class FakeNode implements GlassNode {
   }
 }
 
-function harness(opts: { dpr?: number; width?: number; fail?: boolean; clip?: (n: GlassNode) => RectLike | null } = {}) {
+function harness(
+  opts: { dpr?: number; width?: number; fail?: boolean; clip?: (n: GlassNode) => RectLike | null; reveal?: (n: GlassNode) => () => void } = {},
+) {
   const frames: (() => void)[] = [];
   const timers = new Map<number, { run: () => void; at: number }>();
   let clock = 0;
@@ -150,6 +153,7 @@ function harness(opts: { dpr?: number; width?: number; fail?: boolean; clip?: (n
     viewport: () => ({ width: opts.width ?? 1440, height: 900 }),
     dpr: () => dpr,
     clipOf: opts.clip,
+    reveal: opts.reveal,
     setTimer(run, ms) {
       const id = nextTimer++;
       timers.set(id, { run, at: clock + ms });
@@ -185,7 +189,7 @@ function harness(opts: { dpr?: number; width?: number; fail?: boolean; clip?: (n
   };
 }
 
-const enabled = { enabled: true, materialWidth: SIDEBAR_WIDTH, underlay: '#ffffff' };
+const enabled = { enabled: true };
 
 describe('keeping native glass under the web controls', () => {
   it('coalesces every change in a frame into one send, and skips an unchanged list', async () => {
@@ -224,12 +228,12 @@ describe('keeping native glass under the web controls', () => {
     h.frame();
     const [button, item] = h.sends[0].items;
     expect(h.sends[0].dpr).toBe(2);
-    expect(button).toEqual({ x: 1300.5, y: 10, width: 120, height: 32, radius: 16, tint: '#1c1c1cd9', style: 'regular', underlay: '#ffffff', trailing: true });
-    // Over the sidebar material: no underlay, pinned to the leading edge.
-    expect(item).toMatchObject({ underlay: null, trailing: false, style: 'clear', radius: 10 });
+    expect(button).toEqual({ x: 1300.5, y: 10, width: 120, height: 32, radius: 16, tint: '#1c1c1cd9', style: 'regular', underlay: null, trailing: true });
+    // In the sidebar: pinned to the leading edge.
+    expect(item).toMatchObject({ trailing: false, style: 'clear', radius: 10 });
   });
 
-  it('resends when the device pixel ratio or the theme changes', () => {
+  it('resends when the device pixel ratio changes (the window moved to another screen)', () => {
     const h = harness({ dpr: 2 });
     h.sync.configure(enabled);
     h.sync.register(new FakeNode({ left: 1300, top: 10, width: 120, height: 32 }), { radius: 16 });
@@ -238,10 +242,35 @@ describe('keeping native glass under the web controls', () => {
     h.sync.schedule();
     h.frame();
     expect(h.sends.map((s) => s.dpr)).toEqual([2, 1]);
-    h.sync.configure({ ...enabled, underlay: '#0d0d0d' });
+  });
+
+  it('clears the backgrounds above a control only while it is native', async () => {
+    const revealed = new Set<GlassNode>();
+    const h = harness({
+      reveal: (node) => {
+        revealed.add(node);
+        return () => revealed.delete(node);
+      },
+    });
+    h.sync.configure(enabled);
+    const a = new FakeNode({ left: 1300, top: 10, width: 120, height: 32 });
+    const stop = h.sync.register(a, { radius: 16 });
     h.frame();
-    expect(h.sends).toHaveLength(3);
-    expect(h.sends[2].items[0].underlay).toBe('#0d0d0d');
+    expect(revealed.has(a)).toBe(false);
+    await h.answer();
+    expect(revealed.has(a)).toBe(true);
+    h.sync.schedule();
+    h.frame();
+    await h.answer();
+    expect(revealed.size).toBe(1);
+    h.sync.resizeStarted();
+    expect(revealed.has(a)).toBe(false);
+    h.advance(RESIZE_SETTLE_MS);
+    h.frame();
+    await h.answer();
+    expect(revealed.has(a)).toBe(true);
+    stop();
+    expect(revealed.size).toBe(0);
   });
 
   it('follows a control through an option change (the ink tint in dark mode)', () => {
@@ -357,7 +386,7 @@ describe('keeping native glass under the web controls', () => {
     h.frame();
     await h.answer();
     expect(a.native).toBe(true);
-    h.sync.configure({ ...enabled, enabled: false });
+    h.sync.configure({ enabled: false });
     expect(a.native).toBe(false);
     h.frame();
     expect(h.sends.at(-1)?.items).toEqual([]);

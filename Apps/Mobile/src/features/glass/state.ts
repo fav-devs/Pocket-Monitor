@@ -68,7 +68,9 @@ export function resolveGlass({ caps, mode, shell, reducedTransparency, pictureOn
   // Windows: Mica shows only where the picture's child window has slid off the sidebar, which
   // it must not do while a picture is on screen; the sidebar stays solid then.
   const material = caps.material !== 'none' && !(caps.material === 'mica' && pictureOnScreen);
-  const controls: ControlGlass = chosen === 'native' && caps.glassControls ? 'native' : 'css';
+  // Native glass needs the desktop's page fill under the web page, which would cover a live
+  // picture: with one on screen (the watcher) the controls use the web glass.
+  const controls: ControlGlass = chosen === 'native' && caps.glassControls && !pictureOnScreen ? 'native' : 'css';
   return { material, controls };
 }
 

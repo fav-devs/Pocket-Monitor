@@ -15,6 +15,9 @@
  *   measures again once the window has been still for `RESIZE_SETTLE_MS`.
  * - Rects are CSS px of the viewport, snapped to device pixels; Rust turns them into points
  *   with the window's backing scale.
+ * - The native glass is under the web view, so a control's ancestors must not paint over it:
+ *   `reveal` clears their backgrounds while the control is native (the desktop paints the page
+ *   colour under the whole page meanwhile, so nothing else changes) and is undone with it.
  */
 
 export const NATIVE_ATTRIBUTE = 'data-pocket-glass-native';
@@ -50,7 +53,7 @@ export interface NativeGlassItem {
   radius: number;
   tint: string | null;
   style: 'regular' | 'clear';
-  /** The page colour under glass that sits on page content (null over the sidebar material). */
+  /** A fill under this glass alone; unused by the web (the desktop's page fill covers it). */
   underlay: string | null;
   /** Pinned to the trailing edge while the window resizes. */
   trailing: boolean;
@@ -59,10 +62,6 @@ export interface NativeGlassItem {
 export interface GlassSyncConfig {
   /** Native glass is wanted (the shell is showing and the operator chose Native). */
   enabled: boolean;
-  /** CSS px from the leading edge where the window material is (no underlay there). */
-  materialWidth: number;
-  /** The page colour put under glass on page content. */
-  underlay: string | null;
 }
 
 export interface GlassSyncDeps {
@@ -72,6 +71,8 @@ export interface GlassSyncDeps {
   dpr(): number;
   /** The visible part of the node's clipping ancestors (scroll views), if any. */
   clipOf?(node: GlassNode): RectLike | null;
+  /** Clears the backgrounds above the native glass (the node's ancestors); returns the undo. */
+  reveal?(node: GlassNode): () => void;
   setTimer(run: () => void, ms: number): unknown;
   clearTimer(timer: unknown): void;
 }
@@ -127,8 +128,8 @@ const EMPTY = '[]';
 
 export function createGlassSync(deps: GlassSyncDeps): GlassSync {
   const targets = new Map<GlassNode, GlassOptions>();
-  const native = new Set<GlassNode>();
-  let config: GlassSyncConfig = { enabled: false, materialWidth: 0, underlay: null };
+  const native = new Map<GlassNode, () => void>();
+  let config: GlassSyncConfig = { enabled: false };
   let pending = false;
   let suspended = false;
   let settle: unknown = null;
@@ -139,15 +140,17 @@ export function createGlassSync(deps: GlassSyncDeps): GlassSync {
 
   const mark = (node: GlassNode, on: boolean) => {
     if (on) {
+      if (native.has(node)) return;
       node.setAttribute(NATIVE_ATTRIBUTE, '');
-      native.add(node);
+      native.set(node, deps.reveal?.(node) ?? (() => {}));
     } else {
       node.removeAttribute(NATIVE_ATTRIBUTE);
+      native.get(node)?.();
       native.delete(node);
     }
   };
   const unmarkAll = () => {
-    for (const node of [...native]) mark(node, false);
+    for (const node of [...native.keys()]) mark(node, false);
   };
 
   const push = (items: NativeGlassItem[], dpr: number, nodes: GlassNode[]) => {
@@ -190,7 +193,7 @@ export function createGlassSync(deps: GlassSyncDeps): GlassSync {
         radius: Math.max(0, Math.min(options.radius, rect.width / 2, rect.height / 2)),
         tint: options.tint ?? null,
         style: options.style ?? 'regular',
-        underlay: rect.x >= config.materialWidth - 0.5 ? config.underlay : null,
+        underlay: null,
         trailing: rect.x + rect.width / 2 > view.width / 2,
       });
       nodes.push(node);
@@ -204,7 +207,7 @@ export function createGlassSync(deps: GlassSyncDeps): GlassSync {
     const { items, nodes } = config.enabled ? measure() : { items: [], nodes: [] };
     const wanted = new Set(nodes);
     // Controls leaving native show their web glass at once, before the native view goes.
-    for (const node of [...native]) if (!wanted.has(node)) mark(node, false);
+    for (const node of [...native.keys()]) if (!wanted.has(node)) mark(node, false);
     push(items, deps.dpr(), nodes);
   };
 
@@ -241,8 +244,7 @@ export function createGlassSync(deps: GlassSyncDeps): GlassSync {
       schedule();
     },
     configure(next) {
-      const changed =
-        next.enabled !== config.enabled || next.materialWidth !== config.materialWidth || next.underlay !== config.underlay;
+      const changed = next.enabled !== config.enabled;
       config = next;
       if (!next.enabled) unmarkAll();
       if (changed) schedule();

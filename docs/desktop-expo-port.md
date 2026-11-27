@@ -1546,15 +1546,18 @@ bottom of the content view) would never show. So:
 | Glass controls | native `NSGlassEffectView`s (Glass = Native, the default) or CSS (Web) | CSS | CSS | CSS |
 
 - **macOS stack** (bottom to top): picture `NSView` → one *host* view (flipped, `hitTest:` → nil
-  so every click stays with the web view) holding the material, flat underlays and an
+  so every click stays with the web view) holding the material, the *page fill* and an
   `NSGlassEffectContainerView` (spacing 0, never merges) of glass views → `WKWebView`. The host
   is re-placed directly below the web view and resized to its frame on every update, so a view
   added below the web view later cannot slip between them. Behind-window vibrancy shows the
-  desktop whatever is under it in the window. Glass samples what is under it *in the window*,
-  which is the black picture, so glass over page content gets an underlay in the page colour
-  (`underlay`) and glass over the sidebar sits on the material. The sidebar itself is not an
-  `NSGlassEffectView`: under it is the opaque picture, and only behind-window vibrancy shows the
-  desktop through that.
+  desktop whatever is under it in the window. A glass view is under the web page, so for it to
+  show, the page must not paint over it: while a control is native the web clears the
+  backgrounds of its ancestors (the picture hole's `punchThrough` rule) and the desktop paints
+  the page colour right of the material (`glass_material`'s `page`), so the page looks the same
+  and the glass samples a flat page colour, as it would over a plain toolbar. That fill would
+  cover a live picture, so with a picture on screen in the shell (the watcher) the controls use
+  the web glass. The sidebar itself is not an `NSGlassEffectView`: under it is the opaque
+  picture, and only behind-window vibrancy shows the desktop through that.
 - **Windows**: `window_vibrancy::apply_mica` on the top-level window, and the picture's child
   `HWND` slid right by the sidebar strip (`PictureSurface::set_leading_inset`, `SWP_NOSIZE`: its
   size and swapchain are unchanged, the parent clips the overhang), so DWM's backdrop shows in
@@ -1595,10 +1598,11 @@ unchanged (no capabilities, no glass).
 `NSGlassEffectView` exists, and the default there), *Web*, *Off* (no material, today's flat
 look). Stored as `desktopGlass` in the web preferences.
 
-**Preview.** `?glassPreview=1` in a browser at ≥ 960 px: a colourful stand-in for the desktop
-behind a CSS stand-in for the sidebar material, CSS glass controls. `?glassPreview=native`:
-the same with Native available; dashed outlines are drawn where native glass views would go, to
-check the rect sync.
+**Preview.** `?glassPreview=1` in a browser at ≥ 960 px: a colourful stand-in for the desktop,
+and stand-ins for the native layers under the page in the same order (a CSS blur for the
+material, the page fill), with CSS glass controls. `?glassPreview=native`: the same with Native
+available; the controls go transparent and dashed, tinted outlines are drawn under them where
+the native glass views would go, which checks the rect sync and the cleared backgrounds.
 
 **Verify on the Intel Mac (macOS 26).** `pocket-monitor.log` has `glass: sidebar vibrancy on
 (240 px)` (488 on Settings) and `… off` on the monitor. The desktop shows blurred through the

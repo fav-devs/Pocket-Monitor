@@ -134,8 +134,9 @@ export function setGlassScheme(scheme: 'light' | 'dark') {
 let backdrop = false;
 
 /**
- * `?glassPreview=1`: a colourful stand-in for the desktop behind the window, and a CSS stand-in
- * for the native sidebar material, so the glass can be judged in a browser.
+ * `?glassPreview=1`: a colourful stand-in for the desktop behind the window; `dom.ts` adds
+ * stand-ins for the native layers (material, page fill, glass) under the page, so the glass can
+ * be judged in a browser.
  */
 export function installPreviewBackdrop() {
   if (!isWeb || backdrop || typeof document === 'undefined') return;
@@ -156,12 +157,14 @@ html::before {
     radial-gradient(circle at 34% 30%, #b721ff 0, rgba(183,33,255,0) 32%),
     linear-gradient(135deg, #0f9b8e 0%, #3b4ee8 55%, #d6155f 100%);
 }
-[data-pocket-material-preview] {
-  background-color: var(--pg-material-wash) !important;
+#pm-glass-preview-material {
+  position: fixed; top: 0; left: 0; bottom: 0; pointer-events: none; z-index: -1;
+  background-color: var(--pg-material-wash);
   -webkit-backdrop-filter: blur(48px) saturate(190%);
   backdrop-filter: blur(48px) saturate(190%);
 }
-#pm-glass-preview { position: fixed; inset: 0; pointer-events: none; z-index: 2147483647; }
+#pm-glass-preview-page { position: fixed; top: 0; right: 0; bottom: 0; pointer-events: none; z-index: -1; }
+#pm-glass-preview { position: fixed; inset: 0; pointer-events: none; z-index: -1; }
 #pm-glass-preview > div { position: absolute; box-sizing: border-box; border: 1.5px dashed #ff2fb3; }
 `;
   document.head.appendChild(style);
