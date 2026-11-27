@@ -13,12 +13,14 @@
       "PocketHeadMotionModule",
       "PocketBackgroundModule",
       "PocketRelayModule",
-      "PocketHandsModule"
+      "PocketHandsModule",
+      "PocketEditModule"
     ]
   },
   "android": {
     "modules": [
-      "com.favdevs.pocketnative.video.PocketVideoModule"
+      "com.favdevs.pocketnative.video.PocketVideoModule",
+      "com.favdevs.pocketnative.edit.PocketEditModule"
     ]
   }
 }

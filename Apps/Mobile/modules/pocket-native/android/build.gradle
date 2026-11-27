@@ -27,5 +27,11 @@ dependencies {
   implementation "androidx.camera:camera-core:${camerax_version}"
   implementation "androidx.camera:camera-camera2:${camerax_version}"
   implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+  // PocketEdit (playback editor): Media3 Transformer + effects for export and the player's
+  // colour stage, at expo-video's Media3 version so the app resolves one copy.
+  def media3_version = '1.9.1'
+  implementation "androidx.media3:media3-transformer:${media3_version}"
+  implementation "androidx.media3:media3-effect:${media3_version}"
+  implementation "androidx.media3:media3-exoplayer:${media3_version}"
   testImplementation 'junit:junit:4.13.2'
 }
