@@ -269,7 +269,7 @@ export function WatcherLiveView({
       {prefs.showRecordingBorder && recording ? <MonitorRecordingBorder /> : null}
       <MonitorTransientNotice notices={notices} onExpire={dismissNotice} top={insets.top + (clean ? 64 : 120)} />
 
-      <Sheet visible={menu != null} title={menu ? TITLES[menu] : ''} onClose={() => setMenu(null)} variant="preview" passthrough expandable={false}>
+      <Sheet visible={menu != null} title={menu ? TITLES[menu] : ''} onClose={() => setMenu(null)} variant="preview" passthrough expandable={false} topInset={Math.max(insets.top + 40, height - 240)}>
         <ChipRow>
           {menu
             ? choices[menu].map((c) => <Chip key={c.id} label={c.label} selected={c.selected} onPress={() => choose(menu, c.id)} />)

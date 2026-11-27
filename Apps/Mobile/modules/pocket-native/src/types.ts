@@ -337,6 +337,8 @@ export interface RelayHostStatusEvent {
   holder: string;
   /** False while no camera keyframe is cached (a new watcher waits for one). */
   joinable: boolean;
+  /** Names of the authorized watchers, in join order. */
+  watcherNames?: string[];
 }
 
 /** A command from the watcher holding control (already admitted natively). JSON per `encodeCommand`. */

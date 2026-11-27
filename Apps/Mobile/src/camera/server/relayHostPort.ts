@@ -26,6 +26,12 @@ export interface RelayHostStatus {
 
 export interface RelayHostOptions {
   cameraName: string;
+  /** Settings → Feed sharing (relay owner): empty = open feed. Default ''. */
+  passcode?: string;
+  /** Watchers may request control. Default false (view-only). */
+  allowsControl?: boolean;
+  /** Video sends in flight per watcher (Broadcast priority). Default 2. */
+  window?: number;
   /** The camera session whose state is shared with watchers. */
   session?: CameraSession;
 }
@@ -105,9 +111,9 @@ export function createRelayHost(relay: PocketRelayNativeModule | null, clock: Se
           cameraSessionId: sessionId,
           hostName: '',
           cameraName: options.cameraName,
-          passcode: '',
-          allowsControl: false,
-          window: 2,
+          passcode: options.passcode ?? '',
+          allowsControl: options.allowsControl ?? false,
+          window: options.window ?? 2,
         });
       } catch (e) {
         set({ ...status, state: 'failed', error: e instanceof Error ? e.message : String(e) });
@@ -116,7 +122,7 @@ export function createRelayHost(relay: PocketRelayNativeModule | null, clock: Se
       const session = options.session;
       if (session) {
         const publish = () => {
-          const json = encodeState(relayStateFromCamera(session.getState(), false));
+          const json = encodeState(relayStateFromCamera(session.getState(), options.allowsControl ?? false));
           if (json === lastState) return;
           lastState = json;
           try {

@@ -21,7 +21,10 @@ import type { CameraSession } from '@/camera/session';
 import { applyHostAction } from '@/camera/watcher/host';
 import { hostActionFor, relayStateFromCamera } from '@/camera/watcher/mapping';
 import { RelayCopy, decodeCommand, encodeState } from '@/camera/watcher/protocol';
-import { useSettingsLocal, type BroadcastPriority } from '@/features/settings/settingsStore';
+import { useSettingsLocal } from '@/features/settings/settingsStore';
+import { sessionClock } from '@/camera/native/clock';
+import { currentCameraSession } from '@/camera';
+import { windowFor } from './hostSettings';
 
 export interface FeedSharingStatus {
   /** This build can share (the native relay is linked). */
@@ -47,10 +50,7 @@ const idle: FeedSharingStatus = {
 
 export const useFeedSharingStatus = create<FeedSharingStatus>(() => idle);
 
-/** Video sends in flight per watcher. Deeper rides out radio hiccups at the cost of delay. */
-export function windowFor(priority: BroadcastPriority): number {
-  return priority === 'Lowest delay' ? 1 : priority === 'Steadier picture' ? 4 : 2;
-}
+export { windowFor };
 
 const KEEP_PHASES = new Set(['live', 'recovering', 'live-start']);
 const STATE_MS = 200;
@@ -102,7 +102,9 @@ export function useFeedSharing() {
       } else if (!key) prompted.key = '';
     });
     const command = relay.addListener('onHostCommand', (e) => {
-      const host = running.current?.session;
+      // Server mode can start the host as well: commands go to the app's live camera.
+      const app = currentCameraSession();
+      const host = running.current?.session ?? (app?.kind === 'native' ? app : null);
       const decoded = decodeCommand(e.json);
       if (!host || !decoded) return;
       const action = hostActionFor(decoded, host.getState());
@@ -125,7 +127,7 @@ export function useFeedSharing() {
       running.current = null;
       useFeedSharingStatus.setState({ ...idle, available: true });
     }
-    if (!running.current && shouldStart && cameraSessionId) {
+    if (!running.current && shouldStart && cameraSessionId && !useFeedSharingStatus.getState().active) {
       running.current = { session, cameraSessionId };
       const s = settings.current;
       useFeedSharingStatus.setState({ ...idle, available: true, active: true, state: 'starting' });
@@ -146,29 +148,31 @@ export function useFeedSharing() {
     }
   }, [relay, session, shouldStart, shouldKeep, cameraName]);
 
-  // Passcode, control requests and priority apply to the running host.
+  // Passcode, control requests and priority apply to the running host, whoever started it.
+  const hostActive = useFeedSharingStatus((st) => st.active);
   useEffect(() => {
-    if (!relay || !running.current) return;
+    if (!relay || !hostActive) return;
     relay.updateHost({ passcode, allowsControl: controlRequests, window: windowFor(priority) });
     if (!controlRequests) relay.reclaimControl();
-  }, [relay, passcode, controlRequests, priority]);
+  }, [relay, hostActive, passcode, controlRequests, priority]);
 
   // Camera state for watchers: 5 Hz when it changes, at least once a second.
   useEffect(() => {
     if (!relay || !shouldKeep) return;
     let last = '';
     let sentAt = 0;
-    const timer = setInterval(() => {
+    // The session clock keeps ticking in the background under server mode (JS timers stop there).
+    const timer = sessionClock.setInterval(() => {
       const host = running.current?.session;
       if (!host) return;
       const json = encodeState(relayStateFromCamera(host.getState(), settings.current.controlRequests));
-      const now = Date.now();
+      const now = sessionClock.now();
       if (json === last && now - sentAt < KEEPALIVE_MS) return;
       last = json;
       sentAt = now;
       relay.publishHostState(json);
     }, STATE_MS);
-    return () => clearInterval(timer);
+    return () => sessionClock.clearInterval(timer);
   }, [relay, shouldKeep]);
 
   // App teardown.

@@ -138,22 +138,21 @@ export function computeMultiviewLayout(input: MultiviewLayoutInput): MultiviewLa
       const mainW = stage.width;
       const mainH = Math.min(mainW * (9 / 16), Math.max(1, values.y - stage.y - 200));
       const main = rect(lead + (stage.width - mainH * (16 / 9)) / 2, stage.y, mainH * (16 / 9), mainH);
-      const thumbW = (stage.width - gap * 2) / 3;
-      const thumbH = thumbW * (9 / 16);
-      const thumbY = maxY(main) + gap;
-      tiles = Array.from({ length: SLOTS }, () => empty());
-      tiles[selected] = main;
-      const others = [0, 1, 2, 3].filter((i) => i !== selected);
-      others.forEach((slot, k) => (tiles[slot] = rect(lead + k * (thumbW + gap), thumbY, thumbW, thumbH)));
+      // Under it: the other cameras in a leading column, the gimbal cluster trailing.
       const stickSide = STICK_SIDE;
       stick = rect(trail - stickSide, values.y - 12 - stickSide, stickSide, stickSide);
       zoom = rect(maxX(stick) - ZOOM_SIZE, stick.y - CLUSTER_GAP - ZOOM_SIZE, ZOOM_SIZE, ZOOM_SIZE);
       gimbal = rect(zoom.x - CLUSTER_GAP - ZOOM_SIZE, zoom.y, ZOOM_SIZE, ZOOM_SIZE);
-      // The strip must not run under the cluster: push the cluster below it when it fits.
-      if (zoom.y < thumbY + thumbH + gap) {
-        zoom = rect(maxX(main) - 8 - ZOOM_SIZE, maxY(main) - 8 - ZOOM_SIZE, ZOOM_SIZE, ZOOM_SIZE);
-        gimbal = rect(zoom.x - CLUSTER_GAP - ZOOM_SIZE, zoom.y, ZOOM_SIZE, ZOOM_SIZE);
-      }
+      const stripTop = maxY(main) + gap + 4;
+      const stripBottom = values.y - 12;
+      const stripW = Math.max(1, gimbal.x - 12 - lead);
+      const thumbH = Math.max(1, Math.min((stripBottom - stripTop - 2 * gap) / 3, stripW * (9 / 16)));
+      const thumbW = thumbH * (16 / 9);
+      tiles = Array.from({ length: SLOTS }, () => empty());
+      tiles[selected] = main;
+      [0, 1, 2, 3]
+        .filter((i) => i !== selected)
+        .forEach((slot, k) => (tiles[slot] = rect(lead, stripTop + k * (thumbH + gap), thumbW, thumbH)));
       sheet = { dock: null, topInset: clamp(maxY(main) + 10, h * 0.3, h * 0.68) };
     }
   } else {

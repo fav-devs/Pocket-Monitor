@@ -11,6 +11,7 @@ struct PocketRelayHostStatus: Equatable {
   var pendingWatcherId: String?
   var holder = "Host"
   var joinable = false
+  var watcherNames: [String] = []
 }
 
 /// The sharing host (docs/watcher-relay.md "Ownership and bounds", adapted for forwarding). Twin of
@@ -523,6 +524,7 @@ final class PocketRelayHost: PocketVideoSink {
     status.pendingWatcherId = pending.map { $0.watcherId ?? "" }
     status.holder = holder?.name ?? "Host"
     status.joinable = joinable
+    status.watcherNames = peers.values.filter { $0.authorized && !$0.closing }.sorted { $0.id < $1.id }.map(\.name)
     guard status != lastPublished else { return }
     lastPublished = status
     onStatus?(status)

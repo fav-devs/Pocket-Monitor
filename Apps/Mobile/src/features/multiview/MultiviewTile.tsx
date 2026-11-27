@@ -14,6 +14,16 @@ import { LinkGauge } from '@/features/live/status/LiveTelemetry';
 import LivePicture from '@/features/picture/LivePicture';
 import { lookBadge, useTileEffects } from './tileLook';
 
+/** Thumbnails say what the link is doing in one word; the large tile says it in full. */
+const COMPACT_STATUS: Record<TileSnapshot['phase'], string> = {
+  empty: '',
+  connecting: 'Connecting',
+  waiting: 'Waiting for video',
+  live: 'Live',
+  reconnecting: 'Reconnecting',
+  failed: 'Failed',
+};
+
 interface TileProps {
   tile: TileSnapshot;
   rect: Rect;
@@ -144,7 +154,7 @@ function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPres
         <View pointerEvents="box-none" style={[styles.status, session.video.kind === 'none' && styles.statusBlank]}>
           {busy ? <Spinner size={compact ? 14 : 18} color={onVideo.ink} opacity={0.3} /> : null}
           <Text numberOfLines={compact ? 1 : 2} style={[styles.statusText, compact && styles.statusTextCompact]}>
-            {tile.status}
+            {compact ? COMPACT_STATUS[tile.phase] : tile.status}
           </Text>
           {tile.phase === 'failed' && tile.failure && !compact ? (
             <Text numberOfLines={rect.height > 220 ? 3 : 2} style={styles.failure}>
@@ -219,7 +229,7 @@ function createStyles(colors: ThemeColors) {
       paddingHorizontal: 16,
       backgroundColor: 'rgba(0,0,0,0.35)',
     },
-    statusBlank: { backgroundColor: 'rgba(255,255,255,0.06)' },
+    statusBlank: { backgroundColor: 'rgba(255,255,255,0.08)' },
     statusText: { fontFamily: fonts.semibold, fontSize: 13, color: onVideo.ink, textAlign: 'center' as const, ...textShadow },
     statusTextCompact: { fontSize: 10 },
     failure: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 16, color: onVideo.inkMuted, textAlign: 'center' as const, maxWidth: 360 },

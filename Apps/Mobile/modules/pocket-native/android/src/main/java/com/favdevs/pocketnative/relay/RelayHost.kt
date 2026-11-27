@@ -1,6 +1,12 @@
 package com.favdevs.pocketnative.relay
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.os.Build
+import com.favdevs.pocketnative.background.PocketServerNetworks
+import java.net.Inet4Address
+import java.net.InetAddress
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Log
@@ -117,7 +123,13 @@ class RelayHost(
         setStateLocked("starting")
         val socket = ServerSocket()
         socket.reuseAddress = true
-        socket.bind(InetSocketAddress(0))
+        // Phone on both networks (server mode): watchers reach the host on the primary Wi-Fi while
+        // the datalink stays on the camera's local-only network. Listen on the primary network's
+        // address only; otherwise on every interface (the camera Wi-Fi is the process network).
+        val relayNet = PocketServerNetworks.relayNetwork()
+        val relayAddress = relayNet?.let { relayIpv4(it) }
+        socket.bind(InetSocketAddress(relayAddress, 0))
+        relayNetwork = if (relayAddress != null) relayNet else null
         server = socket
         val gen = generation
         Thread({ acceptLoop(socket, gen) }, "pocket.relay.accept").apply { isDaemon = true }.start()
@@ -211,6 +223,14 @@ class RelayHost(
 
   private fun nsd(): NsdManager? = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
 
+  /** The network the listener is bound to (server mode, phone on both networks), else null. */
+  private var relayNetwork: Network? = null
+
+  private fun relayIpv4(network: Network): InetAddress? {
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+    return cm.getLinkProperties(network)?.linkAddresses?.map { it.address }?.firstOrNull { it is Inet4Address }
+  }
+
   private fun register(o: Options, port: Int, gen: Int) {
     val manager = nsd() ?: throw IOException("Network service discovery is unavailable")
     val info = NsdServiceInfo().apply {
@@ -219,6 +239,9 @@ class RelayHost(
       this.port = port
       setAttribute(RelayWire.TXT_CAMERA, o.cameraName)
       setAttribute(RelayWire.TXT_WATCHABLE, "1")
+      // Advertise only where the listener is (Android 14+; older releases advertise everywhere).
+      val net = relayNetwork
+      if (net != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) network = net
     }
     val l = object : NsdManager.RegistrationListener {
       override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {
@@ -520,6 +543,7 @@ class RelayHost(
       "pending" to p?.let { mapOf("name" to it.name, "watcherId" to (it.watcherId ?: "")) },
       "holder" to (holder?.name ?: "Host"),
       "joinable" to joinable,
+      "watcherNames" to peers.values.filter { it.authorized && !it.closing }.map { it.name },
     )
     if (status == lastStatus) return
     lastStatus = status

@@ -3,8 +3,7 @@ import { persist } from 'zustand/middleware';
 import { persistStorage } from '@/state/storage';
 
 /**
- * Settings that only the Settings pages read: feed sharing (watcher relay host; a stub until the
- * relay is built), support consent and the cache switch. Operator preferences that live screens
+ * Settings that only the Settings pages read: feed sharing (the watcher relay host, `useFeedSharing`), support consent and the cache switch. Operator preferences that live screens
  * read stay in `usePreferences`.
  */
 export type BroadcastPriority = 'Lowest delay' | 'Balanced' | 'Steadier picture';

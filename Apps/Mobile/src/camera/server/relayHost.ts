@@ -10,15 +10,13 @@
  * - JS (here): the ≤ 5 Hz host state message (REC tally, format, ISO…). It runs on the session
  *   clock, which server mode moves onto the service's native heartbeat in the background.
  *
- * Left for the relay owner (see the final report): the host's passcode / control settings
- * (Settings feed sharing) are not read here yet — server mode shares an open, view-only feed
- * until that store exists; `RelayHostStatusEvent` has a watcher count but no names (this reads an
- * optional `watcherNames: string[]` if the native status adds one); and in the "phone on both
- * networks" setup the host should listen / advertise on `PocketServerNetworks.relayNetwork()`
- * (Kotlin) — accepted sockets already reply on the interface they arrived on, NSD advertises on
- * every interface.
+ * Relay owner: Settings → Feed sharing (passcode, control requests, priority) is merged in by
+ * `startRelayHost` and later changes reach the running host through `useFeedSharing`; the native
+ * status carries `watcherNames`; on Android the listener binds to
+ * `PocketServerNetworks.relayNetwork()` when the phone is on both networks (NSD there on 14+).
  */
 import { PocketRelay } from '@modules/pocket-native/src/native';
+import { feedSharingHostSettings } from '@/features/watcher/hostSettings';
 import { createRelayHost, type RelayHostOptions, type RelayHostPort } from './relayHostPort';
 
 export type { RelayHostOptions, RelayHostPort, RelayHostStatus } from './relayHostPort';
@@ -28,7 +26,9 @@ export const relayHost: RelayHostPort = createRelayHost(PocketRelay);
 
 /** Share `sessionId` (the camera's native video session) with watchers on this network. */
 export function startRelayHost(sessionId: string, options: RelayHostOptions = { cameraName: '' }): Promise<void> {
-  return relayHost.start(sessionId, options);
+  // Settings → Feed sharing (passcode, control requests, priority) apply to server mode too; later
+  // changes reach the running host through `useFeedSharing` (`updateHost`).
+  return relayHost.start(sessionId, { ...feedSharingHostSettings(), ...options });
 }
 
 /** Stop sharing; every watcher is told the host stopped. */
