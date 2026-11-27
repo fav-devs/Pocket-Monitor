@@ -168,6 +168,9 @@ natively). There are also 24 keyboard rows (7 missing on mobile web) and 11 game
 | D-4 | **Return the camera to its own Wi-Fi** (back to AP mode, forget the network) | `connect.rs` `ResetStation` | PARTIAL | R + W | |
 | D-5 | **LAN camera by address** (`desktop-lan-camera-v1.txt`; probed on launch) | `main.rs` `lan_camera` | MISSING | R | |
 | D-6 | **Media from the camera's real address**: `opc_media::model::set_host(remote ip)`, so `/v2` HTTP goes to the station address and not `192.168.2.1` | `view.rs` `run`, `opc-media/model.rs` | MISSING (mobile media URLs are not ported) | R | |
+| D-7 | **Kept home Wi-Fi** (main 95f567d): *Remember this Wi-Fi* (on by default) keeps the network and its password sealed to the Windows user (DPAPI, `desktop-homewifi-v1.txt`; name only elsewhere); the next pair puts the camera on it by itself; *Return the camera to its own Wi-Fi* forgets it | `connect.rs` `HomeWifi`, `start_station`, `station.rs` `home_*` | MISSING | R + W | Done in the port: §5.12. |
+| D-8 | **No Wi-Fi name while pairing** (main d2a98a8): a camera already on the operator's network gives none; the LAN search finds it (no identity: the one camera that opens a session), asks its identity and remembers it, instead of failing. `headless identity <ip>` (b6e6aaf) | `connect.rs` `BleEvent::NoSsid`, `opc-camera/lan.rs` `read_identity` | MISSING | R | Done in the port: §5.12. |
+| D-9 | **macOS Wi-Fi name** (main 62a09c8): CoreWLAN, after asking for Location access on the main thread; the field fills in once allowed; `ifconfig` for the LAN search (58be411) | `macwifi.rs`, `station.rs` | N/A | R | Done in the port: §5.12. |
 
 ### 1.E Watching a phone (relay) and the second screen
 
@@ -178,6 +181,7 @@ natively). There are also 24 keyboard rows (7 missing on mobile web) and 11 game
 | E3 | **Control lease**: the first proxied control requests it. Link tab **Request** / **Release**. Copy: "CONTROL REQUESTED · GRANT IT ON THE PHONE", "WAITING FOR THE PHONE TO GRANT CONTROL", "<NAME> HOLDS CONTROL", "THE PHONE IS NOT OFFERING CONTROL", "THE PHONE GRANTED CONTROL". Proxied: record, tap-focus, ISO, shutter, WB, colour, zoom. Refused with a top-bar note: gimbal, format, tracking, motion, audio, library. | `phone.rs` `proxy`, `view.rs` `send`, `phone_control` | MISSING | R + W | |
 | E4 | **Relay recovery**: the core's 1/2/4 s retry ladder, 15 s join deadline, 5 s telemetry and picture silence, 10 s for the first picture, 750 ms delivery-delay guard. Each reconnect resolves the service again. | `opc-relay/session.rs` (core policy) | MISSING | R | |
 | E5 | **`opc-watcher watch`** window: bare picture, keys `L` cube, `Z` zebra, `P` peaking, `M` mirror, `S` still, `Esc` quit | `opc-watcher/src/watch.rs` | N/A | Keep the binary | Superseded inside the app by E2, but cheap to keep. |
+| E6 | **Share this PC's camera preview** (main af91c5b): *Settings › System › Share this feed*, view-only host (`opc_relay::host::Host`) on the interface that reaches the camera, the camera's own HEVC to ≤ 4 watchers, no passcode, off at each launch; stops with a reason (reconnect, disconnect, H.264, playback, relay behind) | `view.rs` `share_preview`, `opc-relay/src/host.rs` | PARTIAL (phones share through `useFeedSharing`) | R + W | Done in the port: §5.12. |
 
 ### 1.F Live picture (native layer)
 
@@ -1247,7 +1251,7 @@ Bluetooth runs on one `pm-ble` thread that owns the adapter.
 **Left to do.**
 
 - macOS and Linux Wi-Fi joins are not implemented (as before): the operator joins by hand and
-  uses *Already on camera Wi-Fi*. The macOS current-SSID prefill is empty.
+  uses *Already on camera Wi-Fi*. The macOS current-SSID prefill is done (§5.12).
 - Desktop-only prefs without a web row yet: `ramp`, `countdownSeconds`, `timecode`, the DISP
   parts, `fov`, `gimbalSpeed`. `prefs_get`/`prefs_set` serve them; the rows belong to the input
   and display settings, and a change applies at the next launch (the backend reads prefs at start).
@@ -1466,6 +1470,38 @@ row (`github.com/fav-devs/Pocket-Monitor`), `Apps/Desktop/README.md`.
   `migrate:` line, saved cameras, prefs, LUTs and the LUT pick are there, and
   `%LOCALAPPDATA%\OpenPocketCine` is untouched. A clean PC installs to
   `C:\Program Files\Pocket Monitor`, logs to `%LOCALAPPDATA%\Pocket Monitor\logs`.
+
+### 5.12 Desktop networking from main: home Wi-Fi, LAN fallback, preview sharing, macOS (2026-11-27)
+
+The networking work main merged into `opc-monitor` (95f567d, d2a98a8, 272c71f, b6e6aaf,
+af91c5b, 62a09c8, 58be411, dd86774, cdd1622, 43d97d7, c27aa8c, eddbfe7), carried into the
+Tauri app. Checked in the Linux container: `cargo clippy` for `pm-desktop`, `pm-controller` and
+`opc-relay` with and without `--cfg opc_core_linked`, a Windows-target clippy of `opc-relay`
+(the host), a macOS-target clippy of `macwifi.rs` in a scratch crate, the `pm-controller` and
+`opc-relay` tests, `tsc`, vitest, and the new web rows in a browser with a stand-in for Tauri.
+**Nothing here has met a camera, Windows or a Mac.**
+
+| Row | State |
+| --- | --- |
+| D-7 | **Done.** `station_join` takes `remember` (default on, the old checkbox) and an optional `password`: none typed for the kept network → the kept one (`homewifi::station_password`, tested). After the camera accepts the provisioning the network is kept (`save_home`: DPAPI-sealed on Windows, name only elsewhere) or forgotten. `home_wifi_get` gives the web `{ssid, hasPassword}` only (`HomeNetwork::summary`: `hasPassword` is true only if the seal opens for this user, tested); `home_wifi_forget`. *Return to camera Wi-Fi* forgets it too (`station::reset`). Log lines carry no SSID and no password. **Web**: the pair wizard preselects *Wi-Fi* with "Added · Studio" when a password is kept, and its primary button becomes *Connect* (nothing to type: no password crosses IPC, `homeWifi.ts` `stationJoinArgs`, tested); otherwise the details page is prefilled with the kept name (else this PC's Wi-Fi), shows *Saved* in the password field when it applies, a *Remember this Wi-Fi* switch and the kept network with *Forget*. Settings › Connection › This PC has the same *Home Wi-Fi* row with *Forget*. The desktop no longer copies a typed password into the web's in-memory store. **Changed shape vs main**: main put the camera on the kept network by itself right after a Bluetooth pair; the web wizard asks how the camera connects before pairing, so the kept network is that page's default instead, and an explicit *Camera Wi-Fi* pick is honoured. |
+| D-8 | **Done.** `pair_exchange` returns `None` when the camera gives no Wi-Fi name; `ble_pair` then answers `onLan: true` if this PC keeps a home network or a station camera (else main's message, `connect::NO_SSID`), and `camera_open {kind: 'paired'}` runs the 45 s LAN search with no identity (the one camera that opens a session), asks the found camera its identity (`station::remember_found`, also used by `station_join`), remembers the station and links. The web shows *Finding the camera on your Wi-Fi…*. `pocket-monitor headless identity <ip>` (b6e6aaf) prints what a LAN camera reports, without Bluetooth. 272c71f (IPv4 gateway after IPv6), 58be411 (`ifconfig` on macOS) and b6e6aaf's 45 s search / only-camera pick were already in `pm-controller::homewifi` and `station.rs` from the merge. |
+| D-9 | **Done.** `pm-desktop/src/macwifi.rs` (CoreWLAN + `CLLocationManager`, the manager kept alive in a main-thread `thread_local`); `station_current_ssid` hops to the main thread with `AppHandle::run_on_main_thread` and waits ≤ 1 s. The web asks again once a second (≤ 30 tries) while the name is empty, so the field fills in once Location is allowed. dd86774/cdd1622/43d97d7 (btleplug 0.13.5, handle refresh, 30 s connect bound, access errors) were already in `connect.rs`. |
+| E6 | **Done.** `pm-controller::sharing` holds main's rules and lines (tested): start only on a live HEVC camera feed with a known camera address, not on a phone's feed or during playback ("Open a live HEVC camera feed to share it" / "Open a live camera feed to share it"); stop on reconnect, disconnect, an H.264 unit, the library/player/resume loop or the body entering playback, a refused frame ("…because the relay fell behind" or the host's error) and a host failure. `pm-desktop/src/sharing.rs` runs `opc_relay::host::Host`, fed from the `pm-session` thread **before** the decoder (`camera.rs` hooks; nothing on the render thread; while off, one relaxed atomic load per unit); the recording flag rides on each frame; keyframes are the host's (a new watcher starts at the next camera keyframe, as before). Media playback reaches it from the `pm-media` thread (`tap_media`). Commands `sharing_set {on}`, `sharing_state`; event `sharing://status {active, status, watchers, stopped}`; a stop the operator did not ask for is also a `camera://event` notice. **opc-relay**: the host now advertises under `_pocket-mon._tcp` **and** the legacy `_opc-mon._tcp` (`discovery::advertised_types`, the same list watchers browse; phones and `opc-relay` list one row per name), names itself `PocketMonitor (<machine>)` from `COMPUTERNAME` or the host name (`host_instance_name`, `local_host_name`, tested) and counts its watchers. **Web**: Settings › Feed sharing on the desktop is the PC's host: *Share this feed* follows the host (off at launch, never persisted), the note reads "Sharing · 2 watchers · View only" or the stop reason; the phone-host rows (passcode, control requests, priority, join code) are left out because the PC host is view-only with no passcode. The desktop watcher screen says "Watch a shared feed" (main's rename). |
+| Bundle | `crates/pm-desktop/Info.plist` (Bluetooth, Location, camera, microphone, local network, `NSBonjourServices` both types) is merged by Tauri's bundler and embedded into macOS debug builds by `tauri-build`, so `cargo run` may use Bluetooth and Location. `build-tauri-macos.sh` builds the web export, the debug Swift facade and a release `pm-desktop`, then `macos/package-app.py` (now taking `--binary`, `--executable`, `--bundle-id`, `--info-plist`, `--out`) bundles `dist/tauri/Pocket Monitor.app` with the same dylib closure, rpath rewrite and ad-hoc signing as the old app (`--dmg` too). The old bundle's `NSBonjourServices` gained `_pocket-mon._tcp`, since its host now advertises both. |
+| eddbfe7 | **Already covered.** The 5-tap Catmull-Rom `blit.frag` lives in `opc-render`, which `pm-desktop` presents with. The overlay half (hand the chrome over only when redrawn) does not apply: the Tauri app's chrome is the web view and `picture.rs` never sets an overlay. `pm-surface` only makes surfaces; it has no present path of its own. Not ported: the old window's `render: N draws/s, X ms each` line (`picture.rs` logs `pace:` and `slow:`); add it there if the benchmark wants it. |
+
+**Verify on hardware.** Windows: put a camera on a 2.4 GHz network with *Remember* on, check
+`desktop-homewifi-v1.txt` holds no readable password, restart, pair again and press *Connect*
+on the setup page with nothing typed; *Forget*, and *Return to camera Wi-Fi* clearing it; a
+camera already on the home Wi-Fi pairing with no Wi-Fi name and being found on the LAN;
+`headless identity <ip>`. Sharing: *Share this feed* on a live Pocket 3/4 HEVC feed, an iPhone
+(OpenPocketCine and Pocket Monitor), an Android phone and a second PC each see one
+`PocketMonitor (<PC>)` row and get a picture after the next keyframe; up to four at once; the
+REC flag follows; each stop line (reconnect, unplug, playback from the library, the body's own
+playback, an H.264 body) shows as a notice and in the note; Windows Firewall prompt on first
+share; `pace:` unchanged while sharing. macOS: the Location prompt on the station page and the
+name filling in; Bluetooth pairing from the bundle `build-tauri-macos.sh` makes, after toggling
+the Bluetooth permission for the new ad-hoc signature (see `macos/README.md`).
 
 ### 5.13 Desktop vision from main: gestures from the camera's picture, two hands, faces, the clap, the hand view (2026-11-27)
 
