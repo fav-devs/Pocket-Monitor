@@ -1,0 +1,58 @@
+[package]
+name = "pm-desktop"
+description = "Pocket Monitor for Windows, macOS and Linux: a Tauri 2 shell whose interface is the Expo web build of Apps/Mobile, over a native Vulkan picture."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "pm-desktop"
+
+[[bin]]
+name = "pm-desktop"
+path = "src/main.rs"
+# The binary links the Swift core; its logic is tested in pm-controller.
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+raw-window-handle = "0.6"
+opc-camera = { path = "../opc-camera" }
+opc-core-sys = { path = "../opc-core-sys" }
+opc-decode = { path = "../opc-decode" }
+opc-media = { path = "../opc-media" }
+opc-relay = { path = "../opc-relay" }
+opc-render = { path = "../opc-render" }
+opc-vcam = { path = "../opc-vcam" }
+# The player's sound (§1.V V2), as opc-monitor's `audio.rs`.
+cpal = "0.15"
+pm-controller = { path = "../pm-controller" }
+pm-surface = { path = "../pm-surface" }
+# The live controls (§1.R–§1.T): the key type, and the game controller read in Rust.
+opc-ui = { path = "../opc-ui" }
+gilrs = "0.11"
+# Bluetooth pairing and station mode (§1.C, §1.D), as opc-monitor's `ble_impl.rs`.
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
+uuid = "1"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+btleplug = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CoreBluetooth discovery errors could leave connect() pending forever in 0.11.
+btleplug = "=0.13.5"
+# btleplug collapses unsupported/unauthorized adapter states into Unknown.
+objc2-core-bluetooth = { version = "0.2.2", features = ["CBCentralManager", "CBManager"] }
+# The current Wi-Fi name, and the Location permission macOS requires to read it (macwifi.rs).
+objc2 = "0.5.2"
+objc2-core-location = { version = "0.2.2", features = ["CLLocationManager"] }
+objc2-core-wlan = { version = "0.2.2", features = ["CWInterface", "CWWiFiClient"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString"] }
+
+[lints]
+workspace = true

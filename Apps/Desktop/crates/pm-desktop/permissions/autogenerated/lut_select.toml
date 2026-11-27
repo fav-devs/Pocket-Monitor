@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lut-select"
+description = "Enables the lut_select command without any pre-configured scope."
+commands.allow = ["lut_select"]
+
+[[permission]]
+identifier = "deny-lut-select"
+description = "Denies the lut_select command without any pre-configured scope."
+commands.deny = ["lut_select"]

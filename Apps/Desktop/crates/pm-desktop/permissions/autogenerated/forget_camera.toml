@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-forget-camera"
+description = "Enables the forget_camera command without any pre-configured scope."
+commands.allow = ["forget_camera"]
+
+[[permission]]
+identifier = "deny-forget-camera"
+description = "Denies the forget_camera command without any pre-configured scope."
+commands.deny = ["forget_camera"]

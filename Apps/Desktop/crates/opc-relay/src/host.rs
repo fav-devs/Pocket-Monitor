@@ -1,6 +1,12 @@
+//! A view-only sharing host on this PC (main af91c5b): the camera's own HEVC, re-framed
+//! by the core's relay video encoder, to up to four watchers on the interface that reaches
+//! the camera. Advertised under both `_pocket-mon._tcp` and the core's legacy
+//! `_opc-mon._tcp` ([`crate::discovery::advertised_types`]), so Pocket Monitor phones and
+//! PCs and upstream OpenPocketCine iPhones all find it.
+
 use std::io;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
@@ -9,6 +15,7 @@ use std::time::{Duration, Instant};
 use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use opc_core_sys as sys;
 
+use crate::discovery::{advertised_types, host_instance_name, local_host_name};
 use crate::ffi::{self, ProtocolInfo, RelayVideo};
 use crate::transport::Transport;
 
@@ -30,6 +37,7 @@ pub struct Host {
     input: SyncSender<(Vec<u8>, bool)>,
     exit: Receiver<String>,
     stopped: Arc<AtomicBool>,
+    watchers: Arc<AtomicUsize>,
 }
 
 impl Host {
@@ -37,11 +45,13 @@ impl Host {
         let (input, frames) = sync_channel(QUEUE_SIZE);
         let (report, exit) = sync_channel(1);
         let stopped = Arc::new(AtomicBool::new(false));
+        let watchers = Arc::new(AtomicUsize::new(0));
         let worker_stop = Arc::clone(&stopped);
+        let worker_count = Arc::clone(&watchers);
         thread::Builder::new()
             .name("opc-sharing".into())
             .spawn(move || {
-                if let Err(error) = serve(camera, &frames, &worker_stop) {
+                if let Err(error) = serve(camera, &frames, &worker_stop, &worker_count) {
                     let _ = report.send(error.to_string());
                 }
             })?;
@@ -49,7 +59,13 @@ impl Host {
             input,
             exit,
             stopped,
+            watchers,
         })
+    }
+
+    /// Watchers connected right now (joined or joining).
+    pub fn watchers(&self) -> usize {
+        self.watchers.load(Ordering::Relaxed)
     }
 
     pub fn offer(&self, bytes: &[u8], recording: bool) -> bool {
@@ -79,10 +95,28 @@ impl Drop for Watcher {
     }
 }
 
+/// This machine's name, for the advertised instance: `COMPUTERNAME` on Windows, the host
+/// name elsewhere.
+fn machine_name() -> Option<String> {
+    let from_env = ["COMPUTERNAME", "HOSTNAME"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|v| !v.trim().is_empty()));
+    if from_env.is_some() || cfg!(windows) {
+        return from_env;
+    }
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .map(|name| name.trim_end_matches(".local").to_string())
+        .filter(|name| !name.is_empty())
+}
+
 fn serve(
     camera: SocketAddr,
     frames: &Receiver<(Vec<u8>, bool)>,
     stopped: &AtomicBool,
+    watchers: &AtomicUsize,
 ) -> HostResult {
     let route = UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))?;
     route.connect(camera)?;
@@ -90,34 +124,48 @@ fn serve(
     let listener = TcpListener::bind((address, 0))?;
     listener.set_nonblocking(true)?;
     let info = ProtocolInfo::load()?;
-    let machine = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PocketMonitor".into());
-    let service = ServiceInfo::new(
-        &info.mdns_service_type(),
-        &format!("PocketMonitor ({machine})"),
-        &format!("{machine}.local."),
-        address,
-        listener.local_addr()?.port(),
-        [
-            (info.txt_watchable.as_str(), "1"),
-            (info.txt_camera.as_str(), "PocketMonitor"),
-        ]
-        .as_slice(),
-    )?;
-    let hello = Arc::new(ffi::encode_hello(
-        &format!("PocketMonitor ({machine})"),
-        "",
-        "",
-    )?);
+    let machine = machine_name();
+    let instance = host_instance_name(machine.as_deref());
+    let host_name = local_host_name(machine.as_deref());
+    let port = listener.local_addr()?.port();
+    let mut services = Vec::new();
+    for service_type in advertised_types(&info) {
+        services.push(ServiceInfo::new(
+            &service_type,
+            &instance,
+            &host_name,
+            address,
+            port,
+            [
+                (info.txt_watchable.as_str(), "1"),
+                (info.txt_camera.as_str(), "PocketMonitor"),
+            ]
+            .as_slice(),
+        )?);
+    }
+    let hello = Arc::new(ffi::encode_hello(&instance, "", "")?);
     let state = Arc::new(ffi::read_only_state()?);
     let daemon = ServiceDaemon::new()?;
     daemon.disable_interface(IfKind::All)?;
     daemon.enable_interface(IfKind::Addr(address))?;
-    let fullname = service.get_fullname().to_owned();
-    let result = daemon
-        .register(service)
-        .map_err(Into::into)
-        .and_then(|()| broadcast(&listener, frames, stopped, info, hello, state));
-    let _ = daemon.unregister(&fullname);
+    let mut registered = Vec::new();
+    let mut result: HostResult = Ok(());
+    for service in services {
+        let fullname = service.get_fullname().to_owned();
+        match daemon.register(service) {
+            Ok(()) => registered.push(fullname),
+            Err(error) => {
+                result = Err(error.into());
+                break;
+            }
+        }
+    }
+    if result.is_ok() {
+        result = broadcast(&listener, frames, stopped, info, hello, state, watchers);
+    }
+    for fullname in registered {
+        let _ = daemon.unregister(&fullname);
+    }
     let _ = daemon.shutdown();
     result
 }
@@ -129,11 +177,13 @@ fn broadcast(
     info: ProtocolInfo,
     hello: Arc<Vec<u8>>,
     state: Arc<Vec<u8>>,
+    count: &AtomicUsize,
 ) -> HostResult {
     let video = RelayVideo::new();
     let mut watchers: Vec<Watcher> = Vec::new();
     while !stopped.load(Ordering::Relaxed) {
         watchers.retain(|watcher| !watcher.worker.is_finished());
+        count.store(watchers.len(), Ordering::Relaxed);
         match listener.accept() {
             Ok((stream, _)) if watchers.len() < MAX_WATCHERS => {
                 let (send, receive) = sync_channel(QUEUE_SIZE);
@@ -238,6 +288,7 @@ mod tests {
                 ProtocolInfo::load().unwrap(),
                 Arc::new(ffi::encode_hello("Windows host", "", "").unwrap()),
                 Arc::new(ffi::read_only_state().unwrap()),
+                &AtomicUsize::new(0),
             )
             .unwrap();
         });

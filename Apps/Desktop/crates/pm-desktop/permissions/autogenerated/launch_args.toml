@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launch-args"
+description = "Enables the launch_args command without any pre-configured scope."
+commands.allow = ["launch_args"]
+
+[[permission]]
+identifier = "deny-launch-args"
+description = "Denies the launch_args command without any pre-configured scope."
+commands.deny = ["launch_args"]

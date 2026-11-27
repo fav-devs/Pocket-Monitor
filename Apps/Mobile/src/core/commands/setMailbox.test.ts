@@ -1,0 +1,158 @@
+import { describe, expect, it } from 'vitest';
+import { opcodeKey } from '../duml/frame';
+import { CameraSetMailbox } from './setMailbox';
+
+// Ported from OpenCine Tests/OpenCineDJITests/MimoControlTests.swift (mailbox*) .
+describe('CameraSetMailbox', () => {
+  it('coalesce last wins', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x28);
+    expect(box.offer(key, false, 0)).toBe('launch');
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 100);
+    expect(box.offer(key, false, 0.01)).toBe('coalescePending');
+    expect(box.offer(key, false, 0.02)).toBe('coalescePending');
+    expect(box.decideAck(key, 100)).toBe('accept');
+    expect(box.pendingLaunch(key, 0.02)).toBe('afterHold');
+    expect(box.pendingLaunch(key, 0.12)).toBe('immediate');
+    expect(box.pendingLaunch(key, 0.12)).toBe('none');
+  });
+  it('rate limits slider after ack', () => {
+    const zoom = new CameraSetMailbox();
+    const zk = CameraSetMailbox.zoomOpcodeKey;
+    expect(zoom.offer(zk, false, 0)).toBe('launch');
+    zoom.beginLaunch(zk, 0);
+    zoom.noteTransmit(zk, 10);
+    expect(zoom.decideAck(zk, 10)).toBe('accept');
+    expect(zoom.offer(zk, false, 0.02)).toBe('coalescePending');
+    expect(zoom.offer(zk, true, 0.02)).toBe('launch');
+    expect(zoom.offer(zk, false, 0.05)).toBe('launch');
+    const sh = new CameraSetMailbox();
+    const sk = opcodeKey(2, 0x28);
+    expect(sh.offer(sk, false, 0)).toBe('launch');
+    sh.beginLaunch(sk, 0);
+    sh.noteTransmit(sk, 11);
+    expect(sh.decideAck(sk, 11)).toBe('accept');
+    expect(sh.offer(sk, false, 0.04)).toBe('coalescePending');
+    expect(sh.offer(sk, false, 0.1)).toBe('launch');
+  });
+  it('pipelines zoom without ack', () => {
+    const zoom = new CameraSetMailbox();
+    const key = CameraSetMailbox.zoomOpcodeKey;
+    expect(CameraSetMailbox.pipelinesWhileOpen(key)).toBe(true);
+    expect(CameraSetMailbox.pipelinesWhileOpen(opcodeKey(2, 0x28))).toBe(false);
+    expect(zoom.offer(key, false, 0)).toBe('launch');
+    zoom.beginLaunch(key, 0);
+    zoom.noteTransmit(key, 1);
+    expect(zoom.offer(key, false, 0.02)).toBe('coalescePending');
+    expect(zoom.offer(key, true, 0.02)).toBe('launch');
+    expect(zoom.offer(key, false, 0.05)).toBe('launch');
+    zoom.beginLaunch(key, 0.05);
+    zoom.noteTransmit(key, 2);
+    expect(zoom.decideAck(key, 1)).toBe('dropSuperseded');
+    expect(zoom.hasOpen(key)).toBe(true);
+    expect(zoom.offer(key, false, 0.1)).toBe('launch');
+    zoom.beginLaunch(key, 0.1);
+    zoom.noteTransmit(key, 3);
+    expect(zoom.decideAck(key, 2)).toBe('dropSuperseded');
+    expect(zoom.decideAck(key, 3)).toBe('accept');
+    expect(CameraSetMailbox.timeoutImpliesUplinkFailure('waitLate', key)).toBe(false);
+    expect(CameraSetMailbox.timeoutImpliesUplinkFailure('waitLate')).toBe(true);
+    expect(CameraSetMailbox.timeoutImpliesUplinkFailure('waitLate', CameraSetMailbox.trackingPollOpcodeKey)).toBe(false);
+  });
+  it('note transmit does not reopen a closed generation', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x2a);
+    expect(box.offer(key, true, 0)).toBe('launch');
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 8);
+    expect(box.isOpenSeq(key, 8)).toBe(true);
+    expect(box.decideAck(key, 8)).toBe('accept');
+    box.noteTransmit(key, 9);
+    expect(box.hasOpen(key)).toBe(false);
+  });
+  it('holds white balance one in flight', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x2c);
+    box.offer(key, false, 0);
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 1);
+    expect(box.offer(key, false, 0.05)).toBe('coalescePending');
+    expect(box.offer(key, true, 0.05)).toBe('coalescePending');
+    expect(box.decideAck(key, 1)).toBe('accept');
+    expect(box.pendingLaunch(key, 0.05)).toBe('immediate');
+  });
+  it('accepts late ack for open seq', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x42);
+    box.offer(key, true, 0);
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 41063);
+    expect(box.timeout(key, false)).toBe('waitLate');
+    expect(box.decideAck(key, 41100)).toBe('dropUnknown');
+    expect(box.isAwaitingLate(key)).toBe(true);
+    expect(box.decideAck(key, 41063)).toBe('acceptLate');
+  });
+  it('subscribe match is success', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x28);
+    box.offer(key, false, 0);
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 7);
+    expect(box.timeout(key, true)).toBe('subscribeMatches');
+    expect(box.decideAck(key, 7)).toBe('dropUnknown');
+  });
+  it('drops superseded and flood seqs', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0xb8);
+    box.offer(key, false, 0);
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 41063);
+    expect(box.offer(key, false, 0.01)).toBe('coalescePending');
+    expect(box.timeout(key, false)).toBe('launchPending');
+    expect(box.pendingLaunch(key, 0.12)).toBe('immediate');
+    expect(box.offer(key, false, 0.12)).toBe('launch');
+    box.beginLaunch(key, 0.12);
+    box.noteTransmit(key, 41200);
+    expect(box.decideAck(key, 41063)).toBe('dropSuperseded');
+    expect(box.decideAck(key, 41100)).toBe('dropUnknown');
+    expect(box.decideAck(key, 41200)).toBe('accept');
+  });
+  it('retransmit seq stays open', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x2a);
+    box.offer(key, false, 0);
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 8);
+    box.noteTransmit(key, 9);
+    expect(box.decideAck(key, 8)).toBe('accept');
+  });
+  it('superseded shutter timeout is not uplink death', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x28);
+    box.offer(key, false, 0);
+    box.beginLaunch(key, 0);
+    box.noteTransmit(key, 160);
+    expect(box.offer(key, false, 0.01)).toBe('coalescePending');
+    const sup = box.timeout(key, false);
+    expect(sup).toBe('launchPending');
+    expect(CameraSetMailbox.timeoutImpliesUplinkFailure(sup)).toBe(false);
+    box.beginLaunch(key, 0.12);
+    box.noteTransmit(key, 8);
+    const latest = box.timeout(key, false);
+    expect(latest).toBe('waitLate');
+    expect(CameraSetMailbox.timeoutImpliesUplinkFailure(latest)).toBe(true);
+  });
+  it('restore only when unchanged', () => {
+    const box = new CameraSetMailbox();
+    const key = opcodeKey(2, 0x28);
+    const before = box.clone();
+    box.offer(key, false, 0);
+    box.beginLaunch(key, 0);
+    const expected = box.clone();
+    expect(box.restore(key, before, expected)).toBe(true);
+    expect(box.hasOpen(key)).toBe(false);
+    box.beginLaunch(key, 1);
+    expect(box.restore(key, before, expected)).toBe(false);
+  });
+});

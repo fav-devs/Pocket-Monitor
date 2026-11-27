@@ -34,7 +34,7 @@ use crate::scopes::{
 use crate::sheets::{self, Pick, Prefs, SetupInfo, SheetKind, Slot, TAB_AUDIO, TAB_STORAGE};
 use crate::zoom::{self, ZoomHop, ZoomNote, ZoomPolicy, ZoomRules, ZoomWrite};
 use opc_camera::SetOutcome;
-use opc_render::{letterbox, AssistScalars, FalseColorScale, GradeOptions, Peaking, Rgba, Zebra};
+use opc_render::{letterbox, AssistScalars, FalseColorScale, GradeOptions, Rgba};
 use opc_ui::{
     next_frame_rate, next_resolution, Action, Controls, Countdown, Drag, Fit, Hud, Key, Phase,
     Stick,
@@ -97,38 +97,6 @@ pub enum Intent {
     PhoneControl(bool),
 }
 
-/// The gimbal's live mode, as commanded. The body's GET cannot tell FPV from Tilt
-/// locked, so the shell keeps what it last asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GimbalMode {
-    Follow,
-    TiltLocked,
-    Fpv,
-    /// The picture holds its heading while the body turns.
-    DirectionLock,
-}
-
-impl GimbalMode {
-    /// The SET frames for a mode, in the order the mobile shells send them.
-    pub fn commands(self) -> Vec<Command> {
-        match self {
-            Self::Follow => vec![Command::GimbalFollow, Command::GimbalTiltLock(0)],
-            Self::TiltLocked => vec![Command::GimbalFollow, Command::GimbalTiltLock(1)],
-            Self::Fpv => vec![Command::GimbalFpv],
-            Self::DirectionLock => vec![Command::GimbalDirectionLock],
-        }
-    }
-
-    /// Mimo's order when the FOLLOW button cycles.
-    pub fn next(self) -> Self {
-        match self {
-            Self::Follow => Self::TiltLocked,
-            Self::TiltLocked => Self::Fpv,
-            Self::Fpv | Self::DirectionLock => Self::Follow,
-        }
-    }
-}
-
 /// Shooting-mode codes behind the mode strip, by [`opc_chrome::MODES`] index. These are
 /// the core's semantic bytes; Photo goes out as the body's own byte when it is sent.
 const MODE_CODES: [u8; 6] = [
@@ -167,78 +135,9 @@ pub enum TouchPhase {
     Cancelled,
 }
 
-/// Assists the operator has switched on.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Toggles {
-    pub zebra: bool,
-    pub peaking: bool,
-    pub grade: bool,
-    pub mirror: bool,
-    pub false_color: bool,
-    pub grid: bool,
-    pub guides: bool,
-    pub cross: bool,
-    /// The scopes.
-    pub wave: bool,
-    pub parade: bool,
-    pub histo: bool,
-    pub vector: bool,
-    pub lights: bool,
-    pub nd: bool,
-    pub audio: bool,
-}
-
-impl Toggles {
-    /// Whether any plate reads the picture, so the window samples it.
-    pub fn any_scope(self) -> bool {
-        self.wave || self.parade || self.histo || self.vector || self.lights || self.nd
-    }
-}
-
-impl Toggles {
-    /// What the feed pass paints. The zebra thresholds are the operator's IRE put on
-    /// the feed's axis by the core; without the core linked they are read as a plain
-    /// fraction, which is right for Rec.709 and generous for log.
-    fn options(self, assists: &AssistOptions, scalars: Option<AssistScalars>) -> GradeOptions {
-        let zebra = assists.zebra;
-        let (highlight, midtone) = match scalars {
-            Some(scalars) => (scalars.highlight, (scalars.midtone, scalars.midtone_half)),
-            None => (
-                zebra.highlight_ire / 100.0,
-                (zebra.midtone_ire / 100.0, 0.05),
-            ),
-        };
-        GradeOptions {
-            mirror: self.mirror,
-            zebra: self.zebra.then(|| Zebra {
-                highlight: zebra.highlight_on.then_some(highlight),
-                midtone: zebra.midtone_on.then_some(midtone),
-                highlight_color: zebra.highlight_color.rgba(),
-                midtone_color: zebra.midtone_color.rgba(),
-            }),
-            peaking: self.peaking.then(|| Peaking {
-                sense: assists.peaking_sense,
-                color: assists.peaking_color.rgba(),
-            }),
-            false_color: self.false_color,
-            ..GradeOptions::default()
-        }
-    }
-
-    fn names(self) -> Vec<&'static str> {
-        [
-            ("LUT", self.grade),
-            ("ZEB", self.zebra),
-            ("PEAK", self.peaking),
-            ("FALSE", self.false_color),
-            ("MIR", self.mirror),
-        ]
-        .into_iter()
-        .filter(|(_, on)| *on)
-        .map(|(name, _)| name)
-        .collect()
-    }
-}
+pub use pm_controller::gimbal::GimbalMode;
+use pm_controller::gimbal::{stick_axes, zoom_trigger_step};
+pub use pm_controller::toggles::Toggles;
 
 /// The viewfinder's state.
 #[derive(Debug)]
@@ -1276,9 +1175,9 @@ impl Shell {
         use crate::appsettings;
         if let Some(prefs) = self.prefs_path.as_ref() {
             let file = appsettings::path_beside(prefs);
-            let mut settings = appsettings::load_at(&file);
+            let mut settings = appsettings::load_from(&file);
             change(&mut settings);
-            appsettings::save_at(&file, &settings);
+            let _ = appsettings::save_to(&file, &settings);
         }
     }
 
@@ -2456,7 +2355,7 @@ impl Shell {
             let source = self.prefs_path.as_ref().map_or(
                 crate::appsettings::GestureSource::CameraFeed,
                 |prefs| {
-                    crate::appsettings::load_at(&crate::appsettings::path_beside(prefs))
+                    crate::appsettings::load_from(&crate::appsettings::path_beside(prefs))
                         .gesture_source
                 },
             );
@@ -4083,49 +3982,4 @@ fn model_name(model_id: i32) -> String {
     } else {
         format!("camera 0x{model_id:02X}")
     }
-}
-
-/// An analog stick onto the gimbal axes with the phones' curve and sensitivity ticks.
-/// The Pocket 3's desktop UDP control direction is opposite to the on-screen and
-/// controller coordinate system: right/up must therefore be negated at this desktop
-/// boundary before the portable mapping encodes tilt/pan. Without the core, a plain
-/// scaled throw stands in.
-#[cfg(opc_core_linked)]
-fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
-    let mut out = [0_i32; 2];
-    // Safety: `out` has the two slots the core writes.
-    let status = unsafe {
-        opc_core_sys::opc_gimbal_stick_axes(-x, -y, i32::from(sensitivity), out.as_mut_ptr())
-    };
-    if status != opc_core_sys::OPC_RELAY_OK {
-        return opc_ui::stick_command(x, y);
-    }
-    Command::GimbalStick {
-        axis0: u16::try_from(out[0]).unwrap_or(opc_ui::STICK_CENTRE),
-        axis1: u16::try_from(out[1]).unwrap_or(opc_ui::STICK_CENTRE),
-    }
-}
-
-#[cfg(not(opc_core_linked))]
-fn stick_axes(x: f64, y: f64, sensitivity: u8) -> Command {
-    let gain = f64::from(sensitivity.clamp(1, 5)) / 4.0;
-    opc_ui::stick_command((-x * gain).clamp(-1.0, 1.0), (-y * gain).clamp(-1.0, 1.0))
-}
-
-/// Hold-to-zoom on the triggers at the phones' rate; three stops a second without the core.
-#[cfg(opc_core_linked)]
-fn zoom_trigger_step(current: f64, left: f64, right: f64, dt: f64, max: f64) -> f64 {
-    // Safety: plain values in.
-    unsafe { opc_core_sys::opc_zoom_trigger_step(current, left, right, dt, max) }
-}
-
-#[cfg(not(opc_core_linked))]
-fn zoom_trigger_step(current: f64, left: f64, right: f64, dt: f64, max: f64) -> f64 {
-    let axis = right.clamp(0.0, 1.0) - left.clamp(0.0, 1.0);
-    let throw = if axis.abs() < PAD_REST {
-        0.0
-    } else {
-        axis.signum() * (axis.abs() - PAD_REST) / (1.0 - PAD_REST)
-    };
-    (current + throw * 3.0 * dt).clamp(1.0, max.max(1.0))
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-moves-pause"
+description = "Enables the moves_pause command without any pre-configured scope."
+commands.allow = ["moves_pause"]
+
+[[permission]]
+identifier = "deny-moves-pause"
+description = "Denies the moves_pause command without any pre-configured scope."
+commands.deny = ["moves_pause"]

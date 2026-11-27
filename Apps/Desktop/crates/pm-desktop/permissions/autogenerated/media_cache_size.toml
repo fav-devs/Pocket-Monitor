@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-cache-size"
+description = "Enables the media_cache_size command without any pre-configured scope."
+commands.allow = ["media_cache_size"]
+
+[[permission]]
+identifier = "deny-media-cache-size"
+description = "Denies the media_cache_size command without any pre-configured scope."
+commands.deny = ["media_cache_size"]

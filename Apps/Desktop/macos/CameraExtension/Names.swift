@@ -2,13 +2,18 @@ import CoreVideo
 import Foundation
 
 /// The names the viewfinder's facade looks for (`DesktopVirtualCameraABI.swift`). Any
-/// change here changes it there.
+/// change to `device` or `sinkStream` changes it there.
+///
+/// TODO(rename, docs/desktop-expo-port.md §5.11): `device` and `sinkStream` should become
+/// "Pocket Monitor" and "Pocket Monitor Sink" together with `VirtualCameraNames.device` and
+/// `.sink` in `Sources/OpenPocketCineDesktopFacade/DesktopVirtualCameraABI.swift`, built
+/// and checked on a Mac (the facade finds the camera by these names).
 enum CameraNames {
     static let device = "OpenPocketCine"
-    static let sourceStream = "OpenPocketCine"
+    static let sourceStream = "Pocket Monitor"
     static let sinkStream = "OpenPocketCine Sink"
-    static let model = "OpenPocketCine Virtual Camera"
-    static let manufacturer = "OpenPocketCine"
+    static let model = "Pocket Monitor Virtual Camera"
+    static let manufacturer = "Pocket Monitor"
 
     /// Fixed so apps remember the camera between launches.
     static let deviceID = UUID(uuidString: "5A1D7E9B-3C40-4F3B-9C2E-6F0B4C1E8D7A")!

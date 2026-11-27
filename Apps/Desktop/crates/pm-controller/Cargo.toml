@@ -1,0 +1,31 @@
+[package]
+name = "pm-controller"
+description = "Pocket Monitor's camera decisions without a window: the camera link thread, the live decode policy, the gimbal stream, assists, prefs, zoom, moves and presets, plus the mobile-shaped state and command vocabulary the Tauri app speaks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+opc-camera = { path = "../opc-camera" }
+opc-core-sys = { path = "../opc-core-sys" }
+opc-decode = { path = "../opc-decode" }
+opc-media = { path = "../opc-media" }
+opc-relay = { path = "../opc-relay" }
+opc-render = { path = "../opc-render" }
+opc-ui = { path = "../opc-ui" }
+opc-vcam = { path = "../opc-vcam" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Hand tracking models run through ONNX Runtime: on the GPU through DirectML on Windows.
+[target.'cfg(windows)'.dependencies]
+ort = { version = "=2.0.0-rc.10", features = ["directml"] }
+# Seals the saved home Wi-Fi password to this Windows user (DPAPI).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[target.'cfg(not(windows))'.dependencies]
+ort = "=2.0.0-rc.10"
+
+[lints]
+workspace = true

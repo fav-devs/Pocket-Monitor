@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-control-keys"
+description = "Enables the control_keys command without any pre-configured scope."
+commands.allow = ["control_keys"]
+
+[[permission]]
+identifier = "deny-control-keys"
+description = "Denies the control_keys command without any pre-configured scope."
+commands.deny = ["control_keys"]

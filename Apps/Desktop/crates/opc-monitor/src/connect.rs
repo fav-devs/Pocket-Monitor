@@ -783,13 +783,18 @@ impl eframe::App for ConnectApp {
                         return;
                     }
                     (None, _) => {
-                        self.screen = Screen::Failed(
+                        // Say where the log really is: beside a portable copy, per user
+                        // for an installed one (`pm_controller::platform::log_path`).
+                        let details = opc_monitor::logfile::path()
+                            .map_or_else(String::new, |log| {
+                                format!(" Details are in {}.", log.display())
+                            });
+                        self.screen = Screen::Failed(format!(
                             "The camera joined, but this PC could not find it on the network after \
                              45 seconds. Check that both are on the same Wi-Fi and that the router \
                              does not isolate its clients, and that no other app is connected to \
-                             the camera, then try again. Details are in opc-monitor.log, in the OpenPocketCine folder under your AppData."
-                                .into(),
-                        );
+                             the camera, then try again.{details}"
+                        ));
                     }
                 }
             }

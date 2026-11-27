@@ -1,0 +1,23 @@
+{
+  "platforms": [
+    "apple",
+    "android"
+  ],
+  "apple": {
+    "modules": [
+      "PocketBluetoothModule",
+      "PocketWifiModule",
+      "PocketDatalinkModule",
+      "PocketVideoModule",
+      "PocketGamepadModule",
+      "PocketHeadMotionModule",
+      "PocketBackgroundModule",
+      "PocketRelayModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "com.favdevs.pocketnative.video.PocketVideoModule"
+    ]
+  }
+}

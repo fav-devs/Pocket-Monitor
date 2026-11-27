@@ -49,94 +49,7 @@ pub const TAB_STORAGE: usize = 6;
 pub const TAB_OUTPUT: usize = 7;
 pub const TAB_SYSTEM: usize = 8;
 
-/// Settings the body does not report back, kept as last commanded, plus the desktop's
-/// own overlays.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Prefs {
-    /// `0x01` mono, `0x02` stereo, `0x03` spatial.
-    pub audio_channel: u8,
-    pub vocal_boost: u8,
-    /// `0x01` wide, `0x05` natural.
-    pub fov: u8,
-    /// `0x02` slow, `0x01` default, `0x00` fast.
-    pub gimbal_speed: u8,
-    pub timecode: bool,
-    /// The stick's first-order follow: 0 off, 1 soft, 2 medium.
-    pub ramp: u8,
-    /// The `T` take countdown, in seconds.
-    pub countdown_seconds: u32,
-    /// The phones' joystick sensitivity ticks, 1…5; 4 is the captured throw.
-    pub stick_sensitivity: u8,
-    /// Whether a game controller drives the shell.
-    pub gamepad: bool,
-    /// Which parts of the chrome are drawn (the phones' DISP toggles).
-    pub show_exposure: bool,
-    pub show_status: bool,
-    pub show_zoom: bool,
-    pub show_pad: bool,
-    pub show_modes: bool,
-    /// The viewfinder as a camera for other apps: 0 off, 1 a camera device, 2 the
-    /// loopback MJPEG stream.
-    pub vcam: u8,
-    /// Send the picture without zebra, peaking or false colour on it.
-    pub vcam_clean: bool,
-    /// The stream's port on 127.0.0.1.
-    pub vcam_port: u16,
-    /// Read the shutter as an angle at the frame rate rather than 1/N.
-    pub shutter_angle: bool,
-}
-
-/// A part of the chrome the Display tab can hide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Part {
-    Exposure,
-    Status,
-    Zoom,
-    Pad,
-    Modes,
-}
-
-impl Part {
-    pub const ALL: [Self; 5] = [
-        Self::Exposure,
-        Self::Status,
-        Self::Zoom,
-        Self::Pad,
-        Self::Modes,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Exposure => "Exposure plate",
-            Self::Status => "Status plate",
-            Self::Zoom => "Zoom ruler",
-            Self::Pad => "Gimbal pad",
-            Self::Modes => "Mode strip",
-        }
-    }
-}
-
-impl Prefs {
-    pub fn shows(&self, part: Part) -> bool {
-        match part {
-            Part::Exposure => self.show_exposure,
-            Part::Status => self.show_status,
-            Part::Zoom => self.show_zoom,
-            Part::Pad => self.show_pad,
-            Part::Modes => self.show_modes,
-        }
-    }
-
-    pub fn set_shows(&mut self, part: Part, on: bool) {
-        match part {
-            Part::Exposure => self.show_exposure = on,
-            Part::Status => self.show_status = on,
-            Part::Zoom => self.show_zoom = on,
-            Part::Pad => self.show_pad = on,
-            Part::Modes => self.show_modes = on,
-        }
-    }
-}
+pub use pm_controller::prefs::{Part, Prefs};
 
 /// What the setup tabs read about this machine and this link. Filled by the window.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -165,81 +78,7 @@ pub struct SetupInfo {
     pub phone: Option<PhoneInfo>,
 }
 
-/// Who holds camera control on a phone's shared feed.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum PhoneControl {
-    /// The phone does not take control requests.
-    #[default]
-    NotOffered,
-    /// Nobody holds it; a request would put the Grant sheet on the phone.
-    Available,
-    /// Asked; waiting for the phone's operator.
-    Requested,
-    /// This viewfinder holds it.
-    Held,
-    /// Another watcher holds it.
-    HeldBy(String),
-}
-
-impl PhoneControl {
-    pub fn label(&self) -> String {
-        match self {
-            Self::NotOffered => "Not offered by the phone".to_string(),
-            Self::Available => "Not requested".to_string(),
-            Self::Requested => "Requested · grant it on the phone".to_string(),
-            Self::Held => "Held by this viewfinder".to_string(),
-            Self::HeldBy(name) => format!("Held by {name}"),
-        }
-    }
-}
-
-/// The phone hosting the shared feed, as its hello and state messages describe it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PhoneInfo {
-    pub host: String,
-    pub camera: String,
-    /// The format label the phone shows, e.g. "4K/60".
-    pub format: String,
-    pub color: String,
-    pub live_fps: String,
-    pub control: PhoneControl,
-}
-
-impl Prefs {
-    /// The ramp's time constant, as the mobile shells define it.
-    pub fn ramp_tau(&self) -> f64 {
-        match self.ramp {
-            1 => 0.35,
-            2 => 0.18,
-            _ => 0.0,
-        }
-    }
-}
-
-impl Default for Prefs {
-    fn default() -> Self {
-        Self {
-            audio_channel: 0x02,
-            vocal_boost: 0x00,
-            fov: 0x01,
-            gimbal_speed: 0x01,
-            timecode: false,
-            ramp: 0,
-            countdown_seconds: 3,
-            stick_sensitivity: 4,
-            gamepad: true,
-            show_exposure: true,
-            show_status: true,
-            show_zoom: true,
-            show_pad: true,
-            show_modes: true,
-            vcam: 0,
-            vcam_clean: true,
-            vcam_port: opc_vcam::DEFAULT_PORT,
-            shutter_angle: false,
-        }
-    }
-}
+pub use pm_controller::phone::{PhoneControl, PhoneInfo};
 
 /// What a chip does when tapped.
 #[derive(Debug, Clone, PartialEq)]
@@ -1475,7 +1314,7 @@ fn system_rows(context: Context) -> Vec<RowBuilder> {
             },
         ),
         RowBuilder::new("Diagnostics").option("Write a report", false, Pick::Diagnostics),
-        RowBuilder::placeholder("Source", "github.com/fav-devs/OpenPocketCine"),
+        RowBuilder::placeholder("Source", "github.com/fav-devs/Pocket-Monitor"),
         RowBuilder::placeholder("Licenses", "Apache 2.0 · THIRD-PARTY-NOTICES.md"),
     ]
 }

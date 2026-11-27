@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pocket Monitor",
+  "mainBinaryName": "pocket-monitor",
+  "version": "0.1.0",
+  "identifier": "com.favdevs.pocketmonitor.desktop",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Pocket Monitor",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 520,
+        "minHeight": 480,
+        "resizable": true,
+        "transparent": true,
+        "backgroundThrottling": "disabled",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "../../installer/viewfinder-256.png",
+      "../../installer/viewfinder.ico"
+    ],
+    "category": "Video",
+    "shortDescription": "Pocket Monitor",
+    "longDescription": "A laptop viewfinder for DJI Osmo cameras."
+  }
+}

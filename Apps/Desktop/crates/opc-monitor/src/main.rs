@@ -36,50 +36,9 @@ fn show_error(message: &str) {
 
 mod demo;
 
-/// A viewfinder that is not the focused window is a background process to Windows 11,
-/// which then coarsens its timers and can leave the picture frozen for most of a second
-/// at a time. A live monitor is never idle work: opt out of power throttling and ask for
-/// 1 ms timers.
+/// Power throttling off and 1 ms timers (A14 / P9); shared with the Tauri app.
 fn keep_timers_fast() {
-    #[cfg(target_os = "windows")]
-    {
-        #[repr(C)]
-        struct PowerThrottling {
-            version: u32,
-            control_mask: u32,
-            state_mask: u32,
-        }
-        #[link(name = "winmm")]
-        extern "system" {
-            fn timeBeginPeriod(period: u32) -> u32;
-        }
-        extern "system" {
-            fn GetCurrentProcess() -> *mut u8;
-            fn SetProcessInformation(
-                process: *mut u8,
-                class: i32,
-                info: *const PowerThrottling,
-                size: u32,
-            ) -> i32;
-        }
-        // ProcessPowerThrottling = 4; version 1; EXECUTION_SPEED = 1 controlled, state 0
-        // means "do not throttle".
-        let state = PowerThrottling {
-            version: 1,
-            control_mask: 1,
-            state_mask: 0,
-        };
-        // Safety: plain Win32 calls on the current process with a correctly sized struct.
-        unsafe {
-            SetProcessInformation(
-                GetCurrentProcess(),
-                4,
-                &state,
-                std::mem::size_of::<PowerThrottling>() as u32,
-            );
-            timeBeginPeriod(1);
-        }
-    }
+    pm_controller::platform::keep_timers_fast();
 }
 
 #[cfg(opc_core_linked)]
@@ -90,8 +49,9 @@ mod ble_impl;
 mod connect;
 #[cfg(opc_core_linked)]
 mod home;
+// The camera thread lives in `pm-controller`, shared with the Tauri app.
 #[cfg(opc_core_linked)]
-mod link;
+use pm_controller::link;
 #[cfg(target_os = "macos")]
 mod macwifi;
 #[cfg(opc_core_linked)]
@@ -125,7 +85,7 @@ your own Wi-Fi from the connection screen (Put the camera on my Wi-Fi): it is th
 on this PC's network at every launch, and the PC keeps its internet.
 `--camera` points the link somewhere other than the camera's usual address, which is
 how a capture or a fake camera is driven.
-`watch` takes the feed an iPhone running OpenPocketCine is sharing (Operator Setup ›
+`watch` takes the feed a phone running the phone app is sharing (Operator Setup ›
 Sharing › Share this feed) instead of linking the camera; both must be on the camera's
 Wi-Fi. Without a NAME it opens the list of phones sharing. `view --phone NAME` is the
 same thing. The passcode may also come from OPC_PHONE_PASSCODE.
@@ -174,7 +134,7 @@ fn main() -> ExitCode {
     // processes, and a fresh viewfinder used to wipe what the connect screen had logged.
     // Only a log past a megabyte starts over.
     let mut log = log_path.as_deref().and_then(|p| {
-        let too_big = std::fs::metadata(p).map_or(false, |m| m.len() > 1_000_000);
+        let too_big = std::fs::metadata(p).is_ok_and(|m| m.len() > 1_000_000);
         let mut options = std::fs::OpenOptions::new();
         options.create(true);
         if too_big {
@@ -591,7 +551,9 @@ fn saved_camera_path() -> Result<std::path::PathBuf, String> {
     let root = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .ok_or("Windows did not provide a local app-data folder")?;
-    Ok(root.join("OpenPocketCine").join("desktop-camera-v1.txt"))
+    Ok(root
+        .join(pm_controller::platform::data_folder())
+        .join("desktop-camera-v1.txt"))
 }
 
 #[cfg(opc_core_linked)]
@@ -864,12 +826,9 @@ mod lan_camera {
     use std::path::PathBuf;
 
     fn path() -> Option<PathBuf> {
-        let root = std::env::var_os("LOCALAPPDATA")
-            .or_else(|| std::env::var_os("XDG_CONFIG_HOME"))
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+        let root = pm_controller::platform::config_root()?;
         Some(
-            root.join("OpenPocketCine")
+            root.join(pm_controller::platform::data_folder())
                 .join("desktop-lan-camera-v1.txt"),
         )
     }

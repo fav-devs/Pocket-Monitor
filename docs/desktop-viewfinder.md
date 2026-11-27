@@ -162,6 +162,34 @@ stops the take. Attitude reaches the desktop as the `0x04/0x05` yaw, display til
 native pitch the facade now reads out with every status. Timing and positional
 accuracy are unqualified on a body; see `docs/programmed-moves.md`.
 
+## Gestures
+
+Off until asked for (Settings › Gestures, `J`, `--gestures`). Gestures are read from the
+**camera's own picture** (stand in front of the lens) or the **PC webcam**, switched live.
+The hand models (MediaPipe palm and landmarks) run on the GPU through DirectML on Windows,
+on the CPU elsewhere, on their own thread: the picture is offered about 20 times a second
+and a frame that arrives while they are busy is skipped, so the picture never waits.
+Nothing is recorded or leaves the machine.
+
+- **Held poses** fire after 0.9 s: open palm stops, fist recentres, one finger steps to the
+  next preset, the rock sign flips; the peace sign records and takes **2.5 s**, with a bar
+  filling over the picture. **Sweeps** left and right step through the presets (up and down
+  do nothing by default); they are not read while the gimbal turns. Settings › Gestures
+  sets what each one does.
+- **Two hands** (camera picture, *Hand control*): pinch and drag the stick hand (right
+  unless *Stick hand* says left) for the gimbal stick; pinch the other and move it up to
+  zoom in, down to zoom out. Opening the fingers lets go.
+- **Face tracking**: open and close a hand three times and the camera tracks your face
+  (head and shoulders); again lets go. *Auto face track* starts it by itself once a face
+  has been in view for 1.5 s, then leaves it alone for 30 s.
+- **Two claps** recentre the gimbal, heard in the PC microphone while gestures are on. The
+  microphone is released when they go off.
+- `Y` shows the **hand view** over the picture: each hand's joints and skeleton (stick hand
+  green, zoom hand blue), its box, pose and finger readings, the pinch being held, the hold
+  bar, and the faces found.
+
+Gestures act only on the live picture, not in the library or the player.
+
 ## The library
 
 The gallery button, or `G`, opens Mimo's album over the picture: **Device** (the card)
@@ -446,6 +474,7 @@ in use. Nothing the camera reports is remembered; the camera is asked again.
 | `F11` | fullscreen (button) | `Esc` | close a sheet first |
 | `Z` | zebra | `P` | peaking |
 | `L` | colour cube | `M` | mirror |
+| `J` | gestures on / off | `Y` | hand view: what the hand tracker sees |
 
 Two arrows at once pan diagonally, and two opposite arrows rest the stick — the gimbal
 takes one position, not a stream of presses, so the held directions are added up and sent
@@ -489,8 +518,8 @@ the clear is ignored rather than resurrecting the box. Losing the link drops the
 The box is drawn where it is on the sensor, so a mirrored picture shows it mirrored
 too. Without pushes the poll decides: the box comes off at the first idle after a
 lock, or after six idle answers with no lock. The AF-C
-face bracket is not here: the phones detect faces on-device, and the desktop has no
-detector yet.
+face bracket is not here: the phones detect faces on-device; the desktop's face finder only
+serves face tracking by gesture (see Gestures).
 
 Touch is handled explicitly rather than left to the system: once winit registers a window
 for touch, Windows stops synthesising mouse clicks from taps, so without this a finger on

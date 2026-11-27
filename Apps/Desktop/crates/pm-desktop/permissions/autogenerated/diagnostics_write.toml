@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diagnostics-write"
+description = "Enables the diagnostics_write command without any pre-configured scope."
+commands.allow = ["diagnostics_write"]
+
+[[permission]]
+identifier = "deny-diagnostics-write"
+description = "Denies the diagnostics_write command without any pre-configured scope."
+commands.deny = ["diagnostics_write"]

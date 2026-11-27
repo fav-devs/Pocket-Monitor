@@ -175,7 +175,7 @@ fn serve(mut stream: TcpStream, shared: &Shared) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-const PAGE: &str = "<!doctype html><title>OpenPocketCine</title>\
+const PAGE: &str = "<!doctype html><title>Pocket Monitor</title>\
 <body style=\"margin:0;background:#000\"><img src=\"/stream\" style=\"width:100vw;height:100vh;object-fit:contain\"></body>";
 
 /// Waits for a frame newer than `seen`; `None` once the server is closing.

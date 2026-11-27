@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-zoom-write"
+description = "Enables the zoom_write command without any pre-configured scope."
+commands.allow = ["zoom_write"]
+
+[[permission]]
+identifier = "deny-zoom-write"
+description = "Denies the zoom_write command without any pre-configured scope."
+commands.deny = ["zoom_write"]

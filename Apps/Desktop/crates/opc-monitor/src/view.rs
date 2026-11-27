@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 use opc_camera::Command;
 use opc_camera::Recovery;
 use opc_chrome::Screen;
-use opc_decode::{Codec, Decoder, OwnedPicture};
+use opc_decode::{Codec, OwnedPicture};
 use opc_monitor::phone::{self, FromPhone, PhoneLink, PhoneTarget, Proxy};
 use opc_monitor::sheets::PhoneControl;
 use opc_render::{write_png, FeedRenderer, Lut, Presented};
 use opc_vcam::{ComponentReport, VirtualCamera};
+use pm_controller::decode::{codec_of, fresh_session, Decoded, LiveDecoder, READY_LIMIT};
 
 use crate::media::MediaDriver;
 use opc_monitor::luts;
@@ -30,11 +31,8 @@ use winit::window::{Fullscreen, Window, WindowId};
 use crate::link::{diagnostic, FromCamera, Link};
 use opc_monitor::shell::{Intent, Shell, TouchPhase as Finger};
 
-/// A backlog longer than this means the window stalled. Predicted pictures cannot be
-/// thinned — they need the ones before them — so the only safe skip is to a keyframe.
-const BACKLOG_LIMIT: usize = 30;
-/// Decoded pictures that may wait to be shown before the oldest are skipped.
-const READY_LIMIT: usize = 3;
+// The backlog and ready-queue limits, the codec latch and the keyframe test live in
+// `pm_controller::decode`, shared with the Tauri app's decode thread.
 
 /// How the viewfinder was asked to start.
 #[derive(Debug, Default)]
@@ -55,11 +53,6 @@ enum Feed {
     Phone(PhoneLink),
 }
 
-struct Unit {
-    keyframe: bool,
-    bytes: Vec<u8>,
-}
-
 struct View {
     // Declared before `window` so the renderer, which borrows the window's handles, is
     // torn down first.
@@ -67,8 +60,8 @@ struct View {
     window: Option<Window>,
     shell: Shell,
     link: Feed,
-    decoder: Option<Decoder>,
-    pending: Vec<Unit>,
+    /// The codec latch, the access units waiting and the decoder.
+    live: LiveDecoder,
     latest: Option<OwnedPicture>,
     /// Decoded pictures not yet shown, oldest first. One is shown per redraw so a burst
     /// of frames plays out in order instead of all but the newest being skipped.
@@ -326,10 +319,7 @@ impl View {
     fn write_diagnostics(&mut self) {
         let now = self.now();
         let mut text = self.shell.diagnostics_text(now);
-        text.push_str(&format!(
-            "decoder {:?}\n",
-            self.decoder.as_ref().map(|d| d.codec())
-        ));
+        text.push_str(&format!("decoder {:?}\n", self.live.codec()));
         let folder = opc_monitor::prefs::path()
             .parent()
             .map_or_else(|| PathBuf::from("."), |p| p.to_path_buf());
@@ -435,11 +425,7 @@ impl View {
                         self.shell.say("THE PHONE GRANTED CONTROL");
                     }
                 }
-                FromPhone::Picture(bytes) => {
-                    let keyframe = is_keyframe(&bytes);
-                    dump_unit(&bytes);
-                    self.pending.push(Unit { keyframe, bytes });
-                }
+                FromPhone::Picture(bytes) => self.live.push(bytes),
                 FromPhone::Status(status) => {
                     self.shell.set_status(*status);
                     if matches!(self.shell.phase(), Phase::Waiting) && self.latest.is_some() {
@@ -472,7 +458,7 @@ impl View {
         if self.phone.is_some()
             || self.media.is_active()
             || !matches!(self.shell.phase(), Phase::Live)
-            || self.decoder.as_ref().map(Decoder::codec) != Some(Codec::Hevc)
+            || self.live.codec() != Some(Codec::Hevc)
         {
             self.stop_sharing("Open a live HEVC camera feed to share it");
             return;
@@ -519,9 +505,6 @@ impl View {
                     self.placeholder_presented = false;
                 }
                 FromCamera::Picture(bytes) => {
-                    // The core marks keyframes; the depacketizer hands over whole access
-                    // units, so the first NAL type is enough to know one.
-                    let keyframe = is_keyframe(&bytes);
                     if self.sharing.is_some() {
                         if self.media.is_active() || codec_of(&bytes) == Some(Codec::H264) {
                             self.stop_sharing("Sharing stopped when the live HEVC feed changed");
@@ -538,8 +521,9 @@ impl View {
                             ));
                         }
                     }
-                    dump_unit(&bytes);
-                    self.pending.push(Unit { keyframe, bytes });
+                    // The depacketizer hands over whole access units, so the first NAL
+                    // type is enough to know a keyframe; `LiveDecoder::push` reads it.
+                    self.live.push(bytes);
                 }
                 FromCamera::Frame(frame) => {
                     let now = self.now();
@@ -591,24 +575,16 @@ impl View {
     /// The watchdog says the decoder is wedged. A fresh one is cheap; a wedged one
     /// produces a black window with a live HUD, which reads as a camera fault.
     fn rebuild_decoder(&mut self) {
-        let codec = self
-            .decoder
-            .as_ref()
-            .map(Decoder::codec)
-            .unwrap_or(Codec::Hevc);
-        match Decoder::new(codec) {
-            Ok(decoder) => {
-                self.decoder = Some(decoder);
+        match self.live.rebuild() {
+            Ok(()) => {
                 self.note_decoder_failed(false);
                 // Everything queued was for the old decoder's state.
-                self.pending.clear();
                 self.latest = None;
                 self.ready.clear();
                 self.placeholder_presented = false;
             }
             Err(error) => {
                 eprintln!("could not rebuild the decoder: {error}");
-                self.decoder = None;
                 self.note_decoder_failed(true);
                 self.shell
                     .set_phase(Phase::Failed(format!("decoder unavailable: {error}")));
@@ -628,96 +604,21 @@ impl View {
 
     /// Decodes everything waiting, keeping the newest picture.
     fn decode(&mut self) {
-        if self.decoder.is_none() {
-            // Joining mid-stream, the first units are plain slices that name no codec.
-            // Guessing HEVC for them built a decoder that never produced a picture from
-            // an AVC stream, so wait for the first unit that carries parameter sets.
-            let Some(at) = self
-                .pending
-                .iter()
-                .position(|unit| codec_of(&unit.bytes).is_some())
-            else {
-                self.pending.clear();
-                return;
-            };
-            self.pending.drain(..at);
-            let Some(unit) = self.pending.first() else {
-                return;
-            };
-            let codec = codec_of(&unit.bytes).unwrap_or(Codec::Hevc);
-            match Decoder::new(codec) {
-                Ok(decoder) => {
-                    diagnostic(format_args!("created {codec:?} decoder"));
-                    self.decoder = Some(decoder);
-                }
-                Err(error) => {
-                    self.note_decode_failure(format!("could not create {codec:?}: {error}"));
-                    return;
-                }
-            }
-        }
-        let Some(decoder) = self.decoder.as_mut() else {
-            return;
-        };
-        if self.pending.len() > BACKLOG_LIMIT {
-            if let Some(at) = self.pending.iter().rposition(|unit| unit.keyframe) {
-                self.pending.drain(..at);
-                decoder.flush();
-            }
-        }
-        let mut failure = None;
         let had_picture = self.latest.is_some();
-        for unit in self.pending.drain(..) {
-            if let Err(error) = decoder.send(&unit.bytes) {
-                // Pocket 3 sends AVC parameter sets before its first coded slice.
-                // FFmpeg records the SPS/PPS then returns EINVAL / "no frame" for
-                // that configuration-only packet. It is startup, not a dead decoder.
-                if decoder.codec() == Codec::H264 && is_h264_configuration(&unit.bytes) {
-                    diagnostic("accepted AVC configuration packet; awaiting keyframe");
-                    continue;
-                }
-                // Joining a Pocket 3 AVC stream is not frame-aligned. FFmpeg can
-                // reject the tail of the access unit already in flight before the
-                // first SPS/PPS + IDR reaches us. Do not turn that expected startup
-                // race into a permanent red decoder error; clear it and wait for the
-                // next keyframe, while the watchdog remains responsible for a real
-                // no-picture timeout.
-                if !had_picture {
-                    diagnostic(format_args!(
-                        "ignored initial {:?} access unit: {error}; awaiting keyframe",
-                        decoder.codec()
-                    ));
-                    decoder.flush();
-                    continue;
-                }
-                failure = Some(error);
-                break;
+        let ready = &mut self.ready;
+        let decoded = &mut self.pace.0;
+        let outcome = self.live.decode(had_picture, |picture| {
+            *decoded += 1;
+            ready.push_back(picture);
+        });
+        match outcome {
+            Decoded::Waiting => return,
+            Decoded::CreateFailed(error) => {
+                self.note_decode_failure(error);
+                return;
             }
-            loop {
-                match decoder.receive() {
-                    Ok(Some(picture)) => {
-                        if !had_picture && self.latest.is_none() && self.ready.is_empty() {
-                            diagnostic(format_args!(
-                                "decoded first picture {}x{} keyframe={}",
-                                picture.width, picture.height, picture.is_keyframe
-                            ));
-                        }
-                        self.pace.0 += 1;
-                        self.ready.push_back(OwnedPicture::copy_from(&picture));
-                    }
-                    Ok(None) => break,
-                    Err(error) => {
-                        failure = Some(error);
-                        break;
-                    }
-                }
-            }
-            if failure.is_some() {
-                break;
-            }
-        }
-        if let Some(error) = failure {
-            self.note_decode_failure(error);
+            Decoded::Ran(Some(error)) => self.note_decode_failure(error),
+            Decoded::Ran(None) => {}
         }
         // Show one decoded picture per redraw; only a backlog past a few frames skips
         // ahead, so latency stays low without dropping frames in ordinary bursts.
@@ -1126,108 +1027,6 @@ fn translate(key: &Key) -> Option<UiKey> {
     }
 }
 
-/// Whether this access unit can be decoded on its own.
-///
-/// Only the first coded slice is read: that NAL's type is the picture's type, and the
-/// parameter sets ahead of it say nothing about whether it is a refresh. Scanning past
-/// it would be reading a whole megabyte a frame to learn nothing new.
-fn is_keyframe(access_unit: &[u8]) -> bool {
-    let mut index = 0;
-    while index + 4 < access_unit.len() {
-        let start = if access_unit[index..].starts_with(&[0, 0, 0, 1]) {
-            4
-        } else if access_unit[index..].starts_with(&[0, 0, 1]) {
-            3
-        } else {
-            index += 1;
-            continue;
-        };
-        let first = access_unit[index + start];
-        if codec_of(access_unit) == Some(Codec::H264) {
-            return (first & 0x1F) == 5; // AVC IDR
-        }
-        let nal_type = (first >> 1) & 0x3F;
-        if nal_type <= 31 {
-            // A coded slice. 16..=23 are BLA through RASL — the types that refresh.
-            return (16..=23).contains(&nal_type);
-        }
-        index += start;
-    }
-    false
-}
-
-/// AVC SPS/PPS packets configure FFmpeg but do not contain a picture. Pocket 3 emits
-/// them separately at first connect, and FFmpeg's H.264 decoder reports `no frame`.
-fn is_h264_configuration(access_unit: &[u8]) -> bool {
-    let mut index = 0;
-    let mut configuration = false;
-    while index + 4 < access_unit.len() {
-        let start = if access_unit[index..].starts_with(&[0, 0, 0, 1]) {
-            4
-        } else if access_unit[index..].starts_with(&[0, 0, 1]) {
-            3
-        } else {
-            index += 1;
-            continue;
-        };
-        let Some(header) = access_unit.get(index + start) else {
-            break;
-        };
-        match header & 0x1F {
-            1..=5 => return false,
-            7 | 8 => configuration = true,
-            _ => {}
-        }
-        index += start;
-    }
-    configuration
-}
-
-/// The camera declares its codec in the first Annex-B NAL. Most Pockets send HEVC,
-/// but this Pocket 3's live stream is AVC (`67` SPS / `65` IDR), so the decoder must
-/// follow the bytes rather than a model assumption.
-/// With `OPC_DUMP_STREAM=<path>` set, appends every access unit to that file as a plain
-/// Annex-B stream, so ffprobe and ffplay can look at what the camera really sends.
-fn dump_unit(bytes: &[u8]) {
-    use std::io::Write;
-    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
-        std::sync::OnceLock::new();
-    let file = FILE.get_or_init(|| {
-        let path = std::env::var_os("OPC_DUMP_STREAM")?;
-        std::fs::File::create(path).ok().map(std::sync::Mutex::new)
-    });
-    if let Some(file) = file {
-        if let Ok(mut file) = file.lock() {
-            let _ = file.write_all(bytes);
-        }
-    }
-}
-
-fn codec_of(access_unit: &[u8]) -> Option<Codec> {
-    let mut index = 0;
-    while index + 4 < access_unit.len() {
-        let start = if access_unit[index..].starts_with(&[0, 0, 0, 1]) {
-            4
-        } else if access_unit[index..].starts_with(&[0, 0, 1]) {
-            3
-        } else {
-            index += 1;
-            continue;
-        };
-        let first = *access_unit.get(index + start)?;
-        // AVC parameter sets, IDR and ordinary slices have these unambiguous headers.
-        if matches!(first & 0x1F, 5 | 7 | 8) {
-            return Some(Codec::H264);
-        }
-        // HEVC VPS/SPS/PPS use types 32, 33 and 34.
-        if matches!((first >> 1) & 0x3F, 32..=34) {
-            return Some(Codec::Hevc);
-        }
-        index += start;
-    }
-    None
-}
-
 impl ApplicationHandler for View {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -1486,8 +1285,7 @@ pub fn run(options: Options) -> Result<(), String> {
             .map(|id| format!("model-{id:04x}"))
             .unwrap_or_else(|| "camera".to_string()),
         link,
-        decoder: None,
-        pending: Vec::new(),
+        live: LiveDecoder::new(),
         latest: None,
         ready: std::collections::VecDeque::new(),
         pace: (0, 0, 0, Instant::now()),
@@ -1548,19 +1346,6 @@ pub fn run(options: Options) -> Result<(), String> {
     event_loop
         .run_app(&mut view)
         .map_err(|error| format!("the window closed unexpectedly: {error}"))
-}
-
-/// A session id and an 8-aligned base sequence, fresh per connect. A fixed base can
-/// wedge the camera, so this must not be a constant.
-fn fresh_session() -> (u16, u16) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since| since.subsec_nanos())
-        .unwrap_or(1);
-    let session_id = (nanos & 0xFFFF) as u16 | 1;
-    let base_seq = ((nanos >> 8) & 0xFFF8) as u16;
-    (session_id, base_seq)
 }
 
 /// What the picture reader needs to know from the shell each time.

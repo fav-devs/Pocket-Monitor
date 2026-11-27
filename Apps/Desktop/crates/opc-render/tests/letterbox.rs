@@ -109,3 +109,18 @@ fn a_matching_aspect_leaves_no_bars_at_all() {
         "nothing should be letterboxed away when the shapes agree"
     );
 }
+
+#[test]
+fn a_picture_rect_letterboxes_inside_the_hole_and_is_the_same_formula() {
+    use opc_render::letterbox_in;
+    // A 16:9 picture in a square hole 100 px in and 50 px down.
+    assert_eq!(
+        letterbox_in((1920, 1080), (100, 50, 400, 400)),
+        (100, 137, 400, 225)
+    );
+    // The whole surface is plain `letterbox`.
+    assert_eq!(
+        letterbox_in((1920, 1080), (0, 0, 1280, 800)),
+        letterbox((1920, 1080), (1280, 800))
+    );
+}

@@ -9,9 +9,9 @@ struct CameraHostApp: App {
     @StateObject private var manager = ExtensionManager()
 
     var body: some Scene {
-        WindowGroup("OpenPocketCine Camera") {
+        WindowGroup("Pocket Monitor Camera") {
             VStack(alignment: .leading, spacing: 16) {
-                Text("OpenPocketCine Camera").font(.title2).bold()
+                Text("Pocket Monitor Camera").font(.title2).bold()
                 Text(
                     "Installs the camera extension that shows the viewfinder as a camera to every other app. Keep this app in /Applications; the extension lives inside it."
                 )
@@ -69,7 +69,7 @@ final class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionReque
     ) {
         switch result {
         case .completed:
-            status = "Done. \"OpenPocketCine\" is a camera now; turn it on in the viewfinder's System tab."
+            status = "Done. The viewfinder is a camera now; turn it on in Pocket Monitor's Output settings."
         case .willCompleteAfterReboot:
             status = "Done after a restart."
         @unknown default:

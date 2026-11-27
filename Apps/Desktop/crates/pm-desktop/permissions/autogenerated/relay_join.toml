@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relay-join"
+description = "Enables the relay_join command without any pre-configured scope."
+commands.allow = ["relay_join"]
+
+[[permission]]
+identifier = "deny-relay-join"
+description = "Denies the relay_join command without any pre-configured scope."
+commands.deny = ["relay_join"]

@@ -1,6 +1,7 @@
-# OpenPocketCine Camera (macOS)
+# Pocket Monitor Camera (macOS)
 
-The camera extension that makes the desktop viewfinder appear as **OpenPocketCine** in
+The camera extension that makes the desktop viewfinder appear as a camera (still named
+**OpenPocketCine** on macOS until the follow-up in `docs/desktop-expo-port.md` §5.11) in
 every app that opens a camera on macOS 13 and later, and the small host app that
 installs it. The viewfinder (`Apps/Desktop`) writes into the extension's sink stream
 through the Swift facade (`Sources/OpenPocketCineDesktopFacade/DesktopVirtualCameraABI.swift`).
@@ -12,9 +13,9 @@ xcodegen generate
 xcodebuild -project OpenPocketCineCamera.xcodeproj -scheme OpenPocketCineCamera -configuration Release
 ```
 
-Copy the built `OpenPocketCine Camera.app` to `/Applications`, open it, press
+Copy the built `Pocket Monitor Camera.app` to `/Applications`, open it, press
 **Install**, approve the extension in System Settings → Privacy & Security. Then in the
-viewfinder's Output tab set **Virtual camera** to **Camera device**.
+app's Output settings set **Virtual camera** to **Camera device**.
 
 What it needs, and why:
 
@@ -76,8 +77,10 @@ A machine-specific legacy-LE compatibility workaround allowed native service dis
 and app pairing. This is a system Bluetooth compatibility issue; seeing the camera
 in macOS Bluetooth Settings does not verify the application connection. The workaround
 limits optional 2M PHY and data-length extension; it is not shipped inside this app.
-BLE diagnostics are written to `~/.config/OpenPocketCine/opc-ble.log` (or under
-`XDG_CONFIG_HOME` when set), outside the signed app bundle to preserve its resource seal.
+BLE diagnostics are written to `~/.config/OpenPocketCine/logs/opc-ble.log` (or under
+`XDG_CONFIG_HOME` when set), beside `opc-monitor.log`, outside the signed app bundle to
+preserve its resource seal. A build run from outside a bundle (`target/release`) logs beside
+the executable instead.
 
 For development outside the app bundle:
 
@@ -133,3 +136,25 @@ subnet and verifies the camera protocol identity. The existing search bounds
 macOS gives the current network's name only to an app with Location access. The
 app asks for it when "Put the camera on my Wi-Fi instead" first opens, then fills
 in the network field. If access is refused, type the name.
+
+## Pocket Monitor (Tauri) app
+
+The new desktop app (`crates/pm-desktop`, `docs/desktop-expo-port.md` §5.12) bundles the same
+way:
+
+```sh
+Apps/Desktop/build-tauri-macos.sh --dmg      # --no-web reuses crates/pm-desktop/ui
+```
+
+It runs the Expo web export (`npm ci` in `Apps/Mobile` first), builds the debug Swift facade
+and a release `pm-desktop`, and calls `package-app.py` with `--binary target/release/pm-desktop
+--executable pocket-monitor --bundle-id com.favdevs.pocketmonitor.desktop --info-plist
+crates/pm-desktop/Info.plist --out "dist/tauri/Pocket Monitor.app"`: the same dylib closure,
+rpath rewrite and ad-hoc signature as above. `crates/pm-desktop/Info.plist` carries the
+Bluetooth, Location, camera, microphone and local-network usage strings and both Bonjour types
+(`_pocket-mon._tcp`, `_opc-mon._tcp`); Tauri's bundler merges the same file, and debug builds
+embed it, so `cargo run -p pm-desktop` may ask for Bluetooth and Location too. The bundle id
+differs from the old app's, so macOS asks for Bluetooth and Location again; the note above about
+re-toggling Bluetooth after replacing an ad-hoc build applies. The Wi-Fi name comes from CoreWLAN
+on the main thread once Location is allowed; the station page asks again each second until it
+does.

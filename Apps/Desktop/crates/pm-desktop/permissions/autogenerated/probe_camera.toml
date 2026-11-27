@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-probe-camera"
+description = "Enables the probe_camera command without any pre-configured scope."
+commands.allow = ["probe_camera"]
+
+[[permission]]
+identifier = "deny-probe-camera"
+description = "Denies the probe_camera command without any pre-configured scope."
+commands.deny = ["probe_camera"]

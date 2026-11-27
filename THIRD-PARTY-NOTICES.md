@@ -128,7 +128,9 @@ Unofficial copies and vivid variants are not committed.
 
 - **MediaPipe palm detection and hand landmark models**, Copyright Google LLC, Apache License 2.0,
   as converted to ONNX by the OpenCV Zoo (<https://github.com/opencv/opencv_zoo>). Built into the
-  Desktop app; see `Apps/Desktop/crates/opc-monitor/assets/hand/NOTICE.md` and the licence beside it.
+  Desktop app; see `Apps/Desktop/crates/pm-controller/assets/hand/NOTICE.md` and the licence beside it.
+- **YuNet face detector** (`face_detection_yunet_2023mar`), Shiqi Yu, MIT License, from the OpenCV
+  Zoo; finds a face for the camera to track and identifies no one. Licence text in the same folder.
 - **ONNX Runtime**, Copyright Microsoft Corporation, MIT License, linked through the `ort` crate.
 - **DirectML** (`DirectML.dll`), Microsoft, redistributable under the DirectML licence; runs the
   models on the GPU on Windows.

@@ -13,6 +13,9 @@ members = [
     "crates/opc-vcam",
     "crates/opc-vcam-win",
     "crates/opc-watcher",
+    "crates/pm-controller",
+    "crates/pm-desktop",
+    "crates/pm-surface",
 ]
 
 [workspace.package]

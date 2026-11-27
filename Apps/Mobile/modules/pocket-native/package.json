@@ -1,0 +1,10 @@
+{
+  "name": "pocket-native",
+  "version": "0.1.0",
+  "description": "Pocket Monitor native camera I/O: Bluetooth, Wi-Fi join, UDP datalink, video decode and presentation.",
+  "main": "src/index.ts",
+  "license": "Apache-2.0",
+  "author": "Pocket Monitor contributors",
+  "homepage": "https://github.com/fav-devs/Pocket-Monitor",
+  "private": true
+}

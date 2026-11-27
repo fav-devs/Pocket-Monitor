@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-cache-clear"
+description = "Enables the media_cache_clear command without any pre-configured scope."
+commands.allow = ["media_cache_clear"]
+
+[[permission]]
+identifier = "deny-media-cache-clear"
+description = "Denies the media_cache_clear command without any pre-configured scope."
+commands.deny = ["media_cache_clear"]

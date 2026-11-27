@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wifi-join-saved"
+description = "Enables the wifi_join_saved command without any pre-configured scope."
+commands.allow = ["wifi_join_saved"]
+
+[[permission]]
+identifier = "deny-wifi-join-saved"
+description = "Denies the wifi_join_saved command without any pre-configured scope."
+commands.deny = ["wifi_join_saved"]

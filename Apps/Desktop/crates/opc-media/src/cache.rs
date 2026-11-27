@@ -1,17 +1,53 @@
 //! The on-disk library: the same layout the phones use, per camera.
 //!
 //! ```text
-//! <cache>/OpenPocketCine/media/<camera>/thumbs/<path with / → _>.jpg
+//! <cache>/<folder>/media/<camera>/thumbs/<path with / → _>.jpg
 //!                                       files/<path with / → _>          originals
 //!                                       play/<playback cache name>       proxies, .mp4
 //!                                       index.json                        the catalogue
 //!                                       favorites.json                    local stars
 //! ```
+//!
+//! `<folder>` is the app's per-user folder name ([`folder_name`]): "Pocket Monitor" for
+//! the Tauri app, the old "OpenPocketCine" for the old viewfinder.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::model::{self, MediaFile};
+
+/// The folder name the old viewfinder used, and the default.
+pub const LEGACY_FOLDER_NAME: &str = "OpenPocketCine";
+
+static FOLDER_NAME: OnceLock<String> = OnceLock::new();
+
+/// Names the per-user folder under [`cache_root`] for this process. The app sets it once
+/// at startup (through `pm_controller::platform::set_data_folder`); later calls are
+/// ignored.
+pub fn set_folder_name(name: &str) {
+    let _ = FOLDER_NAME.set(name.to_string());
+}
+
+/// The per-user folder name: [`LEGACY_FOLDER_NAME`] unless [`set_folder_name`] chose one.
+pub fn folder_name() -> &'static str {
+    FOLDER_NAME.get().map_or(LEGACY_FOLDER_NAME, String::as_str)
+}
+
+/// The platform cache directory: `%LOCALAPPDATA%` on Windows, `$XDG_CACHE_HOME` or
+/// `~/.cache` elsewhere, else the executable's folder, else `.`.
+pub fn cache_root() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("XDG_CACHE_HOME"))
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
+}
 
 #[derive(Debug, Clone)]
 pub struct MediaCache {
@@ -21,18 +57,9 @@ pub struct MediaCache {
 impl MediaCache {
     /// Under the platform cache directory, or beside the executable when there is none.
     pub fn for_camera(camera_id: &str) -> Self {
-        let base = std::env::var_os("LOCALAPPDATA")
-            .or_else(|| std::env::var_os("XDG_CACHE_HOME"))
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-            .or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|exe| exe.parent().map(Path::to_path_buf))
-            })
-            .unwrap_or_else(|| PathBuf::from("."));
         Self::at(
-            base.join("OpenPocketCine")
+            cache_root()
+                .join(folder_name())
                 .join("media")
                 .join(safe_component(camera_id)),
         )

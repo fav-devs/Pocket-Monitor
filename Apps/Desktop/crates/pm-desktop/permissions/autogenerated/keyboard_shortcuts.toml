@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-keyboard-shortcuts"
+description = "Enables the keyboard_shortcuts command without any pre-configured scope."
+commands.allow = ["keyboard_shortcuts"]
+
+[[permission]]
+identifier = "deny-keyboard-shortcuts"
+description = "Denies the keyboard_shortcuts command without any pre-configured scope."
+commands.deny = ["keyboard_shortcuts"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prefs-web-seeded"
+description = "Enables the prefs_web_seeded command without any pre-configured scope."
+commands.allow = ["prefs_web_seeded"]
+
+[[permission]]
+identifier = "deny-prefs-web-seeded"
+description = "Denies the prefs_web_seeded command without any pre-configured scope."
+commands.deny = ["prefs_web_seeded"]

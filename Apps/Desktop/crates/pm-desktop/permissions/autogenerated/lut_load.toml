@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lut-load"
+description = "Enables the lut_load command without any pre-configured scope."
+commands.allow = ["lut_load"]
+
+[[permission]]
+identifier = "deny-lut-load"
+description = "Denies the lut_load command without any pre-configured scope."
+commands.deny = ["lut_load"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-gimbal-drive"
+description = "Enables the gimbal_drive command without any pre-configured scope."
+commands.allow = ["gimbal_drive"]
+
+[[permission]]
+identifier = "deny-gimbal-drive"
+description = "Denies the gimbal_drive command without any pre-configured scope."
+commands.deny = ["gimbal_drive"]

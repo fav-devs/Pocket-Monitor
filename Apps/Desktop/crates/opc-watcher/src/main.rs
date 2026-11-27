@@ -20,7 +20,7 @@ use opc_relay::session::{JoinTarget, Status, WatcherObserver, WatcherOptions, Wa
 use opc_render::{built_in_names, write_png, FeedRenderer, GradeOptions, Lut};
 
 const USAGE: &str = "\
-OpenPocketCine desktop watcher
+Pocket Monitor desktop watcher
 
 USAGE:
     opc-watcher list [--seconds N]

@@ -24,6 +24,7 @@ opc-media = { path = "../opc-media" }
 opc-render = { path = "../opc-render" }
 opc-ui = { path = "../opc-ui" }
 opc-vcam = { path = "../opc-vcam" }
+pm-controller = { path = "../pm-controller" }
 raw-window-handle = "0.6"
 winit = "0.30"
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "wgpu"] }
@@ -34,14 +35,8 @@ uuid = "1"
 gilrs = "0.11"
 cpal = "0.15"
 
-# Hand tracking models run through ONNX Runtime: on the GPU through DirectML on Windows.
-[target.'cfg(windows)'.dependencies]
-# Seals the saved home Wi-Fi password to this Windows user (DPAPI).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
-ort = { version = "=2.0.0-rc.10", features = ["directml"] }
-
-[target.'cfg(not(windows))'.dependencies]
-ort = "=2.0.0-rc.10"
+# The hand and face models (ONNX Runtime, DirectML on Windows) and the DPAPI-sealed home
+# Wi-Fi password are `pm-controller`'s, with their dependencies.
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 btleplug = "0.11"

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-player-speed"
+description = "Enables the player_speed command without any pre-configured scope."
+commands.allow = ["player_speed"]
+
+[[permission]]
+identifier = "deny-player-speed"
+description = "Denies the player_speed command without any pre-configured scope."
+commands.deny = ["player_speed"]

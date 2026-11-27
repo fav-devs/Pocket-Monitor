@@ -1,6 +1,6 @@
 [package]
 name = "opc-core-sys"
-description = "Raw FFI declarations for the OpenPocketCine Swift desktop facade."
+description = "Raw FFI declarations for the Pocket Monitor Swift desktop facade (libOpenPocketCineDesktop)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

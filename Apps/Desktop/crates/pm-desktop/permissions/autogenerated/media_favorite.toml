@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-favorite"
+description = "Enables the media_favorite command without any pre-configured scope."
+commands.allow = ["media_favorite"]
+
+[[permission]]
+identifier = "deny-media-favorite"
+description = "Denies the media_favorite command without any pre-configured scope."
+commands.deny = ["media_favorite"]

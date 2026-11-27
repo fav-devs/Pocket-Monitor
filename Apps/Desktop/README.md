@@ -1,4 +1,4 @@
-# OpenPocketCine desktop shell
+# Pocket Monitor desktop
 
 Two programs, Windows first; macOS and Linux build from the same sources.
 
@@ -10,11 +10,23 @@ Two programs, Windows first; macOS and Linux build from the same sources.
 Full notes: [`docs/DESKTOP.md`](../../docs/DESKTOP.md).
 
 On Windows, `build-release.ps1` builds and stages a runnable `target\release`, and
-`build-installer.ps1` wraps that in an installer (`dist\OpenPocketCine-Setup-<version>.exe`,
+`build-installer.ps1` wraps that in an installer (`dist\PocketMonitor-Setup-<version>.exe`,
 Inno Setup 6) that also registers the virtual camera.
 `build-release-assets.ps1` produces both the installer and a portable ZIP, plus
 `SHA256SUMS.txt`, ready for a GitHub Release. Public assets require a shared LGPL
 FFmpeg build; the release script rejects GPL and nonfree FFmpeg configurations.
+
+The Tauri app (`pm-desktop`, installed as `pocket-monitor.exe`) has its own scripts beside
+these: `build-tauri-debug.ps1`, `build-tauri-release.ps1` (stages `target\pm-release`),
+`build-tauri-installer.ps1` (`installer\PocketMonitor.iss`: the same AppId, so it upgrades an
+`opc-monitor` install in place, a new install goes to `Program Files\Pocket Monitor`, and it
+installs the WebView2 runtime when missing) and
+`build-tauri-release-assets.ps1` (installer, portable ZIP and `SHA256SUMS.txt` in `dist\tauri`).
+Its log is `pocket-monitor.log`: beside a portable or developer copy, in
+`%LOCALAPPDATA%\Pocket Monitor\logs` for an installed one. Its files live in
+`%LOCALAPPDATA%\Pocket Monitor` (`~/.config` and `~/.cache` `/Pocket Monitor` elsewhere);
+the first run copies the old `OpenPocketCine` folder across and leaves it for `opc-monitor`. `pocket-monitor --help` lists the
+command line. See [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5.9, §5.11.
 
 On macOS, `build-macos.sh --dmg` builds an ad-hoc signed `.app` and optional disk image;
 see [macOS build notes](macos/README.md) for dependencies and camera-extension signing.
@@ -63,8 +75,11 @@ discovery.
 | `opc-camera` | Camera commands, the DUML datalink, the ACK pump, pairing, and the watchdog |
 | `opc-render` | The Vulkan feed pipeline, the swapchain, the cube upload, the chrome composite, and PNG stills |
 | `opc-ui` | The viewfinder's chrome: a bitmap font, a CPU canvas, the key map, the format ladder, the tracking arithmetic |
-| `opc-monitor` | The viewfinder |
+| `opc-monitor` | The viewfinder (winit + Slint chrome), the operator build until the Tauri app passes its gates |
 | `opc-watcher` | The command-line shell and the second-screen window |
+| `pm-controller` | The viewfinder's decisions without a window: camera link thread, decode policy, gimbal stream, assists, prefs, zoom, moves, presets, and the mobile `CameraState`/command/effects vocabulary |
+| `pm-surface` | The native picture surface under the web view (child `HWND` / `NSView`) |
+| `pm-desktop` | The Tauri 2 app: the Expo web build of `Apps/Mobile` over the native Vulkan picture. Phase 1, not yet run on hardware: [`docs/desktop-expo-port.md`](../../docs/desktop-expo-port.md) §5 |
 
 No relay decision is made in Rust, and no `.cube` is parsed here. Framing, payload
 limits, join rules, the retry ladder, the delivery-delay guard, every JSON shape, and

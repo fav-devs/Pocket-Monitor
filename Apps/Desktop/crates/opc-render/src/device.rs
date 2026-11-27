@@ -47,7 +47,7 @@ impl Gpu {
         let entry = load_entry().map_err(|error| RenderError::NoVulkan(error.to_string()))?;
 
         let application = vk::ApplicationInfo::default()
-            .application_name(c"OpenPocketCine")
+            .application_name(c"Pocket Monitor")
             .api_version(vk::make_api_version(0, 1, 1, 0));
         // MoltenVK exposes a portability device, which Vulkan loaders hide unless
         // the instance explicitly opts into enumeration. Other platforms keep

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-gimbal-lock-all"
+description = "Enables the gimbal_lock_all command without any pre-configured scope."
+commands.allow = ["gimbal_lock_all"]
+
+[[permission]]
+identifier = "deny-gimbal-lock-all"
+description = "Denies the gimbal_lock_all command without any pre-configured scope."
+commands.deny = ["gimbal_lock_all"]

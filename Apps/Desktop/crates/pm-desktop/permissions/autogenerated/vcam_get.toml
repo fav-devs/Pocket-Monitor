@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vcam-get"
+description = "Enables the vcam_get command without any pre-configured scope."
+commands.allow = ["vcam_get"]
+
+[[permission]]
+identifier = "deny-vcam-get"
+description = "Denies the vcam_get command without any pre-configured scope."
+commands.deny = ["vcam_get"]

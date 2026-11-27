@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-download"
+description = "Enables the media_download command without any pre-configured scope."
+commands.allow = ["media_download"]
+
+[[permission]]
+identifier = "deny-media-download"
+description = "Denies the media_download command without any pre-configured scope."
+commands.deny = ["media_download"]

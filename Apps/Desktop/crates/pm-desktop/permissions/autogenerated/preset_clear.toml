@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preset-clear"
+description = "Enables the preset_clear command without any pre-configured scope."
+commands.allow = ["preset_clear"]
+
+[[permission]]
+identifier = "deny-preset-clear"
+description = "Denies the preset_clear command without any pre-configured scope."
+commands.deny = ["preset_clear"]

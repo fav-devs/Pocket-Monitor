@@ -3,6 +3,10 @@
 //! Hosts are only ever found on the camera's own Wi-Fi. There is no peer-to-peer
 //! discovery and no fallback to another network: a watcher that cannot see a host is
 //! told to join the camera Wi-Fi rather than quietly reaching one somewhere else.
+//!
+//! Two service types are browsed: Pocket Monitor phones advertise `_pocket-mon._tcp`, and
+//! upstream OpenPocketCine iPhones the core's `_opc-mon._tcp`. The wire is the same. A name
+//! seen on both is listed once, as the Pocket Monitor host.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -13,6 +17,60 @@ use mdns_sd::{ServiceDaemon, ServiceEvent};
 
 use crate::ffi::ProtocolInfo;
 
+/// The Pocket Monitor phones' Bonjour type (the core's type is the legacy one).
+pub const POCKET_SERVICE_TYPE: &str = "_pocket-mon._tcp";
+
+/// Every type a watcher browses, in `mdns-sd` form, ours first. The core's type is kept
+/// even if it ever equals ours.
+pub fn browse_types(info: &ProtocolInfo) -> Vec<String> {
+    let ours = format!("{POCKET_SERVICE_TYPE}.local.");
+    let core = info.mdns_service_type();
+    if core == ours {
+        vec![ours]
+    } else {
+        vec![ours, core]
+    }
+}
+
+/// Every type a sharing host on this PC advertises: the same list a watcher browses, so
+/// Pocket Monitor phones and PCs (`_pocket-mon._tcp`) and upstream OpenPocketCine iPhones
+/// (the core's legacy `_opc-mon._tcp`) all find it. Watchers that browse both list one row
+/// per name.
+pub fn advertised_types(info: &ProtocolInfo) -> Vec<String> {
+    browse_types(info)
+}
+
+/// The instance name a PC's sharing host advertises: `PocketMonitor (<machine>)` as the
+/// old viewfinder did, or the bare name when the machine has none worth showing.
+pub fn host_instance_name(machine: Option<&str>) -> String {
+    match machine.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("PocketMonitor ({name})"),
+        None => "PocketMonitor".to_string(),
+    }
+}
+
+/// A `.local.` host name from the machine name: letters, digits and hyphens only.
+pub fn local_host_name(machine: Option<&str>) -> String {
+    let label: String = machine
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let label = label.trim_matches('-');
+    let label = if label.is_empty() {
+        "PocketMonitor"
+    } else {
+        label
+    };
+    format!("{label}.local.")
+}
+
+/// Of two records for one name, the one from the type listed first wins.
+fn preferred(existing: Option<&str>, incoming: &str, order: &[String]) -> bool {
+    let rank = |t: &str| order.iter().position(|o| o == t).unwrap_or(usize::MAX);
+    existing.is_none_or(|current| rank(incoming) <= rank(current))
+}
+
 /// A sharing host advertising on the shared Wi-Fi.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredHost {
@@ -20,6 +78,8 @@ pub struct DiscoveredHost {
     pub camera: String,
     pub addresses: Vec<IpAddr>,
     pub port: u16,
+    /// `_pocket-mon._tcp.local.` or `_opc-mon._tcp.local.`.
+    pub service_type: String,
 }
 
 /// A host that advertises `w=0` is up but not offering a picture yet.
@@ -60,8 +120,8 @@ impl From<mdns_sd::Error> for DiscoveryError {
 /// Watches the shared Wi-Fi for hosts, keeping the newest record for each name.
 pub struct Browser {
     daemon: ServiceDaemon,
-    receiver: mdns_sd::Receiver<ServiceEvent>,
-    service_type: String,
+    receivers: Vec<(String, mdns_sd::Receiver<ServiceEvent>)>,
+    service_types: Vec<String>,
     camera_key: String,
     watchable_key: String,
     hosts: BTreeMap<String, DiscoveredHost>,
@@ -70,21 +130,27 @@ pub struct Browser {
 impl fmt::Debug for Browser {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Browser")
-            .field("service_type", &self.service_type)
+            .field("service_types", &self.service_types)
             .field("hosts", &self.hosts.len())
             .finish_non_exhaustive()
     }
 }
 
+/// How long `poll` waits between empty sweeps of the receivers.
+const IDLE_SWEEP: Duration = Duration::from_millis(20);
+
 impl Browser {
     pub fn start(info: &ProtocolInfo) -> Result<Self, DiscoveryError> {
         let daemon = ServiceDaemon::new()?;
-        let service_type = info.mdns_service_type();
-        let receiver = daemon.browse(&service_type)?;
+        let service_types = browse_types(info);
+        let mut receivers = Vec::with_capacity(service_types.len());
+        for service_type in &service_types {
+            receivers.push((service_type.clone(), daemon.browse(service_type)?));
+        }
         Ok(Self {
             daemon,
-            receiver,
-            service_type,
+            receivers,
+            service_types,
             camera_key: info.txt_camera.clone(),
             watchable_key: info.txt_watchable.clone(),
             hosts: BTreeMap::new(),
@@ -94,45 +160,77 @@ impl Browser {
     /// Drains events for up to `timeout` and returns the hosts known afterwards.
     pub fn poll(&mut self, timeout: Duration) -> Vec<DiscoveredHost> {
         let deadline = std::time::Instant::now() + timeout;
-        while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
-            let Ok(event) = self.receiver.recv_timeout(remaining) else {
+        loop {
+            let mut events = Vec::new();
+            for (service_type, receiver) in &self.receivers {
+                while let Ok(event) = receiver.try_recv() {
+                    events.push((service_type.clone(), event));
+                }
+            }
+            let idle = events.is_empty();
+            for (service_type, event) in events {
+                self.apply(&service_type, event);
+            }
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
                 break;
             };
-            match event {
-                ServiceEvent::ServiceResolved(info) => {
-                    if !is_watchable(info.get_property_val_str(&self.watchable_key)) {
-                        self.hosts
-                            .remove(&instance_name(info.get_fullname(), &self.service_type));
-                        continue;
-                    }
-                    let name = instance_name(info.get_fullname(), &self.service_type);
-                    let mut addresses: Vec<IpAddr> = info
-                        .get_addresses()
-                        .iter()
-                        .map(|ip| ip.to_ip_addr())
-                        .collect();
-                    addresses.sort();
-                    self.hosts.insert(
-                        name.clone(),
-                        DiscoveredHost {
-                            name,
-                            camera: info
-                                .get_property_val_str(&self.camera_key)
-                                .unwrap_or_default()
-                                .to_string(),
-                            addresses,
-                            port: info.get_port(),
-                        },
-                    );
-                }
-                ServiceEvent::ServiceRemoved(_, fullname) => {
-                    self.hosts
-                        .remove(&instance_name(&fullname, &self.service_type));
-                }
-                _ => {}
+            if idle {
+                std::thread::sleep(remaining.min(IDLE_SWEEP));
             }
         }
         self.hosts()
+    }
+
+    fn apply(&mut self, service_type: &str, event: ServiceEvent) {
+        match event {
+            ServiceEvent::ServiceResolved(info) => {
+                let name = instance_name(info.get_fullname(), service_type);
+                if !is_watchable(info.get_property_val_str(&self.watchable_key)) {
+                    if self
+                        .hosts
+                        .get(&name)
+                        .is_some_and(|host| host.service_type == service_type)
+                    {
+                        self.hosts.remove(&name);
+                    }
+                    return;
+                }
+                let current = self.hosts.get(&name).map(|host| host.service_type.as_str());
+                if !preferred(current, service_type, &self.service_types) {
+                    return;
+                }
+                let mut addresses: Vec<IpAddr> = info
+                    .get_addresses()
+                    .iter()
+                    .map(|ip| ip.to_ip_addr())
+                    .collect();
+                addresses.sort();
+                self.hosts.insert(
+                    name.clone(),
+                    DiscoveredHost {
+                        name,
+                        camera: info
+                            .get_property_val_str(&self.camera_key)
+                            .unwrap_or_default()
+                            .to_string(),
+                        addresses,
+                        port: info.get_port(),
+                        service_type: service_type.to_string(),
+                    },
+                );
+            }
+            ServiceEvent::ServiceRemoved(_, fullname) => {
+                let name = instance_name(&fullname, service_type);
+                if self
+                    .hosts
+                    .get(&name)
+                    .is_some_and(|host| host.service_type == service_type)
+                {
+                    self.hosts.remove(&name);
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn hosts(&self) -> Vec<DiscoveredHost> {
@@ -142,7 +240,9 @@ impl Browser {
 
 impl Drop for Browser {
     fn drop(&mut self) {
-        let _ = self.daemon.stop_browse(&self.service_type);
+        for service_type in &self.service_types {
+            let _ = self.daemon.stop_browse(service_type);
+        }
     }
 }
 
@@ -172,6 +272,95 @@ mod tests {
             instance_name("something-else", "_opc-mon._tcp.local."),
             "something-else"
         );
+    }
+
+    #[test]
+    fn a_pocket_monitor_name_is_stripped_of_its_own_type() {
+        assert_eq!(
+            instance_name("Pixel 9._pocket-mon._tcp.local.", "_pocket-mon._tcp.local."),
+            "Pixel 9"
+        );
+        // The other type's suffix is not ours to strip.
+        assert_eq!(
+            instance_name("Pixel 9._pocket-mon._tcp.local.", "_opc-mon._tcp.local."),
+            "Pixel 9._pocket-mon._tcp.local."
+        );
+    }
+
+    #[test]
+    fn our_type_wins_a_name_seen_on_both() {
+        let order = vec![
+            "_pocket-mon._tcp.local.".to_string(),
+            "_opc-mon._tcp.local.".to_string(),
+        ];
+        assert!(preferred(None, "_opc-mon._tcp.local.", &order));
+        assert!(preferred(
+            Some("_opc-mon._tcp.local."),
+            "_pocket-mon._tcp.local.",
+            &order
+        ));
+        assert!(!preferred(
+            Some("_pocket-mon._tcp.local."),
+            "_opc-mon._tcp.local.",
+            &order
+        ));
+        assert!(preferred(
+            Some("_opc-mon._tcp.local."),
+            "_opc-mon._tcp.local.",
+            &order
+        ));
+    }
+
+    fn info(service_type: &str) -> ProtocolInfo {
+        ProtocolInfo {
+            version: 1,
+            hevc_codec: 1,
+            max_payload_bytes: 8 * 1024 * 1024,
+            framing_header_bytes: 5,
+            max_retries: 3,
+            join_timeout: Duration::from_secs(15),
+            silence_timeout: Duration::from_secs(5),
+            service_type: service_type.to_string(),
+            txt_camera: "c".to_string(),
+            txt_watchable: "w".to_string(),
+        }
+    }
+
+    #[test]
+    fn watchers_browse_ours_and_the_core_type() {
+        assert_eq!(
+            browse_types(&info("_opc-mon._tcp")),
+            vec!["_pocket-mon._tcp.local.", "_opc-mon._tcp.local."]
+        );
+        assert_eq!(
+            browse_types(&info(POCKET_SERVICE_TYPE)),
+            vec!["_pocket-mon._tcp.local."]
+        );
+    }
+
+    #[test]
+    fn a_pc_host_advertises_ours_and_the_legacy_type() {
+        assert_eq!(
+            advertised_types(&info("_opc-mon._tcp")),
+            vec!["_pocket-mon._tcp.local.", "_opc-mon._tcp.local."]
+        );
+        assert_eq!(
+            host_instance_name(Some("STUDIO-PC")),
+            "PocketMonitor (STUDIO-PC)"
+        );
+        assert_eq!(host_instance_name(Some("  ")), "PocketMonitor");
+        assert_eq!(host_instance_name(None), "PocketMonitor");
+        assert_eq!(local_host_name(Some("Fav's Mac")), "Fav-s-Mac.local.");
+        assert_eq!(local_host_name(Some("STUDIO-PC")), "STUDIO-PC.local.");
+        assert_eq!(local_host_name(None), "PocketMonitor.local.");
+    }
+
+    #[test]
+    fn both_service_types_fit_the_bonjour_limit() {
+        for service in [POCKET_SERVICE_TYPE, "_opc-mon._tcp"] {
+            let label = service.trim_start_matches('_').trim_end_matches("._tcp");
+            assert!(label.len() <= 15, "{service}");
+        }
     }
 
     #[test]

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Bundle the native macOS release binary; run from Apps/Desktop (or use build-macos.sh)."""
+"""Bundle the native macOS release binary; run from Apps/Desktop (or use build-macos.sh).
+
+The same staging bundles the Tauri app (build-tauri-macos.sh): --binary target/release/pm-desktop
+--executable pocket-monitor --bundle-id com.favdevs.pocketmonitor.desktop --info-plist
+crates/pm-desktop/Info.plist --out "dist/tauri/Pocket Monitor.app".
+"""
 import argparse
 import pathlib
 import plistlib
@@ -14,9 +19,15 @@ def run(*args):
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--core', required=True, type=pathlib.Path)
 parser.add_argument('--dmg', action='store_true')
+parser.add_argument('--binary', type=pathlib.Path, help='the release executable (default: opc-monitor)')
+parser.add_argument('--executable', default='opc-monitor', help='its name inside the bundle')
+parser.add_argument('--bundle-id', default='com.opencapture.pocket-monitor')
+parser.add_argument('--info-plist', type=pathlib.Path, help='extra Info.plist keys to merge in')
+parser.add_argument('--out', type=pathlib.Path, help='the .app to write (default: dist/Pocket Monitor.app)')
 args = parser.parse_args()
 desktop = pathlib.Path(__file__).resolve().parents[1]
-app = desktop / 'dist/Pocket Monitor.app'
+binary = (args.binary or desktop / 'target/release/opc-monitor').resolve()
+app = (args.out or desktop / 'dist/Pocket Monitor.app').resolve()
 if app.exists():
     shutil.rmtree(app)
 macos = app / 'Contents/MacOS'
@@ -24,13 +35,13 @@ frameworks = app / 'Contents/Frameworks'
 resources = app / 'Contents/Resources'
 for folder in (macos, frameworks, resources):
     folder.mkdir(parents=True)
-exe = macos / 'opc-monitor'
-shutil.copy2(desktop / 'target/release/opc-monitor', exe)
+exe = macos / args.executable
+shutil.copy2(binary, exe)
 info = {
     'CFBundleName': 'Pocket Monitor',
     'CFBundleDisplayName': 'Pocket Monitor',
-    'CFBundleIdentifier': 'com.opencapture.pocket-monitor',
-    'CFBundleExecutable': 'opc-monitor',
+    'CFBundleIdentifier': args.bundle_id,
+    'CFBundleExecutable': args.executable,
     'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': '0.1.0',
     'CFBundleVersion': '1',
@@ -41,10 +52,14 @@ info = {
     'NSCameraUsageDescription': 'Use a webcam for hand gesture controls.',
     'NSMicrophoneUsageDescription': 'Monitor audio from your selected input.',
     'NSLocalNetworkUsageDescription': 'Find and connect to cameras and shared phone feeds on your network.',
-    'NSBonjourServices': ['_opc-mon._tcp'],
+    # A sharing host advertises both, and watchers browse both (opc-relay discovery.rs).
+    'NSBonjourServices': ['_pocket-mon._tcp', '_opc-mon._tcp'],
     'NSLocationUsageDescription': 'Fill in the name of your Wi-Fi network when adding the camera to it.',
     'NSLocationWhenInUseUsageDescription': 'Fill in the name of your Wi-Fi network when adding the camera to it.',
 }
+if args.info_plist:
+    with args.info_plist.open('rb') as file:
+        info.update(plistlib.load(file))
 with (app / 'Contents/Info.plist').open('wb') as file:
     plistlib.dump(info, file)
 
@@ -72,7 +87,7 @@ def stage(source):
 core = stage(args.core)
 molten_prefix = pathlib.Path(run('brew', '--prefix', 'molten-vk'))
 stage(molten_prefix / 'lib/libMoltenVK.dylib')
-queue.append((desktop / 'target/release/opc-monitor', exe))
+queue.append((binary, exe))
 while queue:
     source, destination = queue.pop()
     lines = run('otool', '-L', source).splitlines()[1:]
@@ -125,8 +140,8 @@ run('codesign', '--force', '--sign', '-', app)
 run('codesign', '--verify', '--deep', '--strict', app)
 print(app)
 if args.dmg:
-    dmg = desktop / 'dist/Pocket Monitor.dmg'
-    staging = desktop / 'dist/dmg-staging'
+    dmg = app.with_suffix('.dmg')
+    staging = app.parent / 'dmg-staging'
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir()

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vcam-component-probe"
+description = "Enables the vcam_component_probe command without any pre-configured scope."
+commands.allow = ["vcam_component_probe"]
+
+[[permission]]
+identifier = "deny-vcam-component-probe"
+description = "Denies the vcam_component_probe command without any pre-configured scope."
+commands.deny = ["vcam_component_probe"]
