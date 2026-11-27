@@ -49,9 +49,11 @@ function RootLayoutInner() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
       <SafeAreaProvider>
-        <BottomSheetModalProvider>
-          <ThemeProvider value={navigationTheme}>
-            <CameraProvider>
+        {/* Sheets render in the modal provider's own host, so every context a sheet reads
+            (theme, camera) must sit above it. */}
+        <ThemeProvider value={navigationTheme}>
+          <CameraProvider>
+            <BottomSheetModalProvider>
               <FeedSharingHost />
               <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
               <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
@@ -60,9 +62,9 @@ function RootLayoutInner() {
                 <Stack.Screen name="pair" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
                 <Stack.Screen name="multiview" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
               </Stack>
-            </CameraProvider>
-          </ThemeProvider>
-        </BottomSheetModalProvider>
+            </BottomSheetModalProvider>
+          </CameraProvider>
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
