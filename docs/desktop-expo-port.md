@@ -1522,3 +1522,97 @@ a webcam, a microphone, Windows or a Mac.**
 | T10 | **Done.** `Y` → `UiAction::ToggleHandView` → `hand_view_set {on}`; while on, `vision://hands` (`HandOverlay`: 21 landmarks, padded box, role, pose, score, finger reach, pinch, the pinches held, the hold, the faces; picture fractions before mirroring, rounded so an unchanged scene is not resent) goes out at ≤ 15 Hz. The web draws it with react-native-svg over the picture, mirrored with it (`HandViewOverlay`, `handOverlayGeometry.ts`, tested). `J` → `UiAction::ToggleGestures`, carried out in Rust with main's notices; `gestures://state` follows. The record hold's bar is `gestureHold` in `input://state` (a pill over the picture), not a notice per frame. **Settings › Gestures** (desktop only; the web preview shows it with `?desktopPreview=1`): on/off, source (Camera picture / Webcam), hand control, stick hand (Right / Left), auto face track, the gesture guide (icon, label, hold time, action picker per gesture, Reset) and the double clap. The gimbal panel has *Gestures* and *Hand view* switches and a link to the page; Settings › Operator › Desktop links to it. Keys help (`keys`, `KEY_HELP`) lists J and Y and main's hands paragraph. **Differs from main**: the hand view also draws the faces found; the webcam source's hand view shows the device line, not landmarks (main showed none). |
 
 **Verify on hardware.** Windows with a Pocket 3: gestures on with *Camera picture*, `gestures: reading the camera's picture` in the log, `pace:` and `slow:` unchanged with the models running (GPU/DirectML and CPU-only), a peace sign held 2.5 s starting and stopping a take with the bar filling, fist/palm/point/rock, sweeps while the gimbal is still and none while it pans, pinch-and-drag with each hand and with *Stick hand* swapped, opening the hand resting the gimbal, the face gesture and auto face track on a person, `Y` over the picture with mirror on and off, `J` from the live view, two claps recentring and the microphone indicator going off with gestures off, the webcam source with the virtual camera installed, and switching source live. macOS: the same on the CPU provider, and the microphone and camera prompts (`Info.plist` has both).
+
+### 5.14 Glass: window material behind the sidebar, Liquid Glass controls (2026-11-27)
+
+The wide layout's shell (sidebar, toolbars, Settings' split view) takes the platform's
+material and glass. Code: `crates/pm-surface/src/glass.rs` (native views, pure geometry and
+colour parsing, tested), `crates/pm-desktop/src/glass.rs` (commands), `Apps/Mobile/src/features/glass`
+(decision, rect sync and CSS, tested). Checked in the Linux container: `cargo clippy` of
+`pm-desktop`, the `pm-surface` tests, clippy of `pm-surface` and of `pm-desktop/src/glass.rs`
+(in a scratch crate with Tauri) for `x86_64-apple-darwin`, `aarch64-apple-darwin` and
+`x86_64-pc-windows-msvc`, `tsc`, vitest, and Playwright screenshots with the preview flags below.
+**Nothing here has run on a Mac or on Windows yet.**
+
+**Why the material sits above the picture.** The picture (§3.2) is an opaque Vulkan swapchain
+(`CompositeAlpha::OPAQUE`, cleared black) covering the whole window under the web view, and it
+keeps presenting under the opaque web UI for the watchdog. Anything placed below it (Tauri's
+`windowEffects`, `window-vibrancy`'s `apply_vibrancy`/`apply_liquid_glass`, which insert at the
+bottom of the content view) would never show. So:
+
+| | macOS 26 (Tahoe) | macOS 11–15 | Windows 11 | Windows 10, Linux |
+| --- | --- | --- | --- | --- |
+| Behind the sidebar | `NSVisualEffectView`, sidebar material, behind-window blending, follows the window's active state | same | DWM Mica (light/dark from the app's theme) | nothing: the sidebar stays solid `panel` |
+| Glass controls | native `NSGlassEffectView`s (Glass = Native, the default) or CSS (Web) | CSS | CSS | CSS |
+
+- **macOS stack** (bottom to top): picture `NSView` → one *host* view (flipped, `hitTest:` → nil
+  so every click stays with the web view) holding the material, flat underlays and an
+  `NSGlassEffectContainerView` (spacing 0, never merges) of glass views → `WKWebView`. The host
+  is re-placed directly below the web view and resized to its frame on every update, so a view
+  added below the web view later cannot slip between them. Behind-window vibrancy shows the
+  desktop whatever is under it in the window. Glass samples what is under it *in the window*,
+  which is the black picture, so glass over page content gets an underlay in the page colour
+  (`underlay`) and glass over the sidebar sits on the material. The sidebar itself is not an
+  `NSGlassEffectView`: under it is the opaque picture, and only behind-window vibrancy shows the
+  desktop through that.
+- **Windows**: `window_vibrancy::apply_mica` on the top-level window, and the picture's child
+  `HWND` slid right by the sidebar strip (`PictureSurface::set_leading_inset`, `SWP_NOSIZE`: its
+  size and swapchain are unchanged, the parent clips the overhang), so DWM's backdrop shows in
+  the strip. While a live picture is on screen inside the shell (the watcher), the web asks for
+  no Mica and the child goes back to x = 0. Windows 10's Acrylic is not used (it lags window
+  drags; `window-vibrancy`'s warning).
+
+**Switching.** `AppShell` sends `glass_material {on, leading, dark, dpr}` whenever the shell
+appears or goes: off on the full-bleed pages (monitor, Multiview, playback, assists preview),
+with Glass = Off, with *Reduce transparency* on, and below the wide breakpoint. `leading` is the
+sidebar (240) plus Settings' list (248) on Settings. With the material on, the shell's root, the
+sidebar and Settings' list (`punchThrough` on their parents) are transparent; pages stay opaque.
+
+**Native glass controls** (`glass_controls {items, dpr}`): the web lists the toolbar buttons
+(Pair camera, icon buttons, Select…), the media category pills and sort/filter buttons, the
+selected sidebar and Settings item and the two status cards, each as a CSS-px rect of the
+viewport with corner radius, tint (`#1c1c1cd9`, the ink, for Pair camera / Done / chosen pill),
+style, underlay and whether it is pinned to the trailing edge. Rust converts with
+`devicePixelRatio / backingScaleFactor` (1 unless the page is zoomed); the host is the web
+view's size and flipped, so the overlay title bar needs no offset. `GlassSync`
+(`features/glass/sync.ts`): one send per animation frame however many changes (mount, unmount,
+scroll anywhere, a control's resize, route, theme, a 1 s safety poll), nothing sent when the
+list is unchanged; rects snapped to device pixels; only controls wholly inside their scroll
+views (a half-scrolled card keeps the web glass); the web control turns transparent
+(`data-pocket-glass-native`) only after Rust answered, and back at once when it leaves; the
+first `resize` event hides every native view (the web glass shows) until the window has been
+still for 160 ms; a disabled button stays web glass so it dims with its label. Interactivity is
+all web: the native views never take events.
+
+**Web glass** (`features/glass/styles.ts`): `backdrop-filter: blur(16px) saturate(180%)`, a
+translucent fill, a 1 px specular top edge, a hairline rim, a soft shadow, brighter on hover,
+darker when pressed; prominent buttons are ink-tinted glass; the pairing dialog is a glass
+sheet. No SVG refraction (WKWebView lacks it), so it looks the same in WebView2.
+`prefers-reduced-transparency` gives the flat look. Phones, tablets and a plain browser are
+unchanged (no capabilities, no glass).
+
+**Setting.** Settings › Display › Window › Glass: *Native* (offered only where
+`NSGlassEffectView` exists, and the default there), *Web*, *Off* (no material, today's flat
+look). Stored as `desktopGlass` in the web preferences.
+
+**Preview.** `?glassPreview=1` in a browser at ≥ 960 px: a colourful stand-in for the desktop
+behind a CSS stand-in for the sidebar material, CSS glass controls. `?glassPreview=native`:
+the same with Native available; dashed outlines are drawn where native glass views would go, to
+check the rect sync.
+
+**Verify on the Intel Mac (macOS 26).** `pocket-monitor.log` has `glass: sidebar vibrancy on
+(240 px)` (488 on Settings) and `… off` on the monitor. The desktop shows blurred through the
+sidebar and Settings' list, dims when the window is inactive, and the content area stays
+opaque. The monitor, Multiview and playback are pure black, with no tint or glass anywhere, and
+the picture is where it was (live, and after going back and forth to Cameras a few times). The
+toolbar buttons, the selected sidebar item and the status cards are Liquid Glass and sit
+exactly under their labels: at 1× and 2× displays, after moving the window between them, while
+scrolling Settings' list (the card hands over to the web glass while half hidden), after a
+live resize (web glass while dragging, native again 160 ms after), switching light/dark,
+opening the pairing dialog, and switching Glass between Native, Web and Off. Clicks, hover and
+the drag regions behave as before. *Reduce transparency* (Accessibility › Display) gives the
+flat look. On macOS 15 or earlier: vibrancy plus web glass, Glass offers Web and Off only.
+**Windows 11:** Mica in the sidebar (light and dark), log `glass: mica on, picture inset 240 px`;
+the monitor picture is positioned correctly on entering it (inset back to 0), the watcher
+page's picture is correct and its sidebar solid; window drags and resizes without lag;
+`pace:` unchanged. Windows 10: solid sidebar, `glass: mica unavailable`.
