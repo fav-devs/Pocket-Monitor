@@ -59,6 +59,19 @@ describe('RecordingClock: markers by the camera’s own recording time', () => {
     expect(p.seconds).toBeCloseTo(2.5, 3);
   });
 
+  it('a step replaces the first report of 0, whose time is only a guess', () => {
+    const c = new RecordingClock();
+    c.update(true, 0, T0 + 100);
+    // Before any step: the phone clock with the known offset.
+    expect(c.position(T0 + 600)!.seconds).toBeCloseTo(0.5 + PHONE_START_OFFSET_SEC, 3);
+    c.update(true, 1, T0 + 1050);
+    expect(c.startedAt(T0 + 1100)).toBe(T0 + 50);
+    // A new take under REC (the elapsed time goes back) starts over.
+    c.update(true, 5, T0 + 5050);
+    c.update(true, 1, T0 + 9030);
+    expect(c.startedAt(T0 + 9100)).toBe(T0 + 8030);
+  });
+
   it('never leaves the second the camera last reported', () => {
     const c = new RecordingClock();
     c.update(true, 0, T0);

@@ -39,6 +39,8 @@ export class RecordingClock {
   /** Best estimate of the camera's first frame from its elapsed reports (ms epoch). */
   private anchor: number | null = null;
   private lastElapsed = -1;
+  /** The anchor comes from a step of the elapsed time (not just a first report of 0). */
+  private stepped = false;
 
   /** Feed every state update: REC on/off and the camera's elapsed seconds. */
   update(recording: boolean, elapsedSec: number, now: number): void {
@@ -46,6 +48,7 @@ export class RecordingClock {
       this.recording = false;
       this.seenAt = null;
       this.anchor = null;
+      this.stepped = false;
       this.lastElapsed = -1;
       return;
     }
@@ -56,13 +59,20 @@ export class RecordingClock {
       this.lastElapsed = -1;
     }
     if (e !== this.lastElapsed) {
-      // A step (or the first report). A report of 0 says only "started by now".
-      if (e > 0 || this.lastElapsed < 0) {
-        const candidate = now - e * 1000;
-        this.anchor = this.anchor == null ? candidate : Math.min(this.anchor, candidate);
+      if (e < this.lastElapsed) {
+        // A camera that goes backwards started a new take under us.
+        this.stepped = false;
+        this.anchor = null;
       }
-      // A camera that goes backwards started a new take under us.
-      if (e < this.lastElapsed) this.anchor = now - e * 1000;
+      if (e > 0) {
+        // A step: the camera's E-th second began at most a report's delay ago.
+        const candidate = now - e * 1000;
+        this.anchor = this.stepped && this.anchor != null ? Math.min(this.anchor, candidate) : candidate;
+        this.stepped = true;
+      } else if (this.anchor == null) {
+        // A first report of 0 says only "started by now": the phone clock's offset until a step.
+        this.anchor = now - PHONE_START_OFFSET_SEC * 1000;
+      }
       this.lastElapsed = e;
     }
   }

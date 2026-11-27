@@ -529,14 +529,14 @@ export default function LiveScreen() {
           {/* Movable (saved layouts): everything floating over the picture. */}
           <View pointerEvents={locked && !editing ? 'none' : 'box-none'} style={lockable}>
             {!editing ? <FocusEvBox picture={pictureRect} enabled={live && !locked} /> : null}
+            {editing ? (
+              <MovableItem id="marker" layout={movable} label="Marker">
+                <MarkerButton count={0} ghost />
+              </MovableItem>
+            ) : null}
             {!photo ? (
               <MovableItem id="statusLead" layout={movable} label="Recording time">
                 <RecordingReadout idle="timecode" ghost={editing} />
-              </MovableItem>
-            ) : null}
-            {recording || editing ? (
-              <MovableItem id="marker" layout={movable} label="Marker">
-                <MarkerButton count={takeMarkers} ghost={editing} />
               </MovableItem>
             ) : null}
             <MovableItem id="status" layout={movable} label="Status">
@@ -600,6 +600,12 @@ export default function LiveScreen() {
 
       {/* Record survives DISP 2. */}
       <View pointerEvents={locked || editing ? 'none' : 'box-none'} style={[fill, { opacity: editing ? 0.35 : locked ? 0.4 : 1 }]}>
+        {/* The Marker button goes with record: shown while recording, also in DISP 2 and with the chrome hidden. */}
+        {recording && !editing ? (
+          <MovableItem id="marker" layout={movable} label="Marker">
+            <MarkerButton count={takeMarkers} />
+          </MovableItem>
+        ) : null}
         <Slot rect={layout.record} style={{ alignItems: 'center', justifyContent: 'center' }}>
           <LiveRecordButton
             size={recordSize}
