@@ -27,7 +27,8 @@ import { useCamera, useCameraSession } from '@/camera';
 import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
-import { useScreenSize } from '@/constants/layout';
+import { PageToolbar, ToolbarButton } from '@/components/page-toolbar';
+import { WIDE_PAGE_PADDING, useScreenSize, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { type MediaLibrarySource, phoneClipItem, useMediaPreferences, usePhoneMedia } from '@/state/media';
 import { DeliveryProgressPill, DeliveryQueueSheet } from './DeliveryQueue';
@@ -54,7 +55,7 @@ const copy = {
 const sourceTitles: Record<MediaLibrarySource, string> = { camera: 'Camera', phone: 'Phone' };
 
 /** Mimo's "Device  Local" title tabs: the chosen source in full ink, the other muted. */
-function SourceTabs({ value, onChange }: { value: MediaLibrarySource; onChange: (s: MediaLibrarySource) => void }) {
+function SourceTabs({ value, onChange, compact }: { value: MediaLibrarySource; onChange: (s: MediaLibrarySource) => void; compact?: boolean }) {
   const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.sourceTabs} accessibilityRole="tablist">
@@ -68,9 +69,9 @@ function SourceTabs({ value, onChange }: { value: MediaLibrarySource; onChange: 
             accessibilityState={{ selected: on }}
             onPress={() => onChange(s)}
             hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            style={({ pressed }) => [styles.sourceTab, pressed && !on && { opacity: 0.6 }]}
+            style={({ pressed }) => [styles.sourceTab, compact && styles.sourceTabCompact, pressed && !on && { opacity: 0.6 }]}
           >
-            <Text numberOfLines={1} style={[styles.title, !on && styles.titleOff]}>
+            <Text numberOfLines={1} style={[styles.title, compact && styles.titleCompact, !on && styles.titleOff]}>
               {sourceTitles[s]}
             </Text>
           </Pressable>
@@ -150,6 +151,8 @@ export default function MediaLibraryScreen() {
   const styles = useThemedStyles(createStyles);
   const { width, large, landscape } = useScreenSize();
   const wide = width >= 700;
+  // Desktop / landscape tablet: a toolbar header, the grid filling the page, no back (the sidebar).
+  const wideLayout = useWideLayout();
   useMediaBrowsing();
   // Desktop app: each page of the card's listing fills the grid as it arrives.
   useDesktopMediaSync();
@@ -290,10 +293,10 @@ export default function MediaLibraryScreen() {
   const subline = lib.selecting
     ? copy.selectingHint
     : (onPhoneTab ? ['On this phone', count, phoneBytes ? byteLabel(phoneBytes) : null] : [cameraName, storage, count]).filter(Boolean).join(' · ');
-  const pad = Math.max(insets.left, insets.right, spacing.md);
+  const pad = wideLayout ? WIDE_PAGE_PADDING : Math.max(insets.left, insets.right, spacing.md);
   const dense = prefs.layout === 'grid' && !prefs.gridCaptions;
   // The dense grid runs edge to edge (2 pt in from a phone's edge, the notch side on landscape).
-  const gridPad = dense ? Math.max(insets.left, insets.right, 2) : pad;
+  const gridPad = wideLayout ? pad : dense ? Math.max(insets.left, insets.right, 2) : pad;
   const dockInset = lib.selecting ? DOCK_HEIGHT + Math.max(insets.bottom, 12) + 8 : 0;
   const pillBottom = lib.selecting ? dockInset : Math.max(insets.bottom, 12) + 4;
   const galleryBottom = dockInset + (deliveryActive ? 84 : 0) + (lib.selecting ? 0 : Math.max(insets.bottom, 12));
@@ -342,6 +345,50 @@ export default function MediaLibraryScreen() {
         )}
       </View>
     </View>
+  );
+
+  const wideToolbar = (
+    <PageToolbar
+      bordered={false}
+      leading={
+        lib.selecting ? (
+          <View style={styles.titleLeft}>
+            <ToolbarButton icon={Cancel01Icon} label="Exit selection" onPress={lib.endSelection} />
+            <Text accessibilityRole="header" accessibilityLiveRegion="polite" numberOfLines={1} style={styles.toolbarTitle}>
+              {`${lib.selected.length} selected`}
+            </Text>
+          </View>
+        ) : (
+          <SourceTabs value={source} onChange={setSource} compact />
+        )
+      }
+      detail={subline}
+      actions={
+        lib.selecting ? (
+          <>
+            <ToolbarButton
+              variant="secondary"
+              title={allSelected ? 'Deselect all' : 'Select all'}
+              onPress={() => lib.setSelected(allSelected ? [] : model.entries.map((e) => e.id))}
+            />
+            <ToolbarButton variant="primary" title="Done" label="Exit selection" onPress={lib.endSelection} />
+          </>
+        ) : (
+          <>
+            <ToolbarButton
+              icon={RefreshIcon}
+              label="Refresh"
+              busy={!onPhoneTab && lib.refreshing}
+              onPress={refresh}
+              disabled={onPhoneTab || !sourceAvailable || lib.refreshing || lib.status === 'loading'}
+            />
+            <ToolbarButton icon={CloudUploadIcon} label="Deliveries" badge={deliveryCount || undefined} onPress={() => setDeliveryPanel(true)} />
+            <ToolbarButton icon={Settings02Icon} label="Media settings" onPress={() => router.push('/media/settings')} />
+            <ToolbarButton icon={CheckmarkCircle02Icon} title="Select" variant="secondary" onPress={() => lib.beginSelection()} disabled={!model.entries.length} />
+          </>
+        )
+      }
+    />
   );
 
   const searchRow = (
@@ -399,9 +446,10 @@ export default function MediaLibraryScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={[styles.header, { paddingTop: insets.top + (landscape && !large ? 6 : spacing.sm), paddingLeft: pad, paddingRight: pad }]}>
-        <View style={styles.headerColumn}>
-          {titleRow}
+      {wideLayout ? wideToolbar : null}
+      <View style={[styles.header, { paddingTop: wideLayout ? 0 : insets.top + (landscape && !large ? 6 : spacing.sm), paddingLeft: pad, paddingRight: pad }]}>
+        <View style={[styles.headerColumn, wideLayout && styles.columnFill]}>
+          {wideLayout ? null : titleRow}
           {wide ? null : (
             <Text numberOfLines={1} style={styles.subline}>
               {subline}
@@ -423,7 +471,7 @@ export default function MediaLibraryScreen() {
       </View>
 
       <View style={[styles.body, { paddingLeft: gridPad, paddingRight: gridPad }]}>
-        <View style={styles.bodyColumn}>
+        <View style={[styles.bodyColumn, wideLayout && styles.columnFill]}>
           <MediaGallery
             sections={model.sections}
             layout={prefs.layout}
@@ -433,6 +481,7 @@ export default function MediaLibraryScreen() {
             titleInset={pad - gridPad + 2}
             tablet={large}
             wide={landscape}
+            fill={wideLayout}
             selecting={lib.selecting}
             selected={lib.selected}
             transfers={lib.transfers}
@@ -531,6 +580,10 @@ function createStyles(colors: ThemeColors) {
     sourceTabs: { flexDirection: 'row' as const, alignItems: 'baseline' as const, gap: 12, flexShrink: 1, minWidth: 0 },
     sourceTab: { minHeight: 44, justifyContent: 'center' as const },
     selectionTitle: { fontSize: 20, letterSpacing: -0.3 },
+    titleCompact: { fontSize: 20, letterSpacing: -0.3 },
+    sourceTabCompact: { minHeight: 32 },
+    toolbarTitle: { fontFamily: fonts.semibold, fontSize: 20, letterSpacing: -0.3, color: colors.foreground, flexShrink: 1 },
+    columnFill: { maxWidth: '100%' as const },
     headerRight: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
     subline: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, marginTop: 2, marginBottom: spacing.sm + 4 },
     sublineInline: { flexShrink: 1, fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, marginLeft: spacing.sm, marginTop: 6 },

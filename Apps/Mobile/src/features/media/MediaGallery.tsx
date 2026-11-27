@@ -23,6 +23,14 @@ export function denseColumnsFor(size: MediaThumbnailSize, width: number): number
   return gridColumns(width, denseMinTile[size], denseGap, size === 'small' ? 3 : size === 'medium' ? 2 : 1, 8);
 }
 
+/** Captioned cards in the wide (desktop) layout: as many columns as fit at least this wide. */
+const fillMinTile: Record<MediaThumbnailSize, number> = { small: 170, medium: 230, large: 340 };
+
+/** The wide layout's captioned grid fills the page: more columns the wider it is. */
+export function fillColumnsFor(size: MediaThumbnailSize, width: number): number {
+  return gridColumns(width, fillMinTile[size], 12, size === 'large' ? 2 : 3, 10);
+}
+
 export function columnsFor(size: MediaThumbnailSize, tablet: boolean, wide: boolean): number {
   const base = size === 'small' ? (tablet ? 5 : 3) : size === 'medium' ? (tablet ? 4 : 2) : tablet ? 2 : 1;
   // A landscape phone has room for one more column at small/medium.
@@ -57,6 +65,8 @@ export interface MediaGalleryProps {
   titleInset?: number;
   tablet: boolean;
   wide: boolean;
+  /** Wide (desktop) layout: captioned cards fill the width instead of a fixed column count. */
+  fill?: boolean;
   selecting: boolean;
   selected: string[];
   transfers: Record<string, MediaTransfer>;
@@ -91,7 +101,11 @@ export function MediaGallery(p: MediaGalleryProps) {
   const drag = useRef<DragSelection | null>(null);
 
   const dense = p.layout === 'grid' && !p.captions;
-  const columns = dense ? denseColumnsFor(p.thumbnailSize, width) : columnsFor(p.thumbnailSize, p.tablet, p.wide);
+  const columns = dense
+    ? denseColumnsFor(p.thumbnailSize, width)
+    : p.fill && width > 0
+      ? fillColumnsFor(p.thumbnailSize, width)
+      : columnsFor(p.thumbnailSize, p.tablet, p.wide);
   const { placed, headers, height, order, firsts, lasts } = useMemo(() => {
     const placed: Placed[] = [];
     const headers: PlacedHeader[] = [];

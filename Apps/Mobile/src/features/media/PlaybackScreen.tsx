@@ -36,6 +36,8 @@ import { Chip } from '@/components/chip';
 import { ChipRow } from '@/components/field-section';
 import { Sheet } from '@/components/sheet';
 import { Spinner } from '@/components/spinner';
+import { useEscapeKey } from '@/components/desktop';
+import { useWideLayout } from '@/constants/layout';
 import { fonts, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
 import AssistBar from '@/features/assists/AssistBar';
 import AssistOverlays from '@/features/assists/AssistOverlays';
@@ -51,6 +53,7 @@ import { useMediaBrowsing, useMediaLibrary, useMediaThumbnail } from './libraryS
 import { favoriteColor, Glyph } from './MediaChips';
 import { ConfirmSheet, NoticeToast } from './MediaOverlays';
 import { ClipInfoList, clipInfoRows, PlaybackMeters, SideButton, StarRating, ToolWell, videoText } from './PlaybackParts';
+import { PlaybackInspector } from './PlaybackInspector';
 import { PlaybackFilmstrip, stripClock, usePlaybackFrames } from './PlaybackFilmstrip';
 import { usePlaybackEngine } from './usePlaybackEngine';
 import { useDesktopPlayback } from './desktop/useDesktopPlayback';
@@ -136,6 +139,9 @@ export default function PlaybackScreen() {
   const styles = useThemedStyles(createStyles);
   const { width, height } = useWindowDimensions();
   const portrait = height >= width;
+  // Wide layout: the clip's details and actions sit in an inspector beside the picture.
+  const wideLayout = useWideLayout();
+  const [inspector, setInspector] = useState(true);
   useMediaBrowsing();
 
   const lib = useMediaLibrary();
@@ -319,6 +325,8 @@ export default function PlaybackScreen() {
     else router.replace('/media');
   };
   const goTo = (target?: { id: string }) => target && router.setParams({ id: target.id });
+  // The desktop app's own key handler above already takes Esc; the browser preview gets it here.
+  useEscapeKey(goBack, wideLayout && !desktop);
   const sideInset = Math.max(insets.left, insets.right);
 
   if (!item) {
@@ -496,8 +504,15 @@ export default function PlaybackScreen() {
           : 'Preparing playback…';
   const showLoading = prepareError != null || (isVideo && (waitingForCamera || (engine.kind === 'video' && (!engine.ready || !!engine.error)))) || (engine.kind === 'desktop' && (!engine.ready || !!engine.error));
 
+  const infoRows = clipInfoRows(item, {
+    source: fromPhone || localUri ? 'On this phone (original)' : prepared?.rendition === 'low-res' ? 'On camera · low-res copy on phone' : 'On camera',
+    rating,
+    frames: burst.length || undefined,
+  });
+
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, wideLayout && styles.rootRow]}>
+      <View style={styles.stage}>
       {/* Picture canvas: fixed child, assists drawn inside the picture rect. */}
       <View style={styles.fill} onLayout={(e) => setCanvas({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}>
         {desktop ? (
@@ -558,7 +573,12 @@ export default function PlaybackScreen() {
             <View style={styles.headerRow}>
               <View style={styles.headerSide}>
                 <BarIcon icon={ArrowLeft01Icon} label="Back to media" onPress={goBack} />
-                <BarIcon icon={InformationCircleIcon} label="Clip information" selected={info} onPress={() => setInfo(true)} />
+                <BarIcon
+                  icon={InformationCircleIcon}
+                  label="Clip information"
+                  selected={wideLayout ? inspector : info}
+                  onPress={() => (wideLayout ? setInspector((v) => !v) : setInfo(true))}
+                />
               </View>
               <View style={styles.titleBlock}>
                 <Text numberOfLines={1} style={styles.title}>
@@ -686,14 +706,8 @@ export default function PlaybackScreen() {
       <DeliveryProgressPill bottom={chrome ? bottomH + 8 : Math.max(insets.bottom, 10) + 70} />
       {lib.notice ? <NoticeToast text={lib.notice} bottom={(chrome ? bottomH : Math.max(insets.bottom, 10)) + 90} /> : null}
 
-      <Sheet visible={info} title="Clip info" onClose={() => setInfo(false)}>
-        <ClipInfoList
-          rows={clipInfoRows(item, {
-            source: fromPhone || localUri ? 'On this phone (original)' : prepared?.rendition === 'low-res' ? 'On camera · low-res copy on phone' : 'On camera',
-            rating,
-            frames: burst.length || undefined,
-          })}
-        />
+      <Sheet visible={info && !wideLayout} title="Clip info" onClose={() => setInfo(false)}>
+        <ClipInfoList rows={infoRows} />
       </Sheet>
       <Sheet visible={ratingOpen} title="Rating" onClose={() => setRatingOpen(false)} expandable={false}>
         <View style={styles.ratingBody}>
@@ -729,6 +743,33 @@ export default function PlaybackScreen() {
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => void doDelete()}
       />
+      </View>
+      {wideLayout && inspector ? (
+        <PlaybackInspector
+          fileName={item.fileName}
+          rendition={conform ? `${rendition} · ${conform}p` : rendition}
+          rows={infoRows}
+          rating={rating}
+          onRate={(s) => prefs.setRating(item.id, s)}
+          favorite={item.favorite}
+          onFavorite={() => setFavorite(!item.favorite)}
+          download={
+            fromPhone || desktop
+              ? null
+              : {
+                  label: onPhone ? 'On phone' : transfer ? `${Math.round(transfer.fraction * 100)}%` : 'Download',
+                  done: onPhone,
+                  busy: !!transfer,
+                  onPress: download,
+                }
+          }
+          onShare={() => setSharing(true)}
+          onDelete={() => setConfirmDelete(true)}
+          deleteLabel={fromPhone ? 'Delete clip from this phone' : 'Delete clip from camera'}
+          onStill={desktop ? takeStill : undefined}
+          onClose={() => setInspector(false)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -737,6 +778,8 @@ function createStyles(colors: ThemeColors) {
   const fill = { position: 'absolute' as const, top: 0, left: 0, right: 0, bottom: 0 };
   return {
     root: { flex: 1, backgroundColor: colors.preview, overflow: 'hidden' as const },
+    rootRow: { flexDirection: 'row' as const },
+    stage: { flex: 1, overflow: 'hidden' as const },
     fill,
     missing: { flex: 1, backgroundColor: colors.preview, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 12, padding: 24 },
     missingText: { fontFamily: fonts.medium, fontSize: 14, color: 'rgba(255,255,255,0.7)', textAlign: 'center' as const },
