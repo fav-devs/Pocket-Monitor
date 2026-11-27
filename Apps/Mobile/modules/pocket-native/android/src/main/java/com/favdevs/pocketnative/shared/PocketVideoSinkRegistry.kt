@@ -27,5 +27,33 @@ object PocketVideoSinkRegistry {
     sinks[sessionId]?.removeAll { it.get() == null || it.get() === sink }
   }
 
-  fun sinks(sessionId: String): List<PocketVideoSink> = sinks[sessionId]?.mapNotNull { it.get() } ?: emptyList()
+  /** Every consumer of [sessionId]: its decoders, then its taps. */
+  fun sinks(sessionId: String): List<PocketVideoSink> =
+    (sinks[sessionId]?.mapNotNull { it.get() } ?: emptyList()) + (taps[sessionId]?.mapNotNull { it.get() } ?: emptyList())
+
+  // Taps (additive): a second consumer of a session's access units that is not a decoder. The
+  // watcher relay host forwards the camera's encoded AUs to watchers from here, so frames never
+  // cross JS. Held weakly like sinks; the datalink reaches them through [sinks] unchanged.
+
+  private val taps = ConcurrentHashMap<String, CopyOnWriteArrayList<WeakReference<PocketVideoSink>>>()
+
+  fun addTap(sessionId: String, tap: PocketVideoSink) {
+    val list = taps.getOrPut(sessionId) { CopyOnWriteArrayList() }
+    list.removeAll { it.get() == null }
+    if (list.none { it.get() === tap }) list.add(WeakReference(tap))
+  }
+
+  fun removeTap(sessionId: String, tap: PocketVideoSink) {
+    taps[sessionId]?.removeAll { it.get() == null || it.get() === tap }
+  }
+
+  /** Producer side for sources other than the datalink (the relay watcher), on the caller's thread. */
+  fun publish(sessionId: String, accessUnit: ByteArray, codec: PocketVideoCodec, presentationTimeUs: Long) {
+    for (sink in sinks(sessionId)) runCatching { sink.receive(accessUnit, codec, presentationTimeUs) }
+  }
+
+  /** Producer side: the stream restarted (flush references, wait for a keyframe). */
+  fun reset(sessionId: String) {
+    for (sink in sinks(sessionId)) runCatching { sink.reset() }
+  }
 }

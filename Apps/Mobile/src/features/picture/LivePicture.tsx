@@ -15,7 +15,7 @@ export type { LivePictureProps } from './LivePicture.shared';
  * fit / fill and desqueeze; this reports the same rect for overlays and polls a small RGBA
  * sample for the JS meters while any scope or meter is shown.
  */
-export default function LivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene }: LivePictureProps) {
+export default function LivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene, publishSamples = true }: LivePictureProps) {
   const derived = usePictureEffects(context);
   const effects = override ?? derived;
   const streamW = useCamera((s) => s.connection.streamWidth);
@@ -26,7 +26,7 @@ export default function LivePicture({ source, resizeMode = 'fit', onPictureRect,
   const rect = pictureRect(size, pictureAspect(effects, streamW, streamH), resizeMode);
   const sessionId = source.kind === 'native' || source.kind === 'relay' ? source.sessionId : null;
   const scene = demoSceneFor(source, demoScene);
-  const wantsSample = useSampleDemandValue();
+  const wantsSample = useSampleDemandValue() && publishSamples;
 
   useEffect(() => {
     if (size.width <= 0 || sameRect(lastRect.current, rect)) return;

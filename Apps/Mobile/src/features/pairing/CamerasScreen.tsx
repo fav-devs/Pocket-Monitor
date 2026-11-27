@@ -9,6 +9,7 @@ import {
   PlayIcon,
   PlusSignIcon,
   Router01Icon,
+  ServerStack01Icon,
   Settings02Icon,
   Video01Icon,
   Wifi01Icon,
@@ -201,8 +202,11 @@ export default function CamerasScreen() {
           title="Join as watcher"
           chevron
           onPress={() => router.push('/watcher')}
-          last
+          last={desktopCameraEnabled}
         />
+        {desktopCameraEnabled ? null : (
+          <SettingsRow icon={ServerStack01Icon} title="Server" chevron disabled={busy} onPress={() => router.push('/server')} last />
+        )}
       </SettingsGroup>
     </View>
   );

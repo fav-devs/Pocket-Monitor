@@ -16,6 +16,7 @@ import {
   type PictureRect,
 } from '@/camera';
 import AssistBar from '@/features/assists/AssistBar';
+import { BackgroundMonitor, PictureInPictureButton, hasBackgroundFeatures } from '@/features/background';
 import AssistOverlays from '@/features/assists/AssistOverlays';
 import {
   expoExponent,
@@ -49,7 +50,7 @@ import { LiveGimbalStick } from './gimbal/LiveGimbalStick';
 import { MotionPathOverlay, MotionRunPill } from './gimbal/MotionControl';
 import { ZoomChip } from './gimbal/ZoomChip';
 import { cancelZoomRamp, stepStop } from './gimbal/zoom';
-import { computeFieldMonitorLayout, maxY } from './layout/fieldMonitorLayout';
+import { RAIL_H, RAIL_W, computeFieldMonitorLayout, maxX, maxY } from './layout/fieldMonitorLayout';
 import { useLiveUi } from './liveUiStore';
 import { LiveRecordButton, RecordCountdownOverlay } from './record/LiveRecordButton';
 import { MonitorRecordingBorder } from './record/MonitorRecordingBorder';
@@ -429,6 +430,12 @@ export default function LiveScreen() {
             <Slot rect={layout.media}>
               <LiveMediaButton onPress={() => router.push('/media')} />
             </Slot>
+            {/* Picture in Picture (iOS): trailing, under the status rows. */}
+            {hasBackgroundFeatures ? (
+              <Slot rect={{ x: maxX(layout.status) - RAIL_W, y: belowStatus, width: RAIL_W, height: RAIL_H }}>
+                <PictureInPictureButton />
+              </Slot>
+            ) : null}
           </View>
 
           {/* Lock stays reachable while locked. */}
@@ -457,6 +464,8 @@ export default function LiveScreen() {
         </View>
       ) : null}
       <LiveSheetHost layout={layout} chromeShown={chromeShown} notice={stableNotice} />
+      {/* iOS: Live Activity, Picture in Picture, record control, grace task. Not on web / Android. */}
+      {hasBackgroundFeatures ? <BackgroundMonitor onDisconnect={exit} /> : null}
 
       {prefs.showRecordingBorder && recording ? <MonitorRecordingBorder /> : null}
       <MonitorTransientNotice notices={notices} onExpire={dismissNotice} top={ui.gimbalPanel === 'runPill' ? belowStatus + 52 : belowStatus} />

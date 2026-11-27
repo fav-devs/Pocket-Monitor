@@ -1,5 +1,6 @@
 import { ArrowDown01Icon } from '@hugeicons/core-free-icons';
 import { useRef } from 'react';
+import { CameraSessionScope, type CameraSession } from '@/camera';
 import { Pressable } from 'react-native';
 import { Icon } from '@/components/icon';
 import { Sheet, SheetDockProvider } from '@/components/sheet';
@@ -33,10 +34,17 @@ export function LiveSheetHost({
   layout,
   chromeShown,
   notice,
+  session,
 }: {
   layout: FieldMonitorLayout;
   chromeShown: boolean;
   notice: (m: string, tone?: 'info' | 'warning' | 'error' | 'success') => void;
+  /**
+   * Optional (additive). The camera the panels drive. The native sheet renders in a portal
+   * outside this screen's React tree, so a scoped session (a Multiview tile) is passed in and
+   * re-scoped inside the sheet. Absent: the panels use the app's session, as before.
+   */
+  session?: CameraSession;
 }) {
   useCaptureSheetAdmission();
   const captureSheet = useLiveUi((s) => s.captureSheet);
@@ -96,7 +104,7 @@ export function LiveSheetHost({
       topInset={layout.sheet.dock ? undefined : layout.sheet.topInset}
       action={panel.kind === 'motion' ? <MinimizeAction /> : undefined}
     >
-      {body}
+      {session ? <CameraSessionScope session={session}>{body}</CameraSessionScope> : body}
     </Sheet>
   );
   return <SheetDockProvider dock={layout.sheet.dock}>{sheet}</SheetDockProvider>;

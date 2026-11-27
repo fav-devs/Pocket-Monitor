@@ -9,6 +9,7 @@ import type {
   PocketWifiNativeModule,
 } from '@modules/pocket-native/src/types';
 import type { SavedCamera } from '../types';
+import type { SessionClock } from './clock';
 
 export interface NativeCameraIO {
   bluetooth: PocketBluetoothNativeModule;
@@ -23,7 +24,27 @@ export interface CredentialStore {
   remove(cameraId: string, ssid: string): Promise<void>;
 }
 
+/**
+ * Optional (additive, Multiview). How a station / hotspot camera is found on the shared network
+ * when it has no saved host, or the saved host does not answer. Absent: the session only tries the
+ * saved host, exactly as before.
+ */
+export interface StationDiscovery {
+  /** Hosts to look for the camera on, after the saved host (e.g. `candidateHosts` from src/core). */
+  candidates(ctx: { hotspot: boolean; localAddress: string | null; savedHost?: string }): string[] | Promise<string[]>;
+  /** Accept a host only when the camera's Wi-Fi identity read over the datalink matches BLE's. */
+  verifyIdentity?: boolean;
+  /** The camera answered (and was identified) at `host`. */
+  onHost?(cameraId: string, host: string): void;
+  /** Reachability probe per candidate (UDP handshake), ms. Default 1500. */
+  probeTimeoutMs?: number;
+  /** Probes in flight at once. Default 8. */
+  probeWidth?: number;
+}
+
 export interface NativeSessionDeps {
+  /** Optional (additive): Multiview station discovery. */
+  station?: StationDiscovery;
   io: NativeCameraIO;
   credentials: CredentialStore;
   /** Cameras remembered on this device (read-only; the pairing screens own writes). */
@@ -34,4 +55,11 @@ export interface NativeSessionDeps {
   log?: (line: string) => void;
   /** Random source for handshake ids. Defaults to `Math.random`. */
   random?: () => number;
+  /**
+   * Optional (additive). Every session timer (watchdog, heartbeat, path poll, stick pump,
+   * exchange timeouts, waits) runs on this clock. Defaults to the global JS timers. Server mode
+   * passes `sessionClock`, which it moves onto the service's native heartbeat in the background
+   * (`./clock.ts`). When given and `now` is not, `now` is `clock.now()`.
+   */
+  clock?: SessionClock;
 }

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { DemoCameraSession } from './demo/DemoCameraSession';
 import type { CameraModelId, CameraNotice } from './types';
 import type { CameraSession, SessionEvent } from './session';
@@ -99,6 +99,18 @@ export function CameraProvider({ children }: { children: ReactNode }) {
   }, [setSession]);
 
   return <CameraContext.Provider value={{ session, setSession }}>{children}</CameraContext.Provider>;
+}
+
+/**
+ * Additive: a subtree that reads and drives `session` instead of the app's current one, so the
+ * live screen's pieces (capture sheets, gimbal, picture) can serve one Multiview tile. Swapping the
+ * app's session from inside the scope still goes to the app's provider.
+ */
+export function CameraSessionScope({ session, children }: { session: CameraSession; children: ReactNode }) {
+  const parent = useContext(CameraContext);
+  const setSession = parent?.setSession;
+  const value = useMemo<CameraContextValue>(() => ({ session, setSession: setSession ?? (() => {}) }), [session, setSession]);
+  return <CameraContext.Provider value={value}>{children}</CameraContext.Provider>;
 }
 
 export function useCameraSession(): CameraSession {

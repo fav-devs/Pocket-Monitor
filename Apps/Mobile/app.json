@@ -16,19 +16,25 @@
         "NSBluetoothAlwaysUsageDescription": "Pocket Monitor uses Bluetooth to find and pair with your Osmo camera.",
         "NSLocalNetworkUsageDescription": "Pocket Monitor talks to your camera over its Wi-Fi to show the live picture.",
         "NSBonjourServices": [
-          "_pocket-mon._tcp"
+          "_pocket-mon._tcp",
+          "_opc-mon._tcp"
         ],
         "NSCameraUsageDescription": "Scan a camera Wi-Fi QR code.",
         "NSPhotoLibraryAddUsageDescription": "Save clips and stills from your camera to Photos.",
         "NSLocationWhenInUseUsageDescription": "iOS needs location access to read the camera Wi-Fi network name.",
         "UIBackgroundModes": [
-          "bluetooth-central"
+          "bluetooth-central",
+          "audio"
         ],
+        "NSSupportsLiveActivities": true,
         "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.networking.HotspotConfiguration": true,
-        "com.apple.developer.networking.wifi-info": true
+        "com.apple.developer.networking.wifi-info": true,
+        "com.apple.security.application-groups": [
+          "group.com.favdevs.pocketmonitor"
+        ]
       }
     },
     "android": {
@@ -127,7 +133,9 @@
       "expo-video",
       "expo-image",
       "expo-localization",
-      "./plugins/with-gles3.js"
+      "./plugins/with-gles3.js",
+      "@bacons/apple-targets",
+      "./plugins/with-live-activity-fonts.js"
     ],
     "experiments": {
       "typedRoutes": false

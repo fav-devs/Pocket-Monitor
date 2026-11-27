@@ -16,6 +16,7 @@ import {
 } from '@hugeicons/core-free-icons';
 import { ResetAction } from '@/components/reset-action';
 import { Slider } from '@/components/slider';
+import { BackgroundSettingsGroup } from '@/features/background';
 import { useAssists } from '@/state/assists';
 import { FieldRow, Group, Segments, SwitchRow } from '../components/ui';
 import { resetPrefs, usePref } from '../components/usePref';
@@ -140,6 +141,7 @@ export function OperatorSection() {
         <SwitchRow icon={Target02Icon} title="Hold to track" value={tapTrack} onChange={setTapTrack} />
         <SwitchRow icon={Tap02Icon} title="Double-tap to level" value={level} onChange={setLevel} last />
       </Group>
+      <BackgroundSettingsGroup />
     </>
   );
 }

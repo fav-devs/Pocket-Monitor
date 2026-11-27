@@ -10,7 +10,9 @@
       "PocketDatalinkModule",
       "PocketVideoModule",
       "PocketGamepadModule",
-      "PocketHeadMotionModule"
+      "PocketHeadMotionModule",
+      "PocketBackgroundModule",
+      "PocketRelayModule"
     ]
   },
   "android": {

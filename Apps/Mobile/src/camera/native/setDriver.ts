@@ -7,6 +7,7 @@
 import { CameraReplies, type CameraReply } from '@/core/commands/control';
 import { CameraSetMailbox } from '@/core/commands/setMailbox';
 import { type DumlFrame, opcodeKey } from '@/core/duml/frame';
+import { type ClockTimer, type SessionClock, systemClock } from './clock';
 
 export type SetResult =
   | { kind: 'ok' }
@@ -25,8 +26,8 @@ export const SET_ACK_TIMEOUT_MS = 1000;
 export class LiveSetDriver {
   private mailbox = new CameraSetMailbox();
   private pending = new Map<number, { frame: DumlFrame; waiters: Resolve[] }>();
-  private open = new Map<number, { waiters: Resolve[]; timer: ReturnType<typeof setTimeout> | null }>();
-  private holdTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private open = new Map<number, { waiters: Resolve[]; timer: ClockTimer | null }>();
+  private holdTimers = new Map<number, ClockTimer>();
 
   /**
    * @param send writes the frame (stamping its DUML seq) and returns the seq, or null when the
@@ -35,6 +36,8 @@ export class LiveSetDriver {
   constructor(
     private readonly send: (frame: DumlFrame) => number | null,
     private readonly now: () => number,
+    /** Timer source (optional, additive): the session's clock; global timers by default. */
+    private readonly clock: SessionClock = systemClock,
   ) {}
 
   private nowS(): number {
@@ -65,7 +68,7 @@ export class LiveSetDriver {
     if (decision !== 'accept' && decision !== 'acceptLate') return false;
     const gen = this.open.get(key);
     this.open.delete(key);
-    if (gen?.timer) clearTimeout(gen.timer);
+    if (gen?.timer) this.clock.clearTimeout(gen.timer);
     const parsed = CameraReplies.parse(frame.payload);
     const result: SetResult = CameraReplies.isSuccess(parsed)
       ? { kind: 'ok' }
@@ -78,11 +81,11 @@ export class LiveSetDriver {
   /** Drop everything (disconnect / new datalink). Outstanding promises settle as offline. */
   reset(): void {
     for (const g of this.open.values()) {
-      if (g.timer) clearTimeout(g.timer);
+      if (g.timer) this.clock.clearTimeout(g.timer);
       g.waiters.forEach((w) => w({ kind: 'offline' }));
     }
     for (const p of this.pending.values()) p.waiters.forEach((w) => w({ kind: 'offline' }));
-    for (const t of this.holdTimers.values()) clearTimeout(t);
+    for (const t of this.holdTimers.values()) this.clock.clearTimeout(t);
     this.open.clear();
     this.pending.clear();
     this.holdTimers.clear();
@@ -92,7 +95,7 @@ export class LiveSetDriver {
   private launch(key: number, frame: DumlFrame, waiters: Resolve[]): void {
     const superseded = this.open.get(key);
     if (superseded) {
-      if (superseded.timer) clearTimeout(superseded.timer);
+      if (superseded.timer) this.clock.clearTimeout(superseded.timer);
       superseded.waiters.forEach((w) => w({ kind: 'superseded' }));
       this.open.delete(key);
     }
@@ -104,7 +107,7 @@ export class LiveSetDriver {
       return;
     }
     this.mailbox.noteTransmit(key, seq);
-    const timer = setTimeout(() => this.timeout(key), SET_ACK_TIMEOUT_MS);
+    const timer = this.clock.setTimeout(() => this.timeout(key), SET_ACK_TIMEOUT_MS);
     this.open.set(key, { waiters, timer });
   }
 
@@ -124,7 +127,7 @@ export class LiveSetDriver {
     const wait = Math.max(0, this.mailbox.holdRemaining(key, this.nowS()) * 1000);
     this.holdTimers.set(
       key,
-      setTimeout(() => {
+      this.clock.setTimeout(() => {
         this.holdTimers.delete(key);
         this.pump(key);
       }, wait),

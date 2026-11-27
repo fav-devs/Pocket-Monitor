@@ -15,6 +15,11 @@ export interface LivePictureProps {
   context?: 'live' | 'playback';
   /** Force a demo scene (dev preview). */
   demoScene?: DemoScene;
+  /**
+   * Optional (additive). Publish frame samples for the scopes and meters (default true). Multiview
+   * passes false for every tile but the selected one, so one camera feeds the sample bus.
+   */
+  publishSamples?: boolean;
 }
 
 /** Display aspect of the picture: stream raster (16:9 fallback) through the desqueeze. */

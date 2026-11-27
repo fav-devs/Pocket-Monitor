@@ -22,7 +22,7 @@ import { CameraWifiResolution } from '@/core/ble/savedCamera';
 import { runStationJoin, StationJoinError } from '@/core/ble/stationJoin';
 import { captureCommand, Commands, FIRST_SUB_ID, gimbalModeFrames, subscriptionKeysFor } from '@/core/commands/commands';
 import { AudioDspBlob, CameraReplies, GimbalPrepRestore } from '@/core/commands/control';
-import { MulticamSupport } from '@/core/commands/livestream';
+import { MulticamCommands, MulticamSupport } from '@/core/commands/livestream';
 import {
   ApertureStrategy,
   apertureFNumber,
@@ -87,6 +87,7 @@ import {
   stagePhase,
   wifiJoinFailure,
 } from './connectCopy';
+import { type ClockTimer, type SessionClock, systemClock } from './clock';
 import type { NativeSessionDeps } from './deps';
 import { ExchangeClosed, ExchangeTimeout, FrameExchange, opcodeMatcher } from './exchange';
 import { FeedTracker, type PictureStats } from './feedTracker';
@@ -99,7 +100,7 @@ import { CameraStatusReducer } from './statusReducer';
 
 type Listener<T> = (value: T) => void;
 type Sub = { remove(): void };
-type Timer = ReturnType<typeof setTimeout>;
+type Timer = ClockTimer;
 
 /** Gimbal stick stream cadence (`GimbalStick.streamInterval`, 25 Hz). */
 const STICK_INTERVAL_MS = GimbalStick.streamInterval * 1000;
@@ -127,16 +128,16 @@ const PRESET_KELVIN: Record<string, number> = { daylight: 5600, cloudy: 6500, in
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+function withTimeout<T>(clock: SessionClock, p: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(onTimeout()), ms);
+    const t = clock.setTimeout(() => reject(onTimeout()), ms);
     p.then(
       (v) => {
-        clearTimeout(t);
+        clock.clearTimeout(t);
         resolve(v);
       },
       (e) => {
-        clearTimeout(t);
+        clock.clearTimeout(t);
         reject(e);
       },
     );
@@ -151,6 +152,8 @@ export class NativeCameraSession implements CameraSession {
 
   private readonly io: NativeSessionDeps['io'];
   private readonly now: () => number;
+  /** Every session timer runs on this (`deps.clock`; global timers when absent). */
+  private readonly clock: SessionClock;
   private readonly log: (line: string) => void;
   private readonly random: () => number;
 
@@ -168,7 +171,7 @@ export class NativeCameraSession implements CameraSession {
   private stage: ConnectStage | null = null;
   private liveStartedAt: number | null = null;
   private timers = new Set<Timer>();
-  private intervals = new Set<ReturnType<typeof setInterval>>();
+  private intervals = new Set<ClockTimer>();
 
   // ── BLE ──
   private sightings = new Map<string, Sighting>();
@@ -177,7 +180,7 @@ export class NativeCameraSession implements CameraSession {
   private bleConnected = false;
   private bleSubs: Sub[] = [];
   private bleAssembler = new DumlNotificationAssembler();
-  private bleExchange = new FrameExchange();
+  private bleExchange: FrameExchange;
   private bleSeq = 0x9100;
 
   // ── Wi-Fi / datalink ──
@@ -188,7 +191,7 @@ export class NativeCameraSession implements CameraSession {
   private dlState: DatalinkStateEvent['state'] | 'none' = 'none';
   private dlError: string | undefined;
   private dlSubs: Sub[] = [];
-  private dlExchange = new FrameExchange();
+  private dlExchange: FrameExchange;
   private dlInbound = 0;
   private sequencer: DatalinkSequencer;
   private dumlSeq = 0xa000;
@@ -205,13 +208,13 @@ export class NativeCameraSession implements CameraSession {
 
   // ── controls ──
   private stickVector = { x: 0, y: 0 };
-  private stickTimer: ReturnType<typeof setInterval> | null = null;
+  private stickTimer: ClockTimer | null = null;
   private zoomRateSent = 0;
-  private trackTimer: ReturnType<typeof setInterval> | null = null;
+  private trackTimer: ClockTimer | null = null;
   private trackId = 1;
   private readonly prepRestore = new GimbalPrepRestore();
   private program: GimbalProgram = gimbalProgram({ durationAB: 4, durationBC: 4 });
-  private motion: { token: number; timers: Timer[]; interval: ReturnType<typeof setInterval> | null; resolve: () => void } | null = null;
+  private motion: { token: number; timers: Timer[]; interval: ClockTimer | null; resolve: () => void } | null = null;
   private motionToken = 0;
   private wasRecording = false;
   /** First reported record state seeds `wasRecording` without an event (camera may already be rolling). */
@@ -226,11 +229,14 @@ export class NativeCameraSession implements CameraSession {
 
   constructor(private readonly deps: NativeSessionDeps) {
     this.io = deps.io;
-    this.now = deps.now ?? (() => (globalThis.performance?.now ? globalThis.performance.now() : Date.now()));
+    this.clock = deps.clock ?? systemClock;
+    this.now = deps.now ?? (deps.clock ? () => deps.clock!.now() : () => (globalThis.performance?.now ? globalThis.performance.now() : Date.now()));
+    this.bleExchange = new FrameExchange(this.clock);
+    this.dlExchange = new FrameExchange(this.clock);
     this.log = deps.log ?? (() => {});
     this.random = deps.random ?? Math.random;
     this.sequencer = new DatalinkSequencer(this.random);
-    this.sets = new LiveSetDriver((f) => this.sendDatalink(f), this.now);
+    this.sets = new LiveSetDriver((f) => this.sendDatalink(f), this.now, this.clock);
   }
 
   // ───────────────────────────── state plumbing ─────────────────────────────
@@ -269,7 +275,7 @@ export class NativeCameraSession implements CameraSession {
   /** Status frames arrive at tens of Hz; fold them into one UI update per ~66 ms. */
   private schedulePublish(): void {
     if (this.publishTimer) return;
-    this.publishTimer = setTimeout(() => {
+    this.publishTimer = this.clock.setTimeout(() => {
       this.publishTimer = null;
       this.publishStatus();
     }, PUBLISH_MS);
@@ -321,7 +327,7 @@ export class NativeCameraSession implements CameraSession {
   // ───────────────────────────── timers ─────────────────────────────
 
   private after(ms: number, fn: () => void): Timer {
-    const t = setTimeout(() => {
+    const t = this.clock.setTimeout(() => {
       this.timers.delete(t);
       fn();
     }, ms);
@@ -329,18 +335,18 @@ export class NativeCameraSession implements CameraSession {
     return t;
   }
 
-  private every(ms: number, fn: () => void): ReturnType<typeof setInterval> {
-    const t = setInterval(fn, ms);
+  private every(ms: number, fn: () => void): ClockTimer {
+    const t = this.clock.setInterval(fn, ms);
     this.intervals.add(t);
     return t;
   }
 
   private clearTimers(): void {
-    this.timers.forEach(clearTimeout);
+    this.timers.forEach((t) => this.clock.clearTimeout(t));
     this.timers.clear();
-    this.intervals.forEach(clearInterval);
+    this.intervals.forEach((t) => this.clock.clearInterval(t));
     this.intervals.clear();
-    if (this.publishTimer) clearTimeout(this.publishTimer);
+    if (this.publishTimer) this.clock.clearTimeout(this.publishTimer);
     this.publishTimer = null;
     this.stickTimer = null;
     this.trackTimer = null;
@@ -378,7 +384,7 @@ export class NativeCameraSession implements CameraSession {
       const s = sightingOf(advert, this.now());
       if (!s) return;
       mergeSighting(this.sightings, s);
-      if (mergeSighting(found, s) && !emitTimer) emitTimer = setTimeout(emit, 300);
+      if (mergeSighting(found, s) && !emitTimer) emitTimer = this.clock.setTimeout(emit, 300);
     });
     this.scanUsers += 1;
     void (async () => {
@@ -394,7 +400,7 @@ export class NativeCameraSession implements CameraSession {
       if (stopped) return;
       stopped = true;
       sub.remove();
-      if (emitTimer) clearTimeout(emitTimer);
+      if (emitTimer) this.clock.clearTimeout(emitTimer);
       this.scanUsers -= 1;
       if (this.scanUsers <= 0) {
         this.scanUsers = 0;
@@ -422,7 +428,7 @@ export class NativeCameraSession implements CameraSession {
         if (done) return;
         done = true;
         sub.remove();
-        clearTimeout(timer);
+        this.clock.clearTimeout(timer);
         this.scanUsers -= 1;
         if (this.scanUsers <= 0) {
           this.scanUsers = 0;
@@ -438,7 +444,7 @@ export class NativeCameraSession implements CameraSession {
         mergeSighting(this.sightings, s);
         finish(this.sightings.get(id) ?? s);
       });
-      const timer = setTimeout(() => finish(this.sightings.get(id) ?? null), ms);
+      const timer = this.clock.setTimeout(() => finish(this.sightings.get(id) ?? null), ms);
       this.scanUsers += 1;
       ble.startScan(null);
     });
@@ -533,11 +539,11 @@ export class NativeCameraSession implements CameraSession {
         const sub = ble.addListener('onPowerState', (e) => {
           if (e.state !== 'unknown' && e.state !== 'resetting') {
             sub.remove();
-            clearTimeout(t);
+            this.clock.clearTimeout(t);
             resolve(e.state);
           }
         });
-        const t = setTimeout(() => {
+        const t = this.clock.setTimeout(() => {
           sub.remove();
           resolve(ble.getPowerState());
         }, 2500);
@@ -610,7 +616,7 @@ export class NativeCameraSession implements CameraSession {
     for (let retry = 1; retry <= 3; retry++) {
       this.check(token);
       try {
-        await withTimeout(
+        await withTimeout(this.clock, 
           ble.connect(id, {
             service: BleConstants.serviceFFF0,
             writeCharacteristic: BleConstants.charFFF5,
@@ -821,7 +827,8 @@ export class NativeCameraSession implements CameraSession {
     token: number,
   ): Promise<void> {
     const hotspot = path.kind === 'hotspot';
-    const savedHost = path.kind === 'station' ? path.host : undefined;
+    // Station host, or (additive) a hotspot host Multiview learned; single-camera hotspot paths have none.
+    const savedHost = path.host;
     const password = options?.wifiPassword ?? (await this.deps.credentials.read(target.id, path.ssid).catch(() => undefined));
     this.check(token);
     if (!password) throw new ConnectError({ kind: 'saved-password-missing', ssid: path.ssid });
@@ -848,18 +855,37 @@ export class NativeCameraSession implements CameraSession {
       await this.pause(1000, token);
     }
     const identity = (await exchange(Commands.getWifiSsid(nextSeq()), 12)).payload;
-    const verify = async (): Promise<boolean> => {
-      if (!savedHost) return false;
-      this.host = savedHost;
+    const discovery = this.deps.station;
+    const tryHost = async (host: string): Promise<boolean> => {
+      this.host = host;
       this.softAP = false;
       try {
         await this.openDatalink(token, 'fresh');
+        if (discovery?.verifyIdentity && !(await this.datalinkIdentityMatches(identity, token))) {
+          this.log(`station: ${host} answered but is another camera`);
+          await this.closeDatalink();
+          return false;
+        }
+        discovery?.onHost?.(target.id, host);
         return true;
       } catch (e) {
         if (e instanceof ConnectCancelled) throw e;
         await this.closeDatalink();
         return false;
       }
+    };
+    const verify = async (): Promise<boolean> => {
+      if (savedHost && (await tryHost(savedHost))) return true;
+      // Without discovery (single-camera station path) only a saved host can be reached.
+      if (!discovery) return false;
+      const localAddress = await this.io.wifi.localAddress().catch(() => null);
+      this.check(token);
+      const all = (await discovery.candidates({ hotspot, localAddress, savedHost })).filter((h) => h !== savedHost);
+      this.setConnection({ detail: 'Finding camera on Wi-Fi' });
+      const hits = await this.probeHosts(all, token);
+      this.log(`station: ${hits.length} of ${all.length} hosts answered`);
+      for (const host of hits) if (await tryHost(host)) return true;
+      return false;
     };
     let outcome: 'joined' | 'verified';
     try {
@@ -891,12 +917,126 @@ export class NativeCameraSession implements CameraSession {
     this.check(token);
     this.set((s) => ({ ...s, connection: { ...s.connection, transport: hotspot ? 'hotspot' : 'station' } }));
     if (outcome === 'verified') return;
-    // Without subnet discovery (not in the native module), only a saved host can be reached.
-    if (!savedHost || !(await verify())) throw new ConnectError({ kind: 'station-no-host', ssid: path.ssid });
+    // Without subnet discovery (`deps.station`), only a saved host can be reached.
+    if ((!savedHost && !discovery) || !(await verify())) throw new ConnectError({ kind: 'station-no-host', ssid: path.ssid });
   }
 
   private token(token: number): boolean {
     return token === this.attempt;
+  }
+
+  /** Multiview: the camera's `07/07` identity over the open datalink equals the BLE one. */
+  private async datalinkIdentityMatches(identity: Uint8Array, token: number): Promise<boolean> {
+    const reply = await this.dlRequest(Commands.getWifiSsid(), 8000, 'identity');
+    this.check(token);
+    if (!reply) return false;
+    const a = reply.payload;
+    return a.length === identity.length && a.every((v, i) => v === identity[i]);
+  }
+
+  /**
+   * Multiview discovery: which `hosts` answer a UDP handshake within the probe timeout,
+   * `probeWidth` at a time, at most eight. Each probe is its own short-lived native session; the
+   * camera's real session opens afterwards with a fresh identity.
+   */
+  private async probeHosts(hosts: string[], token: number): Promise<string[]> {
+    const width = Math.max(1, this.deps.station?.probeWidth ?? 8);
+    const timeoutMs = this.deps.station?.probeTimeoutMs ?? 1500;
+    const found: string[] = [];
+    for (let i = 0; i < hosts.length && found.length < 8; i += width) {
+      this.check(token);
+      const batch = hosts.slice(i, i + width);
+      const answers = await Promise.all(batch.map((h) => this.probeHost(h, timeoutMs, token)));
+      batch.forEach((h, k) => {
+        if (answers[k]) found.push(h);
+      });
+    }
+    this.check(token);
+    return found.slice(0, 8);
+  }
+
+  private probeHost(host: string, timeoutMs: number, token: number): Promise<boolean> {
+    const dl = this.io.datalink;
+    datalinkCounter += 1;
+    const sid = `pm-probe-${Math.floor(this.random() * 0xffffff).toString(36)}-${datalinkCounter}`;
+    const probeSeq = new DatalinkSequencer(this.random);
+    const handshake = handshakeDatagram(probeSeq.sessionId, 0, probeSeq.baseSeq);
+    return new Promise<boolean>((resolve) => {
+      let done = false;
+      let resend: ClockTimer | null = null;
+      const subs: Sub[] = [];
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        this.clock.clearTimeout(timer);
+        if (resend) this.clock.clearInterval(resend);
+        subs.forEach((s) => s.remove());
+        void dl.close(sid).catch(() => {});
+        resolve(ok && token === this.attempt);
+      };
+      const timer = this.clock.setTimeout(() => finish(false), timeoutMs);
+      subs.push(
+        dl.addListener('onState', (e) => {
+          if (e.sessionId !== sid) return;
+          if (e.state === 'open') finish(true);
+          else if (e.state === 'failed') finish(false);
+        }),
+        dl.addListener('onStats', (e) => {
+          if (e.sessionId === sid && e.rxPackets > 0) finish(true);
+        }),
+      );
+      const tcpPoke = this.model.tcpPoke ? { port: TCP_POKE_PORT, bytes: encodeFrame(Commands.setPairingPin(pairingToken(this.model))) } : null;
+      dl.open(sid, { host, port: this.model.datalinkPort, localPort: 0, ackHz: ACK_HZ, tcpPoke }).then(
+        () => {
+          if (done) return;
+          const send = () => {
+            if (done || token !== this.attempt) return finish(false);
+            try {
+              dl.sendRaw(sid, handshake);
+            } catch {
+              finish(false);
+            }
+          };
+          send();
+          resend = this.clock.setInterval(send, CameraSoftAP.handshakeSendIntervalMilliseconds);
+        },
+        () => finish(false),
+      );
+    });
+  }
+
+  /**
+   * Multiview exit (additive): return a camera moved onto a shared network to its own access
+   * point over BLE (`07/48 00`), before `disconnect()`. Uses the session's BLE link when it is up,
+   * else connects and pairs again. `deferred`: the camera answered `00 06` (retry later).
+   */
+  async restoreAccessPoint(target?: DiscoveredCamera | SavedCamera): Promise<'restored' | 'deferred' | 'failed'> {
+    const t = target ?? this.lastTarget;
+    if (!t) return 'failed';
+    try {
+      if (!this.bleConnected || !this.bleId) {
+        this.attempt += 1;
+        const token = this.attempt;
+        await this.teardown({ leaveWifi: false });
+        await this.ensureBluetooth(token);
+        const sighting = await this.scanForTarget(t.id, SCAN_FOR_TARGET_MS, token);
+        this.model = coreModelFor(t.model, sighting?.name ?? t.name, sighting?.modelId ?? null);
+        this.reducer.reset(this.model);
+        await this.connectBle(t.id, token);
+        await this.pair(t.id, token);
+      }
+      this.bleSeq = (this.bleSeq + 1) & 0xffff;
+      const frame = MulticamCommands.stationMode(false, this.bleSeq);
+      const reply = await this.bleRequest([[frame.cmdSet, frame.cmdId]], 12000, 'station-off', [frame]);
+      const p = reply.payload;
+      const ok = (p.length === 1 && p[0] === 0) || (p.length === 2 && p[0] === 0 && p[1] === 0);
+      this.log(`station: access point restore ${ok ? 'ok' : 'refused'}`);
+      return ok ? 'restored' : 'failed';
+    } catch (e) {
+      if (e instanceof ConnectError && e.failure.kind === 'pairing-deferred') return 'deferred';
+      this.log(`station: access point restore failed (${errorText(e)})`);
+      return 'failed';
+    }
   }
 
   // ───────────────────────────── datalink ─────────────────────────────
@@ -947,7 +1087,7 @@ export class NativeCameraSession implements CameraSession {
       this.dlError = undefined;
       this.dlInbound = 0;
       try {
-        await withTimeout(this.io.datalink.open(sid, options), DATALINK_OPEN_TIMEOUT_MS, () => new Error('datalink open timed out'));
+        await withTimeout(this.clock, this.io.datalink.open(sid, options), DATALINK_OPEN_TIMEOUT_MS, () => new Error('datalink open timed out'));
       } catch (e) {
         this.check(token);
         throw new ConnectError(datalinkFailure(errorText(e)));
@@ -990,11 +1130,11 @@ export class NativeCameraSession implements CameraSession {
     return new Promise<void>((resolve, reject) => {
       const done = () => {
         this.stateWaiters.delete(done);
-        clearTimeout(t);
+        this.clock.clearTimeout(t);
         if (token !== this.attempt) reject(new ConnectCancelled());
         else resolve();
       };
-      const t = setTimeout(done, ms);
+      const t = this.clock.setTimeout(done, ms);
       this.stateWaiters.add(done);
     });
   }
@@ -1392,7 +1532,7 @@ export class NativeCameraSession implements CameraSession {
       if (options?.countdown) {
         for (let n = 3; n > 0; n--) {
           this.patch((s) => ({ ...s, recording: { ...s.recording, countdown: n } }));
-          await new Promise((r) => setTimeout(r, 1000));
+          await new Promise<void>((r) => this.clock.setTimeout(r, 1000));
         }
         this.patch((s) => ({ ...s, recording: { ...s.recording, countdown: null } }));
       }
@@ -1568,7 +1708,7 @@ export class NativeCameraSession implements CameraSession {
 
   private stopTrackingPoll(): void {
     if (this.trackTimer) {
-      clearInterval(this.trackTimer);
+      this.clock.clearInterval(this.trackTimer);
       this.intervals.delete(this.trackTimer);
     }
     this.trackTimer = null;
@@ -1598,7 +1738,7 @@ export class NativeCameraSession implements CameraSession {
 
   private stopStickPump(): void {
     if (this.stickTimer) {
-      clearInterval(this.stickTimer);
+      this.clock.clearInterval(this.stickTimer);
       this.intervals.delete(this.stickTimer);
     }
     this.stickTimer = null;
@@ -1749,7 +1889,7 @@ export class NativeCameraSession implements CameraSession {
     this.syncProgramState({ status: 'preparing', progress: 0, error: undefined });
 
     await new Promise<void>((resolve) => {
-      const motion = { token, timers: [] as Timer[], interval: null as ReturnType<typeof setInterval> | null, resolve };
+      const motion = { token, timers: [] as Timer[], interval: null as ClockTimer | null, resolve };
       this.motion = motion;
       const fail = (message: string) => {
         if (this.motion?.token !== token) return;
@@ -1779,7 +1919,7 @@ export class NativeCameraSession implements CameraSession {
         this.feed.lastGimbalThrowAt = this.now();
         return this.gimbalSend(frame);
       };
-      const at = (seconds: number, fn: () => void) => motion.timers.push(setTimeout(fn, Math.max(0, started + seconds * 1000 - this.now())));
+      const at = (seconds: number, fn: () => void) => motion.timers.push(this.clock.setTimeout(fn, Math.max(0, started + seconds * 1000 - this.now())));
 
       for (const move of plan.approach) at(move.at, () => dispatch(move, move.at));
       at(plan.takeStart - 0.5, () => {
@@ -1789,18 +1929,18 @@ export class NativeCameraSession implements CameraSession {
       at(plan.takeStart, () => {
         if (this.motion?.token !== token) return;
         this.syncProgramState({ status: 'running', progress: 0 });
-        motion.interval = setInterval(() => {
+        motion.interval = this.clock.setInterval(() => {
           if (this.motion?.token !== token) return;
           const t = (this.now() - started) / 1000 - plan.takeStart;
           this.patch((s) => ({ ...s, gimbal: { ...s.gimbal, program: { ...s.gimbal.program, progress: clamp(t / (plan.end - plan.takeStart), 0, 1) } } }));
         }, 200);
         if (plan.smooth) {
           const curve = plan.smooth;
-          const stream = setInterval(() => {
-            if (this.motion?.token !== token) return clearInterval(stream);
+          const stream = this.clock.setInterval(() => {
+            if (this.motion?.token !== token) return this.clock.clearInterval(stream);
             const t = (this.now() - started) / 1000 - plan.takeStart;
             if (t >= curve.duration - SMOOTH_INTERVAL_S * 2) {
-              clearInterval(stream);
+              this.clock.clearInterval(stream);
               dispatch({ yawDeg: finalPoint.yawDeg, nativePitchDeg: finalPoint.nativePitchDeg ?? 0, durationS: 0.1 }, null);
               return;
             }
@@ -1825,10 +1965,10 @@ export class NativeCameraSession implements CameraSession {
     if (!m) return;
     this.motion = null;
     m.timers.forEach((t) => {
-      clearTimeout(t);
-      clearInterval(t as unknown as ReturnType<typeof setInterval>);
+      this.clock.clearTimeout(t);
+      this.clock.clearInterval(t);
     });
-    if (m.interval) clearInterval(m.interval);
+    if (m.interval) this.clock.clearInterval(m.interval);
     const restore = this.prepRestore.restoreNow();
     restore?.frames.forEach((f) => this.gimbalSend(f));
     if (warning) this.notice(warning, 'warning');
@@ -1849,7 +1989,7 @@ export class NativeCameraSession implements CameraSession {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const ok = await this.sets.submit(Commands.enterPlayback(), true);
       if (ok.kind === 'ok' || this.reducer.status.inPlayback) return true;
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise<void>((r) => this.clock.setTimeout(r, 120));
     }
     return this.reducer.status.inPlayback;
   }
@@ -1863,7 +2003,7 @@ export class NativeCameraSession implements CameraSession {
       const now = this.now();
       if (now >= deadline || !this.live) return;
       if (counter != null && now - start >= floorS * 1000 && a.didEnd(counter)) return;
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise<void>((r) => this.clock.setTimeout(r, 50));
       const count = counter != null ? a.chunkCountFor(counter) : a.chunkCount;
       if (count !== lastCount) {
         lastCount = count;
@@ -1930,7 +2070,7 @@ export class NativeCameraSession implements CameraSession {
       // live start (`0x02/0x68 08` + `0x09/0xa8`). Without playback the feed never stopped.
       for (let attempt = 1; attempt <= 3 && this.reducer.status.inPlayback; attempt++) {
         await this.sets.submit(Commands.exitPlayback(), true);
-        await new Promise((r) => setTimeout(r, 180));
+        await new Promise<void>((r) => this.clock.setTimeout(r, 180));
       }
       this.browsing = false;
       this.browseEnteredPlayback = false;

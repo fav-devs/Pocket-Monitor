@@ -290,3 +290,263 @@ export interface PocketHeadMotionNativeModule {
   addListener(event: 'onSample', cb: (e: HeadMotionSample) => void): { remove(): void };
   addListener(event: 'onConnection', cb: (e: { connected: boolean }) => void): { remove(): void };
 }
+
+// ───────────────────────────── Watcher relay ─────────────────────────────
+// docs/watcher-relay.md. Native owns sockets, Bonjour / NSD, framing and video; JS reads and writes
+// the small JSON messages (src/camera/watcher/protocol.ts) and runs the watcher's retry policy.
+
+/** A sharing host found on this Wi-Fi (Bonjour `_pocket-mon._tcp` or legacy `_opc-mon._tcp`). */
+export interface RelayHostAdvert {
+  /** `<serviceType>/<instance name>`: pass to `join`. */
+  id: string;
+  name: string;
+  /** TXT `c`. */
+  camera: string;
+  serviceType: string;
+  /** TXT `w` is not `"0"`. */
+  watchable: boolean;
+}
+
+export interface RelayHostsEvent {
+  hosts: RelayHostAdvert[];
+  browsing: boolean;
+  error?: string | null;
+}
+
+export interface RelayHostStartOptions {
+  /** The camera's native video session (`VideoSource.sessionId`) whose access units are forwarded. */
+  cameraSessionId: string;
+  /** Bonjour instance name; empty = this device's name. */
+  hostName: string;
+  cameraName: string;
+  /** Empty = open feed. */
+  passcode: string;
+  allowsControl: boolean;
+  /** Video sends in flight per watcher (Broadcast priority). */
+  window: number;
+}
+
+export interface RelayHostStatusEvent {
+  state: 'starting' | 'advertising' | 'stopped' | 'failed';
+  error?: string | null;
+  /** Authorized watchers. */
+  watchers: number;
+  /** A control request waiting for Grant / Deny. */
+  pending: { name: string; watcherId: string } | null;
+  /** Who holds control: "Host" or a watcher name. */
+  holder: string;
+  /** False while no camera keyframe is cached (a new watcher waits for one). */
+  joinable: boolean;
+}
+
+/** A command from the watcher holding control (already admitted natively). JSON per `encodeCommand`. */
+export interface RelayHostCommandEvent {
+  json: string;
+  watcherId: string;
+}
+
+export interface RelayJoinOptions {
+  /** Relay video session id the picture is published under (`VideoSource { kind: 'relay' }`). */
+  sessionId: string;
+  /** `RelayHostAdvert.id`. Resolved again on each join (a restarted host can move ports). */
+  hostId: string;
+  /** Hello JSON (`encodeHello`), sent once the socket is ready. */
+  hello: string;
+}
+
+export interface RelayWatcherStatusEvent {
+  sessionId: string;
+  /** `open`: the socket is up and the hello went out; acceptance is the host's hello message. */
+  state: 'connecting' | 'open' | 'closed';
+  error?: string | null;
+}
+
+export interface RelayWatcherMessageEvent {
+  sessionId: string;
+  kind: 'hello' | 'state' | 'token' | 'denied';
+  json: string;
+}
+
+export interface RelayWatcherStatsEvent {
+  sessionId: string;
+  /** Pictures received in the last second. */
+  framesPerSec: number;
+  kbps: number;
+  /** Total pictures received on this join. */
+  frames: number;
+  /** -1 before the first picture. */
+  lastFrameAgeMs: number;
+  /** Codec of the last picture. */
+  codec: 'hevc' | 'avc' | null;
+  /** The host is replaying frames behind live (a fresh join catching up). */
+  catchingUp: boolean;
+}
+
+export interface PocketRelayNativeModule {
+  /** This device's name for Bonjour and the hello. */
+  deviceName(): string;
+  startBrowse(): void;
+  stopBrowse(): void;
+  startHost(options: RelayHostStartOptions): Promise<void>;
+  /** Closes every watcher with `reason` (a join refusal they can show), or silently when null. */
+  stopHost(reason: string | null): void;
+  /** Applies to new joins (passcode) and control requests at once. */
+  updateHost(options: { passcode: string; allowsControl: boolean; window: number }): void;
+  /** State JSON (`encodeState`); sampled by JS at ≤ 5 Hz, at most one send in flight per watcher. */
+  publishHostState(json: string): void;
+  grantControl(): void;
+  denyControl(): void;
+  reclaimControl(): void;
+  join(options: RelayJoinOptions): Promise<void>;
+  leave(sessionId: string): void;
+  requestControl(sessionId: string): void;
+  releaseControl(sessionId: string): void;
+  sendCommand(sessionId: string, json: string): void;
+  addListener(event: 'onHosts', cb: (e: RelayHostsEvent) => void): { remove(): void };
+  addListener(event: 'onHostStatus', cb: (e: RelayHostStatusEvent) => void): { remove(): void };
+  addListener(event: 'onHostCommand', cb: (e: RelayHostCommandEvent) => void): { remove(): void };
+  addListener(event: 'onWatcherStatus', cb: (e: RelayWatcherStatusEvent) => void): { remove(): void };
+  addListener(event: 'onWatcherMessage', cb: (e: RelayWatcherMessageEvent) => void): { remove(): void };
+  addListener(event: 'onWatcherStats', cb: (e: RelayWatcherStatsEvent) => void): { remove(): void };
+}
+
+// ───────────────────────────── Background / server mode (Android) ─────────────────────────────
+// Server mode: a connectedDevice foreground service keeps the camera link and the relay running
+// with the screen off. Android only; iOS / web get `null` (src/camera/server checks the platform).
+
+export interface ServerNotificationStatus {
+  /** Camera name. */
+  title: string;
+  /** One line: link and watchers, e.g. "Live · 2 watchers". */
+  text: string;
+  /** Camera link live (offers Record / Stop). */
+  live: boolean;
+  recording: boolean;
+  /** Seconds into the take; the notification runs its own chronometer from it. */
+  recordingElapsedSec: number | null;
+  /** Deep link for Open / a tap on the notification. */
+  openUrl: string | null;
+}
+
+export interface ServerCapabilities {
+  sdk: number;
+  /** `WifiManager.isStaConcurrencyForLocalOnlyConnectionsSupported()` (API 31+). */
+  staConcurrencyLocalOnly: boolean;
+  notificationsAllowed: boolean;
+  bluetoothAllowed: boolean;
+  ignoringBatteryOptimizations: boolean;
+  serving: boolean;
+}
+
+export interface ServerPrimaryWifi {
+  ssid: string | null;
+  address: string | null;
+  prefixLength: number | null;
+  internet: boolean;
+}
+
+export interface ServerDeviceStatus {
+  batteryPercent: number | null;
+  charging: boolean;
+  plugged: boolean;
+  /** `PowerManager.getCurrentThermalStatus()`. */
+  thermal: 'none' | 'light' | 'moderate' | 'severe' | 'critical' | 'emergency';
+}
+
+export type ServerAction = 'record' | 'stop' | 'disconnect';
+
+export interface PocketBackgroundNativeModule {
+  capabilities(): ServerCapabilities;
+  /** POST_NOTIFICATIONS (13+) and BLUETOOTH_CONNECT (12+). */
+  requestPermissions(): Promise<{ notifications: boolean; bluetooth: boolean }>;
+  /** Starts the foreground service. Call only while the app is in the foreground. */
+  startServer(status: ServerNotificationStatus): Promise<void>;
+  updateServer(status: ServerNotificationStatus): void;
+  stopServer(): Promise<void>;
+  isServing(): boolean;
+  /** Camera SoftAP as a local-only second Wi-Fi connection (no process binding). */
+  joinLocalOnly(ssid: string, password: string, options: { timeoutMs: number }): Promise<WifiJoinResult>;
+  leaveLocalOnly(): Promise<void>;
+  localOnlyAddress(): Promise<string | null>;
+  primaryWifi(): Promise<ServerPrimaryWifi | null>;
+  /** Hosts answering `port` on the phone's Wi-Fi / hotspot subnets. */
+  findCameraHosts(options: { port: number; timeoutMs: number; max: number }): Promise<string[]>;
+  deviceStatus(): ServerDeviceStatus;
+  /** Event names: 'onTick' (~10 Hz while serving), 'onAction', 'onServerState'. */
+  addListener(event: 'onTick', cb: (e: { at: number }) => void): { remove(): void };
+  addListener(event: 'onAction', cb: (e: { action: ServerAction }) => void): { remove(): void };
+  addListener(event: 'onServerState', cb: (e: { running: boolean; reason: string | null }) => void): { remove(): void };
+}
+
+// ───────────────────────────── Background (iOS) ─────────────────────────────
+// The same JS module `PocketBackground` on iOS (modules/pocket-native/ios/Background): Live Activity
+// + Dynamic Island, Picture in Picture monitoring, the iOS 18 record control and the background
+// grace task. Shared with Android (`PocketBackgroundNativeModule` above): `isServing()` (iOS: PiP or
+// the grace task keeps the process running), `onAction` (Live Activity buttons / record control:
+// 'record' | 'stop' | 'disconnect') and `onServerState` (`running` = isServing, iOS `reason`
+// 'pip' | 'grace'). Everything else below is iOS-only and named for it; Android members are absent
+// on iOS. Use `PocketBackgroundIos` (native.ts), which is null off iOS.
+
+export interface IosBackgroundCapabilities {
+  /** ActivityKit allowed for the app (Settings → Pocket Monitor → Live Activities). */
+  liveActivities: boolean;
+  /** `AVPictureInPictureController.isPictureInPictureSupported()`. */
+  pictureInPicture: boolean;
+  /** iOS 18+: Control Center / Lock Screen / Action button record control. */
+  controls: boolean;
+}
+
+/** Static Live Activity data. */
+export interface LiveActivityAttributesInput {
+  cameraName: string;
+  cameraModel: string;
+}
+
+/** Live Activity content (ActivityKit `ContentState`). */
+export interface LiveActivityState {
+  phase: 'live' | 'recovering' | 'ended';
+  recording: boolean;
+  /** Epoch ms when the take started (drives the system timer); null when not recording. */
+  recordingStartedAtMs: number | null;
+  /** Card record time left, seconds; -1 unknown. */
+  remainingSec: number;
+  /** Camera battery percent; -1 unknown. */
+  batteryPercent: number;
+  charging: boolean;
+  linkBand: 'poor' | 'watch' | 'stable';
+  /** 0–4. */
+  signalBars: number;
+}
+
+export interface PictureInPictureState {
+  /** A controller exists for the live session. */
+  prepared: boolean;
+  /** iOS would start PiP now (`isPictureInPicturePossible`). */
+  possible: boolean;
+  active: boolean;
+}
+
+export interface PocketBackgroundIosMembers {
+  iosCapabilities(): Promise<IosBackgroundCapabilities>;
+  /** Resolves the activity id, or null when Live Activities are off. Re-uses a running one. */
+  startLiveActivity(attributes: LiveActivityAttributesInput, state: LiveActivityState): Promise<string | null>;
+  /** False when no activity is running (never started, ended, dismissed by the operator). Moves `staleDate` 90 s out. */
+  updateLiveActivity(state: LiveActivityState): Promise<boolean>;
+  endLiveActivity(state: LiveActivityState | null, immediate: boolean): Promise<void>;
+  /** What the record control shows (app group); reloads the control when it changed. */
+  setRecordControlState(live: boolean, recording: boolean, cameraName: string | null): void;
+  /** Ready PiP for a native video session (`VideoSource.sessionId`); false without PiP support. */
+  pipPrepare(sessionId: string): Promise<boolean>;
+  pipRelease(): Promise<void>;
+  /** False when PiP is not possible right now. */
+  pipStart(): Promise<boolean>;
+  pipStop(): Promise<void>;
+  /** Start PiP automatically when the app leaves the foreground while prepared. */
+  setPipAutoStart(enabled: boolean): Promise<void>;
+  /** Armed while live: leaving the foreground without PiP starts a background task. */
+  setGraceArmed(armed: boolean): Promise<void>;
+  addListener(event: 'onPipState', cb: (e: PictureInPictureState) => void): { remove(): void };
+}
+
+/** The iOS view of `PocketBackground`: the shared members plus the iOS ones. */
+export type PocketBackgroundIosModule = Pick<PocketBackgroundNativeModule, 'isServing' | 'addListener'> & PocketBackgroundIosMembers;

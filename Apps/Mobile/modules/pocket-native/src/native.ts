@@ -1,9 +1,13 @@
 import { requireOptionalNativeModule } from 'expo';
+import { Platform } from 'react-native';
 import type {
+  PocketBackgroundIosModule,
+  PocketBackgroundNativeModule,
   PocketBluetoothNativeModule,
   PocketDatalinkNativeModule,
   PocketGamepadNativeModule,
   PocketHeadMotionNativeModule,
+  PocketRelayNativeModule,
   PocketVideoNativeModule,
   PocketWifiNativeModule,
 } from './types';
@@ -72,5 +76,18 @@ export const PocketVideo: PocketVideoNativeModule | null = video
 export const PocketWifi = requireOptionalNativeModule<PocketWifiNativeModule>('PocketWifi');
 export const PocketGamepad = requireOptionalNativeModule<PocketGamepadNativeModule>('PocketGamepad');
 export const PocketHeadMotion = requireOptionalNativeModule<PocketHeadMotionNativeModule>('PocketHeadMotion');
+/** Watcher relay (host and watcher). Null on web and in builds without the module. */
+export const PocketRelay = requireOptionalNativeModule<PocketRelayNativeModule>('PocketRelay');
+
+/**
+ * Server mode (Android foreground service). On iOS the same JS name is the background module
+ * (Live Activity, Picture in Picture, grace task): use `PocketBackgroundIos` there. Null on web and
+ * in builds without it.
+ */
+export const PocketBackground = requireOptionalNativeModule<PocketBackgroundNativeModule>('PocketBackground');
+
+/** The iOS background module (Live Activity, PiP, record control, grace). Null off iOS. */
+export const PocketBackgroundIos: PocketBackgroundIosModule | null =
+  Platform.OS === 'ios' ? (PocketBackground as unknown as PocketBackgroundIosModule | null) : null;
 
 export const hasNativeCameraIO = PocketBluetooth != null && PocketWifi != null && PocketDatalink != null;

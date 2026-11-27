@@ -21,6 +21,7 @@ import type {
 import { demoMediaItems } from './demoMedia';
 
 type Listener<T> = (value: T) => void;
+type DemoVideoScene = Extract<VideoSource, { kind: 'demo' }>['scene'];
 
 const CONNECT_STEPS: { phase: ConnectionPhase; detail: string; ms: number }[] = [
   { phase: 'bluetooth', detail: 'Finding the camera over Bluetooth', ms: 500 },
@@ -58,8 +59,12 @@ export class DemoCameraSession implements CameraSession {
   private lastTarget: DiscoveredCamera | SavedCamera | null = null;
   private t = 0;
 
-  constructor(model: CameraModelId = 'osmo-pocket-4-pro') {
+  /** The test scene this camera shows once live (additive; Multiview gives each demo camera its own). */
+  private readonly scene: DemoVideoScene;
+
+  constructor(model: CameraModelId = 'osmo-pocket-4-pro', options: { scene?: DemoVideoScene } = {}) {
     this.state = initialCameraState(model);
+    this.scene = options.scene ?? 'studio';
   }
 
   getState() {
@@ -112,7 +117,7 @@ export class DemoCameraSession implements CameraSession {
       await new Promise((r) => setTimeout(r, step.ms));
       this.set((s) => ({ ...s, connection: { ...s.connection, phase: step.phase, detail: step.detail } }));
     }
-    this.video = { kind: 'demo', scene: 'studio' };
+    this.video = { kind: 'demo', scene: this.scene };
     this.set((s) => ({
       ...s,
       connection: {

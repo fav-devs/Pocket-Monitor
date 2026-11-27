@@ -23,7 +23,7 @@ export default function LivePicture(props: LivePictureProps) {
 }
 
 /** WebGL2 demo camera + the monitor effects shader. */
-function WebLivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene }: LivePictureProps) {
+function WebLivePicture({ source, resizeMode = 'fit', onPictureRect, effects: override, context = 'live', demoScene, publishSamples = true }: LivePictureProps) {
   const derived = usePictureEffects(context);
   const effects = override ?? derived;
   const exposure = useCamera((s) => s.exposure);
@@ -46,7 +46,7 @@ function WebLivePicture({ source, resizeMode = 'fit', onPictureRect, effects: ov
     onPictureRect?.(rect);
   });
 
-  const live = useLatest({ scene, effects, gain: demoExposureGain(exposure), lut, context });
+  const live = useLatest({ scene, effects, gain: demoExposureGain(exposure), lut, context, publishSamples });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,8 +80,8 @@ function WebLivePicture({ source, resizeMode = 'fit', onPictureRect, effects: ov
       try {
         renderer.render((now - start) / 1000, { scene: s.scene, effects: s.effects, gain: s.gain, dpr }, s.lut, w, h);
         const ready = renderer.pollSample();
-        if (ready && s.scene) publishFrameSample({ ...ready, context: s.context });
-        if (s.scene && now - lastSample >= SAMPLE_INTERVAL_MS && hasSampleDemand()) {
+        if (ready && s.scene && s.publishSamples) publishFrameSample({ ...ready, context: s.context });
+        if (s.scene && s.publishSamples && now - lastSample >= SAMPLE_INTERVAL_MS && hasSampleDemand()) {
           lastSample = now;
           renderer.requestSample();
         }
@@ -95,7 +95,7 @@ function WebLivePicture({ source, resizeMode = 'fit', onPictureRect, effects: ov
       cancelAnimationFrame(raf);
       canvas.removeEventListener('webglcontextlost', onLost);
       renderer.dispose();
-      clearFrameSample(live.current.context);
+      if (live.current.publishSamples) clearFrameSample(live.current.context);
     };
   }, [live]);
 

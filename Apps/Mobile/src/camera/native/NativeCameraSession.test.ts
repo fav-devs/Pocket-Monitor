@@ -14,6 +14,7 @@ import type {
 import { decodeFrame, type DumlFrame, encodeFrame, isLiveCameraControl, makeFrame, packString } from '@/core/duml/frame';
 import { concat } from '@/core/bytes';
 import type { DiscoveredCamera, SavedCamera } from '../types';
+import { SwitchableClock } from './clock';
 import { NativeCameraSession } from './NativeCameraSession';
 
 type Handler = (e: never) => void;
@@ -339,5 +340,73 @@ describe('NativeCameraSession', () => {
     await expect(session.media.download('x')).rejects.toThrow(/not available/);
     await session.disconnect();
     expect(cam.wifi.leave).toHaveBeenCalledWith(SSID);
+  });
+});
+
+// Additive (server mode): the session's timers on a switchable clock. RN pauses JS timers in the
+// background on Android; server mode moves them onto a native heartbeat (`./clock.ts`).
+describe('NativeCameraSession on a switchable clock', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const keepalives = (cam: ReturnType<typeof fakeCamera>) =>
+    cam.bleWrites.filter((f) => f.cmdSet === 0x00 && f.cmdId === 0x2b && f.payload[0] === 0x01 && f.payload[1] === 0x01).length;
+
+  it('connects exactly as before, then keeps its heartbeat on ticks while global timers stand still', async () => {
+    const cam = fakeCamera();
+    const clock = new SwitchableClock({
+      now: () => Date.now(),
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (t) => clearTimeout(t),
+      setInterval: (fn, ms) => setInterval(fn, ms),
+      clearInterval: (t) => clearInterval(t),
+    });
+    const session = new NativeCameraSession({ ...cam.deps, clock });
+    const done = session.connect(TARGET);
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(session.getState().connection.phase).toBe('live-start');
+    expect(enables(cam)).toHaveLength(1);
+
+    // Foreground: 1 Hz BLE keepalive from the global timers.
+    const k0 = keepalives(cam);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(keepalives(cam) - k0).toBeGreaterThanOrEqual(2);
+
+    // Serving in the background: timers move to the tick source.
+    let onTick: (() => void) | null = null;
+    clock.useTicks({
+      subscribe: (cb) => {
+        onTick = cb;
+        return () => {
+          onTick = null;
+        };
+      },
+    });
+    expect(clock.ticking).toBe(true);
+    // Global timers fire but nothing of the session's is on them any more.
+    const k1 = keepalives(cam);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(keepalives(cam)).toBe(k1);
+
+    // The native heartbeat (10 Hz) drives the overdue keepalive at once, then 1 Hz.
+    for (let i = 0; i < 50; i++) {
+      await vi.advanceTimersByTimeAsync(100);
+      onTick!();
+    }
+    const k2 = keepalives(cam);
+    expect(k2 - k1).toBeGreaterThanOrEqual(5);
+    expect(k2 - k1).toBeLessThanOrEqual(6);
+
+    // Back in the foreground: the global timers own them again; ticks are ignored.
+    clock.useTicks(null);
+    expect(onTick).toBeNull();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(keepalives(cam) - k2).toBeGreaterThanOrEqual(2);
+    // Never a second connect enable from moving clocks.
+    expect(enables(cam).length).toBeGreaterThanOrEqual(1);
+
+    await session.disconnect();
+    expect(clock.pending).toBe(0);
   });
 });

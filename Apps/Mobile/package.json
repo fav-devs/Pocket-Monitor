@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@bacons/apple-targets": "^5.0.0",
     "@expo-google-fonts/sn-pro": "^0.4.0",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@hugeicons/core-free-icons": "^3.3.0",

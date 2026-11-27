@@ -91,6 +91,8 @@ final class PocketVideoSession: PocketVideoSink {
   private var droppedTotal: UInt64 = 0
   private var effects = PocketPictureEffects()
   private var closed = false
+  /// Called with every decoded picture (Picture in Picture feed, `ios/Background`).
+  private var frameTaps: [UUID: (CVPixelBuffer) -> Void] = [:]
 
   // decodeQueue-confined
   private var codec: PocketVideoCodec?
@@ -128,10 +130,27 @@ final class PocketVideoSession: PocketVideoSink {
     set { lock.lock(); effects = newValue; lock.unlock() }
   }
 
+  /// Adds a frame tap: `tap` runs on the decoder's thread for each decoded picture, after it is
+  /// published, and must not block (copy the reference and hop to another queue).
+  func addFrameTap(_ tap: @escaping (CVPixelBuffer) -> Void) -> UUID {
+    let id = UUID()
+    lock.lock()
+    frameTaps[id] = tap
+    lock.unlock()
+    return id
+  }
+
+  func removeFrameTap(_ id: UUID) {
+    lock.lock()
+    frameTaps[id] = nil
+    lock.unlock()
+  }
+
   func shutdown() {
     lock.lock()
     closed = true
     latest = nil
+    frameTaps.removeAll()
     lock.unlock()
     decodeQueue.async { [self] in tearDownSession() }
   }
@@ -408,11 +427,16 @@ final class PocketVideoSession: PocketVideoSink {
 
   private func publish(_ buffer: CVPixelBuffer) {
     lock.lock()
-    defer { lock.unlock() }
-    guard !closed else { return }
+    guard !closed else {
+      lock.unlock()
+      return
+    }
     sequence += 1
     decodedTotal += 1
     latest = PocketVideoFrame(pixelBuffer: buffer, sequence: sequence, arrivedAt: CACurrentMediaTime())
+    let taps = frameTaps.isEmpty ? nil : Array(frameTaps.values)
+    lock.unlock()
+    taps?.forEach { $0(buffer) }
   }
 
   private func noteDropped() {

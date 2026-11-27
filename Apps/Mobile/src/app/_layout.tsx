@@ -14,6 +14,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CameraProvider } from '@/camera';
 import { AppThemeProvider, useTheme } from '@/constants/theme';
+import { FeedSharingHost } from '@/features/watcher/useFeedSharing';
 import '@/camera/bootstrap';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -51,11 +52,13 @@ function RootLayoutInner() {
         <BottomSheetModalProvider>
           <ThemeProvider value={navigationTheme}>
             <CameraProvider>
+              <FeedSharingHost />
               <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
               <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
                 {/* The monitor and playback are always on black, whatever the theme. */}
                 <Stack.Screen name="live" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
                 <Stack.Screen name="pair" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+                <Stack.Screen name="multiview" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
               </Stack>
             </CameraProvider>
           </ThemeProvider>

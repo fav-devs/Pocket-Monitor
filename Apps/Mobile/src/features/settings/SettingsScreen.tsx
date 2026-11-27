@@ -1,7 +1,8 @@
-import { Unlink01Icon, Wifi01Icon, WifiDisconnected01Icon } from '@hugeicons/core-free-icons';
+import { ServerStack01Icon, Unlink01Icon, Wifi01Icon, WifiDisconnected01Icon } from '@hugeicons/core-free-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { useCamera, useCameraSession } from '@/camera';
+import { desktopCameraEnabled } from '@/camera/bootstrap';
 import { Icon } from '@/components/icon';
 import { SettingsDestructiveButton, SettingsGroup, SettingsRow } from '@/components/settings-ui';
 import { Squircle } from '@/components/squircle';
@@ -60,6 +61,11 @@ export default function SettingsScreen() {
           </View>
         ) : null}
       </SettingsGroup>
+      {desktopCameraEnabled ? null : (
+        <SettingsGroup>
+          <SettingsRow icon={ServerStack01Icon} title="Server" onPress={() => router.push('/server')} chevron last />
+        </SettingsGroup>
+      )}
       {settingsGroups.map((group) => (
         <SettingsGroup key={group.label} label={group.label}>
           {group.ids.map((id, i) => {

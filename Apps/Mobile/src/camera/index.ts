@@ -3,6 +3,7 @@ export * from './session';
 export * from './defaults';
 export {
   CameraProvider,
+  CameraSessionScope,
   createDefaultSession,
   createDemoSession,
   currentCameraSession,

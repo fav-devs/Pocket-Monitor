@@ -44,7 +44,8 @@ export interface DiscoveredCamera {
 export type CameraNetworkPath =
   | { kind: 'softap'; ssid: string }
   | { kind: 'station'; ssid: string; host?: string }
-  | { kind: 'hotspot'; ssid: string };
+  /** `host` (optional, additive): the camera's last address on this phone's hotspot. */
+  | { kind: 'hotspot'; ssid: string; host?: string };
 
 /** A camera remembered on this device. Credentials live in secure storage, not here. */
 export interface SavedCamera {
