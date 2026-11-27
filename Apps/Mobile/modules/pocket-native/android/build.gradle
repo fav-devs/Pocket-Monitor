@@ -19,5 +19,13 @@ android {
 }
 
 dependencies {
+  // PocketHands: MediaPipe Tasks (hand landmarker, face detector; models in
+  // src/main/assets/pocket-hands, see NOTICE.md there) and CameraX for the front-camera source,
+  // at expo-camera's CameraX version so the app resolves one copy.
+  implementation 'com.google.mediapipe:tasks-vision:0.10.35'
+  def camerax_version = '1.6.0'
+  implementation "androidx.camera:camera-core:${camerax_version}"
+  implementation "androidx.camera:camera-camera2:${camerax_version}"
+  implementation "androidx.camera:camera-lifecycle:${camerax_version}"
   testImplementation 'junit:junit:4.13.2'
 }

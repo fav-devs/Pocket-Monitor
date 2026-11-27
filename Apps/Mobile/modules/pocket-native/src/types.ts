@@ -565,3 +565,91 @@ export interface PocketBackgroundIosMembers {
 
 /** The iOS view of `PocketBackground`: the shared members plus the iOS ones. */
 export type PocketBackgroundIosModule = Pick<PocketBackgroundNativeModule, 'isServing' | 'addListener'> & PocketBackgroundIosMembers;
+
+// ───────────────────────────── Hands (gestures) ─────────────────────────────
+// docs: modules/pocket-native/README.md "PocketHands". Native runs the models (iOS Apple Vision,
+// Android MediaPipe Tasks) on small pictures off the render path; every rule that turns
+// landmarks into gestures is TypeScript (`src/core/gestures`, the desktop's `pm_controller`).
+
+/** Where the hands are read from: the camera's live picture, or the phone's own front camera. */
+export type HandsSource = 'cameraFeed' | 'frontCamera';
+
+export interface HandsStartOptions {
+  source: HandsSource;
+  /** `cameraFeed`: the native video session (`VideoSource.sessionId`) whose decoded picture is read. */
+  sessionId?: string | null;
+  /** Pictures offered to the models per second (default 15, 1…20). One offered while busy is dropped. */
+  rate?: number;
+  /** Width the picture is scaled to, in proportion, before the models read it (default 480). */
+  width?: number;
+}
+
+/** One hand. */
+export interface HandsLandmarks {
+  /**
+   * 42 numbers, `x0, y0, x1, y1, …`: MediaPipe's 21 landmarks in order (0 wrist … 20 pinky tip)
+   * as fractions of the picture read (origin top-left, never mirrored).
+   */
+  points: number[];
+  /** 0…1. */
+  score: number;
+  /**
+   * MediaPipe's handedness label is `Right` on that picture (the desktop model's own reading).
+   * iOS maps Vision's chirality to the same convention.
+   */
+  right: boolean;
+}
+
+/** A face: left, top, width, height as fractions of the picture read. */
+export interface HandsFace {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  score: number;
+}
+
+/** `onHands`: one picture read (≤ 15 a second). */
+export interface HandsSeenEvent {
+  source: HandsSource;
+  hands: HandsLandmarks[];
+  /** The faces when this picture was searched for them (`setWantsFaces`, at most every 0.25 s); else null. */
+  faces?: HandsFace[] | null;
+  /** The picture's width over its height. */
+  aspect: number;
+  /** How long the models took on this picture, milliseconds. */
+  ms: number;
+}
+
+/** `onStatus`. */
+export interface HandsStatusEvent {
+  state: 'starting' | 'ready' | 'stopped' | 'failed';
+  /** What the models run on: `GPU` / `CPU` (Android MediaPipe), `Vision` (iOS). */
+  provider?: string | null;
+  error?: string | null;
+}
+
+/** `onAudio`: the microphone as 10 ms blocks (about ten a call), for the double clap. */
+export interface HandsAudioEvent {
+  sampleRate: number;
+  /** Each block's peak, mono, −1…1 scale. */
+  peaks: number[];
+  /** Each block's RMS level. */
+  levels: number[];
+}
+
+export interface PocketHandsNativeModule {
+  isAvailable(): boolean;
+  /** Starts reading hands (or switches source). Rejects when the camera is denied or missing. */
+  start(options: HandsStartOptions): Promise<void>;
+  /** Stops reading and releases the camera and the models. */
+  stop(): void;
+  /** Also look for faces, at most every 0.25 s. */
+  setWantsFaces(on: boolean): void;
+  /** Opens the microphone for `onAudio`. Rejects when it is denied. */
+  startMicrophone(): Promise<void>;
+  stopMicrophone(): void;
+  addListener(event: 'onHands', cb: (e: HandsSeenEvent) => void): { remove(): void };
+  addListener(event: 'onStatus', cb: (e: HandsStatusEvent) => void): { remove(): void };
+  addListener(event: 'onAudio', cb: (e: HandsAudioEvent) => void): { remove(): void };
+}

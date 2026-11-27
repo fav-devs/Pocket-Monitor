@@ -136,3 +136,18 @@ Unofficial copies and vivid variants are not committed.
   models on the GPU on Windows.
 
 The models run on the PC only. No camera picture or hand data leaves the machine.
+
+## Hand tracking models and runtime (Mobile)
+
+- **MediaPipe hand landmarker** (`hand_landmarker.task`, float16 v1) and **BlazeFace short-range
+  face detector** (`blaze_face_short_range.tflite`, float16 v1), Copyright Google LLC, Apache
+  License 2.0, bundled in the Android app from Google's published model files; see
+  `Apps/Mobile/modules/pocket-native/android/src/main/assets/pocket-hands/NOTICE.md` (source URLs
+  and SHA-256).
+- **MediaPipe Tasks Vision** (`com.google.mediapipe:tasks-vision`), Copyright Google LLC, Apache
+  License 2.0, linked into the Android app to run them (GPU delegate, CPU fallback).
+- **CameraX** (`androidx.camera`), The Android Open Source Project, Apache License 2.0, for the
+  front-camera gesture source on Android (already used by `expo-camera`).
+- iOS reads hands and faces with Apple's Vision framework (part of iOS) and ships no model.
+
+The models run on the phone only. No camera picture, hand data or sound leaves the device.

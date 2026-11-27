@@ -18,7 +18,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
 
   s.source_files = '**/*.{h,m,swift,metal}'
-  s.frameworks = 'CoreBluetooth', 'NetworkExtension', 'Network', 'VideoToolbox', 'Metal', 'MetalKit', 'CoreMedia', 'CoreVideo', 'GameController', 'CoreMotion'
+  s.frameworks = 'CoreBluetooth', 'NetworkExtension', 'Network', 'VideoToolbox', 'Metal', 'MetalKit', 'CoreMedia', 'CoreVideo', 'GameController', 'CoreMotion', 'Vision', 'AVFoundation'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     'SWIFT_COMPILATION_MODE' => 'wholemodule'

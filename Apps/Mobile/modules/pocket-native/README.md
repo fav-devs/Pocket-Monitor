@@ -16,6 +16,7 @@ Protocol policy (command building, reply parsing, status decode, watchdog, enabl
 | `PocketVideo` | `PocketVideoModule` | `video.PocketVideoModule` | `ios/Video`, `android/.../video` (video owner) |
 | `PocketGamepad` | `PocketGamepadModule` | `gamepad.PocketGamepadModule` | `ios/Gamepad`, `android/.../gamepad` |
 | `PocketHeadMotion` | `PocketHeadMotionModule` | `headmotion.PocketHeadMotionModule` | `ios/HeadMotion`, `android/.../headmotion` |
+| `PocketHands` | `PocketHandsModule` | `hands.PocketHandsModule` | `ios/Hands`, `android/.../hands`, `android/src/main/assets/pocket-hands` |
 
 Event names are the full contract names (`onAdvert`, `onDuml`, …), set explicitly with
 `@Event("onX")` because the macros would otherwise strip the `on` prefix.
@@ -140,6 +141,40 @@ Network denial or Android camera network lost.
 iOS `CMHeadphoneMotionManager` quaternion `(x, y, z, w)` + `CMDeviceMotion.timestamp`, and
 connect/disconnect events. Android reports `isAvailable() == false` and `start()` rejects.
 
+### PocketHands
+
+Hand landmarks and faces for the gestures (`src/core/gestures`, the desktop's `pm_controller`
+rules in TypeScript; `src/features/gestures` runs them). Native only reads pictures and sound;
+every rule is JS. JS starts it only while gestures are on, the live view is on screen and the
+app is in front, and stops it otherwise (camera, models and microphone released; nothing runs in
+the background, Android server mode included).
+
+| | iOS (`ios/Hands`) | Android (`android/.../hands`) |
+| --- | --- | --- |
+| Hands | Apple Vision `VNDetectHumanHandPoseRequest`, 2 hands, joints mapped to MediaPipe's 21 in order | MediaPipe Tasks `HandLandmarker` (`tasks-vision` 0.10.35, `hand_landmarker.task` float16 v1), VIDEO mode, 2 hands; GPU delegate, CPU when the GPU will not load |
+| Faces (when `setWantsFaces(true)`, ≤ every 0.25 s) | `VNDetectFaceRectanglesRequest` | MediaPipe `FaceDetector`, `blaze_face_short_range.tflite`, IMAGE mode, CPU |
+| `provider` | `Vision` | `GPU` / `CPU` |
+| Camera picture (`cameraFeed`) | a `DispatchSourceTimer` at `rate` on `pocket.hands` takes `PocketVideoSession.latestFrame()` (skipping one already read), copies it `width` across into its own BGRA buffer with `VTPixelTransferSession` (the decoder's pool buffer is let go at once) and runs Vision; a tick while busy is merged, so frames drop | a `PocketVideoSession.FrameTap` on the GL thread, only when the models are free, draws the latched OES picture (the relay encoder's `ingestOes` pass) `width` across into an `ImageReader` (RGBA, GPU output + CPU read) and swaps; the `pocket-hands` worker copies the buffer into a reused bitmap. No `glReadPixels` on the GL thread. The tap follows a remounted view's new decoder session |
+| Front camera (`frontCamera`) | `AVCaptureSession` 640×480, 15 fps where offered, late frames discarded, upright via `AVCaptureDevice.RotationCoordinator`, not mirrored | CameraX `ImageAnalysis` (1.6.0, expo-camera's), ~640×480 RGBA, keep-latest, bound to the Activity's lifecycle, rotated upright, not mirrored |
+| Microphone (`startMicrophone`) | `AVAudioEngine` input tap; audio session `.playAndRecord` / `.measurement`, mixes with others, previous category put back on stop | `AudioRecord` 16 kHz mono 16-bit, `VOICE_RECOGNITION` source, own thread |
+
+Events (≤ 15 Hz for hands): `onHands {source, hands: [{points: 42 numbers, score, right}], faces |
+null, aspect, ms}`, `onStatus {state: starting | ready | stopped | failed, provider, error}`,
+`onAudio {sampleRate, peaks, levels}` (ten 10 ms blocks a call, about 10 Hz; raw audio never
+crosses). Points are fractions of the picture read, origin top-left, never mirrored. `right` is
+MediaPipe's handedness label on that picture (the desktop's own reading); iOS maps Vision's
+`chirality` `.left` → `right` (MediaPipe's label assumes a mirrored picture) — **verify on a
+device**, the Stick hand setting swaps them either way.
+
+Permissions: the camera (`NSCameraUsageDescription`, Android `CAMERA`) for the front-camera
+source and the microphone (`NSMicrophoneUsageDescription`, Android `RECORD_AUDIO`) for the clap,
+set in `app.json` / the expo-camera plugin and asked for by JS (`expo-camera`) before `start` /
+`startMicrophone`; native refuses with `camera access is off` / `microphone access is off`.
+Models: `android/src/main/assets/pocket-hands/` (≈ 8 MB, Google's published files, licence and
+SHA-256 in `NOTICE.md` there and `THIRD-PARTY-NOTICES.md`), loaded from a direct buffer so asset
+compression does not matter. iOS ships no model. On web `src/native.web.ts` returns a made-up
+`PocketHands` (`demoHands.ts`) for the demo.
+
 ### PocketRelay host picture
 
 Phone-as-encoder (`docs/watcher-relay.md`): while sharing runs the host holds the camera's video
@@ -169,6 +204,7 @@ never sends `0x09/0xa8` in either mode.
 | Video sinks | per-session `pocket.datalink.video.<id>` | `pocket.datalink.video` executor |
 | Gamepad | main | main |
 | Head motion | `OperationQueue` `pocket.headmotion` | — |
+| Hands | serial queue `pocket.hands` (timer, Vision, front camera); mic tap thread | `pocket-hands` HandlerThread (MediaPipe, CameraX analyzer, ImageReader); GL thread draws only; `pocket-hands-mic` |
 
 JS calls only enqueue onto those; events are emitted from them (Expo schedules them onto JS).
 
@@ -205,3 +241,9 @@ usage was checked with `expo-modules-macros expand --diagnostics-only`; Kotlin b
   reported on iOS, TCP 7001 poke stays open, no `0x09/0xa8` is ever sent natively.
 - Gamepad: DualSense / Xbox pads on both platforms; Android Activity recreation keeps input.
 - Head motion: AirPods Pro / Max connect, samples and authorization denial.
+- Hands: `PocketHands` loads (iOS listed in `expo-module.config.json`; Android v2, not listed);
+  `onHands` at ~15 Hz with the live picture and the front camera; `provider` GPU on Android
+  (CPU fallback logged); `ms` per picture; the live view's presented fps and the 40 Hz ACK
+  unchanged while it reads; handedness matches between iOS and Android; faces found; the
+  microphone opens and closes with gestures (indicator), PiP audio still works after; nothing
+  runs after backgrounding (camera indicator off).

@@ -6,6 +6,7 @@ import type {
   PocketBluetoothNativeModule,
   PocketDatalinkNativeModule,
   PocketGamepadNativeModule,
+  PocketHandsNativeModule,
   PocketHeadMotionNativeModule,
   PocketRelayNativeModule,
   PocketVideoNativeModule,
@@ -76,6 +77,8 @@ export const PocketVideo: PocketVideoNativeModule | null = video
 export const PocketWifi = requireOptionalNativeModule<PocketWifiNativeModule>('PocketWifi');
 export const PocketGamepad = requireOptionalNativeModule<PocketGamepadNativeModule>('PocketGamepad');
 export const PocketHeadMotion = requireOptionalNativeModule<PocketHeadMotionNativeModule>('PocketHeadMotion');
+/** Hand and face gestures (Apple Vision / MediaPipe) and the clap microphone. Null in builds without it. */
+export const PocketHands = requireOptionalNativeModule<PocketHandsNativeModule>('PocketHands');
 /** Watcher relay (host and watcher). Null on web and in builds without the module. */
 export const PocketRelay = requireOptionalNativeModule<PocketRelayNativeModule>('PocketRelay');
 

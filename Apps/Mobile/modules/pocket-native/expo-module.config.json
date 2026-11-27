@@ -12,7 +12,8 @@
       "PocketGamepadModule",
       "PocketHeadMotionModule",
       "PocketBackgroundModule",
-      "PocketRelayModule"
+      "PocketRelayModule",
+      "PocketHandsModule"
     ]
   },
   "android": {
