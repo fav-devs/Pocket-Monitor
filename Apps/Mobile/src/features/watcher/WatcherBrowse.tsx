@@ -16,7 +16,8 @@ import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
 import { Squircle } from '@/components/squircle';
 import { TextField } from '@/components/text-field';
-import { CONTENT_MAX_WIDTH } from '@/constants/layout';
+import { WidePage } from '@/components/settings-ui';
+import { CONTENT_MAX_WIDTH, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { passcodeEntry } from '@/features/settings/settingsStore';
 
@@ -85,6 +86,7 @@ export function WatcherBrowse({ hosts, host, info, onBack, onJoin, onPasscode, o
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
+  const wideLayout = useWideLayout();
   const [passcode, setPasscode] = useState('');
   const needsPasscode = info.phase === 'needs-passcode';
   const joiningId = host && (info.phase === 'connecting' || info.phase === 'reconnecting') ? host.id : null;
@@ -105,6 +107,70 @@ export function WatcherBrowse({ hosts, host, info, onBack, onJoin, onPasscode, o
     if (answer) onPasscode(answer);
   };
 
+  const list = (
+    <>
+      {hosts.hosts.length ? (
+        <View style={styles.card}>
+          {hosts.hosts.map((h, i) => (
+            <HostRow
+              key={h.id}
+              host={h}
+              joining={joiningId === h.id}
+              status={rowStatus(h)}
+              latencyMs={latency?.(h.id)}
+              last={i === hosts.hosts.length - 1}
+              onPress={() => onJoin(h)}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.empty}>
+          <Squircle width={56} height={56} radius={18} color={colors.surface}>
+            {hosts.browsing && !hosts.error ? <Spinner opacity={1} color={colors.mutedForeground} /> : <Icon icon={SmartPhone01Icon} size={24} color={colors.mutedForeground} />}
+          </Squircle>
+          <Text style={styles.emptyTitle}>{hosts.error ? 'Can’t look for feeds' : 'Looking for feeds…'}</Text>
+          <Text style={styles.line}>{hosts.error ?? 'Join the camera Wi-Fi, then turn on Share this feed on the host.'}</Text>
+        </View>
+      )}
+
+      {needsPasscode && host ? (
+        <View style={styles.passcode}>
+          <Text style={styles.fieldLabel}>{`Passcode for ${host.name}`}</Text>
+          <TextField
+            value={passcode}
+            onChangeText={setPasscode}
+            placeholder="Passcode"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+            secureTextEntry
+            returnKeyType="join"
+            onSubmitEditing={submit}
+            accessibilityLabel="Passcode"
+            style={styles.input}
+          />
+          {info.error ? <Text style={styles.error}>{info.error}</Text> : null}
+          <Button title="Join" size="lg" onPress={submit} disabled={!answer} />
+        </View>
+      ) : null}
+      {info.phase === 'failed' && info.error ? <Text style={styles.error}>{info.error}</Text> : null}
+      {wifiMessage ? <Text style={styles.error}>{wifiMessage}</Text> : null}
+
+      {onScanWifi ? (
+        <View style={[styles.footer, wideLayout && styles.footerWide]}>
+          <Button title="Join camera Wi-Fi" variant="secondary" size="lg" icon={QrCode01Icon} onPress={onScanWifi} loading={wifiJoining} />
+        </View>
+      ) : null}
+    </>
+  );
+  if (wideLayout) {
+    return (
+      <WidePage title="Watch a feed" detail="Feeds sharing on this Wi-Fi">
+        <View style={styles.wideColumn}>{list}</View>
+      </WidePage>
+    );
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top + spacing.sm, paddingBottom: Math.max(insets.bottom, spacing.md), paddingLeft: Math.max(insets.left, spacing.md), paddingRight: Math.max(insets.right, spacing.md) }]}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back" hitSlop={8} onPress={onBack} style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
@@ -113,58 +179,7 @@ export function WatcherBrowse({ hosts, host, info, onBack, onJoin, onPasscode, o
       <ScrollView contentContainerStyle={styles.column} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Watch a feed</Text>
         <Text style={styles.subtitle}>Feeds sharing on this Wi-Fi</Text>
-        {hosts.hosts.length ? (
-          <View style={styles.card}>
-            {hosts.hosts.map((h, i) => (
-              <HostRow
-                key={h.id}
-                host={h}
-                joining={joiningId === h.id}
-                status={rowStatus(h)}
-                latencyMs={latency?.(h.id)}
-                last={i === hosts.hosts.length - 1}
-                onPress={() => onJoin(h)}
-              />
-            ))}
-          </View>
-        ) : (
-          <View style={styles.empty}>
-            <Squircle width={56} height={56} radius={18} color={colors.surface}>
-              {hosts.browsing && !hosts.error ? <Spinner opacity={1} color={colors.mutedForeground} /> : <Icon icon={SmartPhone01Icon} size={24} color={colors.mutedForeground} />}
-            </Squircle>
-            <Text style={styles.emptyTitle}>{hosts.error ? 'Can’t look for feeds' : 'Looking for feeds…'}</Text>
-            <Text style={styles.line}>{hosts.error ?? 'Join the camera Wi-Fi, then turn on Share this feed on the host.'}</Text>
-          </View>
-        )}
-
-        {needsPasscode && host ? (
-          <View style={styles.passcode}>
-            <Text style={styles.fieldLabel}>{`Passcode for ${host.name}`}</Text>
-            <TextField
-              value={passcode}
-              onChangeText={setPasscode}
-              placeholder="Passcode"
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoFocus
-              secureTextEntry
-              returnKeyType="join"
-              onSubmitEditing={submit}
-              accessibilityLabel="Passcode"
-              style={styles.input}
-            />
-            {info.error ? <Text style={styles.error}>{info.error}</Text> : null}
-            <Button title="Join" size="lg" onPress={submit} disabled={!answer} />
-          </View>
-        ) : null}
-        {info.phase === 'failed' && info.error ? <Text style={styles.error}>{info.error}</Text> : null}
-        {wifiMessage ? <Text style={styles.error}>{wifiMessage}</Text> : null}
-
-        {onScanWifi ? (
-          <View style={styles.footer}>
-            <Button title="Join camera Wi-Fi" variant="secondary" size="lg" icon={QrCode01Icon} onPress={onScanWifi} loading={wifiJoining} />
-          </View>
-        ) : null}
+        {list}
       </ScrollView>
     </View>
   );
@@ -176,6 +191,7 @@ function createStyles(colors: ThemeColors) {
     back: { alignSelf: 'flex-start' as const, paddingVertical: 4, marginLeft: -4, minHeight: 44, justifyContent: 'center' as const },
     pressed: { opacity: 0.7 },
     column: { width: '100%' as const, maxWidth: CONTENT_MAX_WIDTH, alignSelf: 'center' as const, gap: spacing.sm, paddingTop: spacing.md, paddingBottom: spacing.lg },
+    wideColumn: { gap: spacing.sm },
     title: { fontFamily: fonts.semibold, fontSize: 28, letterSpacing: -0.6, color: colors.foreground },
     subtitle: { fontFamily: fonts.regular, fontSize: 14, color: colors.mutedForeground, marginBottom: spacing.sm },
     card: { backgroundColor: colors.surface, borderRadius: radius.lg, overflow: 'hidden' as const },
@@ -193,5 +209,6 @@ function createStyles(colors: ThemeColors) {
     input: { minHeight: 44, fontSize: 15 },
     error: { fontFamily: fonts.regular, fontSize: 13, color: colors.destructive },
     footer: { gap: spacing.sm, marginTop: spacing.lg },
+    footerWide: { alignItems: 'flex-start' as const },
   };
 }

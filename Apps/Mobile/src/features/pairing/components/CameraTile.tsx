@@ -1,5 +1,6 @@
 import { Camera01Icon, MoreHorizontalIcon } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
+import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
 import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
@@ -50,6 +51,7 @@ export function CameraTile({
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const [hovered, setHovered] = useState(false);
   return (
     <View style={{ width }}>
       <Pressable
@@ -61,9 +63,11 @@ export function CameraTile({
         disabled={disabled}
         onPress={onPress}
         onLongPress={onMore}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
         style={({ pressed }) => [disabled && styles.disabled, pressed && styles.pressed]}
       >
-        <View style={[styles.picture, { width, height: Math.round(width * 0.75) }]}>
+        <View style={[styles.picture, hovered && !disabled && styles.pictureHover, { width, height: Math.round(width * 0.75) }]}>
           <View style={item.away ? styles.away : null}>
             <Icon icon={item.icon ?? Camera01Icon} size={28} color={colors.mutedForeground} />
           </View>
@@ -123,6 +127,7 @@ function createStyles(colors: ThemeColors) {
       alignItems: 'center' as const,
       justifyContent: 'center' as const,
     },
+    pictureHover: { backgroundColor: colors.surfaceStrong },
     away: { opacity: 0.5 },
     pill: {
       position: 'absolute' as const,

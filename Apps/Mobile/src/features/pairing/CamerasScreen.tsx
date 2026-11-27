@@ -30,7 +30,8 @@ import { SectionTitle } from '@/components/section-title';
 import { SettingsGroup, SettingsRow } from '@/components/settings-ui';
 import { Spinner } from '@/components/spinner';
 import { Squircle } from '@/components/squircle';
-import { gridColumns, useScreenSize } from '@/constants/layout';
+import { ToolbarButton, PageToolbar } from '@/components/page-toolbar';
+import { WIDE_PAGE_PADDING, gridColumns, useScreenSize, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { BrandMark, LaunchSplashOverlay } from '@/features/startup/LaunchSplash';
 import { useSavedCameras } from '@/state/savedCameras';
@@ -65,6 +66,8 @@ export default function CamerasScreen() {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const { width, large, landscape } = useScreenSize();
+  // Desktop / landscape tablet: the sidebar carries Media, Multiview, Watch and Settings.
+  const wideLayout = useWideLayout();
 
   const saved = useSavedCameras((s) => s.cameras);
   const rename = useSavedCameras((s) => s.rename);
@@ -106,8 +109,8 @@ export default function CamerasScreen() {
   const seen = new Map(nearby.map((n) => [n.id, n]));
 
   // Tiles: two across a phone, more on a landscape phone or a tablet.
-  const sideLeft = Math.max(insets.left, GRID_PAD);
-  const sideRight = Math.max(insets.right, GRID_PAD);
+  const sideLeft = wideLayout ? WIDE_PAGE_PADDING : Math.max(insets.left, GRID_PAD);
+  const sideRight = wideLayout ? WIDE_PAGE_PADDING : Math.max(insets.right, GRID_PAD);
   const inner = width - sideLeft - sideRight;
   const cols = gridColumns(inner, large ? GRID_MIN_TILE_LARGE : GRID_MIN_TILE, GRID_GAP, 2, 6);
   const tileW = Math.floor((inner - GRID_GAP * (cols - 1)) / cols);
@@ -163,6 +166,23 @@ export default function CamerasScreen() {
     </View>
   );
 
+  const wideHeader = (
+    <PageToolbar
+      title="Cameras"
+      bordered={false}
+      actions={
+        <>
+          {scanning ? (
+            <View accessible accessibilityLabel="Scanning for cameras" style={styles.toolbarSpinner}>
+              <Spinner size={16} opacity={1} color={colors.mutedForeground} />
+            </View>
+          ) : null}
+          <ToolbarButton testID="cameras.pair" icon={PlusSignIcon} title="Pair camera" label="Pair a new camera" variant="primary" disabled={busy} onPress={() => router.push('/pair')} />
+        </>
+      }
+    />
+  );
+
   const demoCard = (
     <Pressable
       testID={`cameras.card.${DEMO_CAMERA.id}`}
@@ -170,7 +190,7 @@ export default function CamerasScreen() {
       accessibilityLabel={demoLive ? 'Open monitor Try the demo camera' : 'Start demo Try the demo camera'}
       disabled={busy}
       onPress={() => (demoLive ? router.push('/live') : startDemo())}
-      style={({ pressed }) => [styles.feature, sideBySide && styles.flexCard, busy && styles.disabled, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.feature, sideBySide && !wideLayout && styles.flexCard, wideLayout && styles.featureWide, busy && styles.disabled, pressed && styles.pressed]}
     >
       <IconChip icon={PlayIcon} size={48} />
       <View style={styles.featureText}>
@@ -213,14 +233,15 @@ export default function CamerasScreen() {
 
   return (
     <View style={styles.page}>
-      <View style={{ paddingTop: insets.top + spacing.sm, paddingLeft: sideLeft, paddingRight: sideRight }}>{header}</View>
+      {wideLayout ? wideHeader : <View style={{ paddingTop: insets.top + spacing.sm, paddingLeft: sideLeft, paddingRight: sideRight }}>{header}</View>}
       <ScrollView
         style={styles.flex}
         contentContainerStyle={[
           styles.content,
+          wideLayout && styles.contentWide,
           { paddingLeft: sideLeft, paddingRight: sideRight, paddingBottom: Math.max(insets.bottom, 12) + spacing.xl },
         ]}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={wideLayout}
       >
         {sorted.length ? (
           <View style={styles.section}>
@@ -304,7 +325,7 @@ export default function CamerasScreen() {
           <SectionTitle title="More ways to monitor" dot={colors.accent} />
           <View style={[styles.extras, sideBySide && styles.extrasRow]}>
             {demoCard}
-            {moreWays}
+            {wideLayout ? null : moreWays}
           </View>
         </View>
       </ScrollView>
@@ -342,7 +363,8 @@ export default function CamerasScreen() {
           setRemoveTarget(null);
         }}
       />
-      <LaunchSplashOverlay />
+      {/* The wide layout's shell shows the splash over the whole window. */}
+      {wideLayout ? null : <LaunchSplashOverlay />}
     </View>
   );
 }
@@ -402,6 +424,9 @@ function createStyles(colors: ThemeColors) {
       justifyContent: 'center' as const,
     },
     content: { gap: spacing.xl, paddingTop: spacing.xs },
+    contentWide: { paddingTop: spacing.sm },
+    toolbarSpinner: { width: 32, height: 32, alignItems: 'center' as const, justifyContent: 'center' as const },
+    featureWide: { flex: 1, maxWidth: 520 },
     section: { gap: spacing.md },
     grid: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: GRID_GAP, rowGap: spacing.md },
     extras: { gap: spacing.md },

@@ -27,7 +27,8 @@ import { WifiQrScanner, wifiQrScanAvailable } from '@/features/pairing/WifiQrSca
 import { useWatcher } from './useWatcher';
 import { WatcherBrowse } from './WatcherBrowse';
 import { WatcherLiveView } from './WatcherLiveView';
-import { CONTENT_MAX_WIDTH } from '@/constants/layout';
+import { WidePage } from '@/components/settings-ui';
+import { CONTENT_MAX_WIDTH, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 
 function goBack() {
@@ -192,6 +193,7 @@ function DesktopWatcher() {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
+  const wideLayout = useWideLayout();
   const [hosts, setHosts] = useState<RelayHosts>({ hosts: [], browsing: true, error: null });
   const [info, setInfo] = useState<RelayInfo | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -233,16 +235,18 @@ function DesktopWatcher() {
       .finally(() => setJoining(false));
   };
 
-  return (
-    <View style={[styles.root, { paddingTop: insets.top + spacing.sm, paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
-      <BackButton />
-      <ScrollView contentContainerStyle={styles.column} keyboardShouldPersistTaps="handled">
+  const body = (
+      <>
         {watching && info ? (
           <Watching info={info} />
         ) : (
           <>
-            <Text style={styles.title}>Watch a shared feed</Text>
-            <Text style={styles.subtitle}>Sharing on this Wi-Fi</Text>
+            {wideLayout ? null : (
+              <>
+                <Text style={styles.title}>Watch a shared feed</Text>
+                <Text style={styles.subtitle}>Sharing on this Wi-Fi</Text>
+              </>
+            )}
             {hosts.hosts.length ? (
               <View style={styles.card}>
                 {hosts.hosts.map((h, i) => (
@@ -270,11 +274,25 @@ function DesktopWatcher() {
               style={styles.input}
             />
             {error ? <Text style={styles.error}>{error}</Text> : null}
-            <View style={styles.footer}>
+            <View style={[styles.footer, wideLayout && styles.footerWide]}>
               <Button title={host ? `Watch ${host.name}` : 'Watch'} size="lg" onPress={join} loading={joining} disabled={!host} />
             </View>
           </>
         )}
+      </>
+  );
+  if (wideLayout) {
+    return (
+      <WidePage title={watching ? 'Watching' : 'Watch a shared feed'} detail={watching ? null : 'Sharing on this Wi-Fi'}>
+        <View style={styles.wideColumn}>{body}</View>
+      </WidePage>
+    );
+  }
+  return (
+    <View style={[styles.root, { paddingTop: insets.top + spacing.sm, paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+      <BackButton />
+      <ScrollView contentContainerStyle={styles.column} keyboardShouldPersistTaps="handled">
+        {body}
       </ScrollView>
     </View>
   );
@@ -305,6 +323,8 @@ function createStyles(colors: ThemeColors) {
     input: { minHeight: 44, fontSize: 15 },
     error: { fontFamily: fonts.regular, fontSize: 13, color: colors.destructive },
     footer: { gap: spacing.sm, marginTop: spacing.lg },
+    footerWide: { alignItems: 'flex-start' as const },
+    wideColumn: { gap: spacing.sm },
     readout: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 12, paddingHorizontal: spacing.md, minHeight: 48 },
     readoutLabel: { fontFamily: fonts.regular, fontSize: 15, color: colors.mutedForeground, width: 84 },
     readoutValue: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground, flexShrink: 1 },

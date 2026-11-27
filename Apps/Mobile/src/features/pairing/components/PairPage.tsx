@@ -1,13 +1,14 @@
 import { AlertCircleIcon, ArrowLeft01Icon, Camera01Icon, HelpCircleIcon, MoreHorizontalIcon } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
 import { useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ActionSheet } from '@/components/action-sheet';
 import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { Squircle } from '@/components/squircle';
-import { useScreenSize } from '@/constants/layout';
+import { useEscapeKey } from '@/components/desktop';
+import { useScreenSize, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { ProgressLabel } from './StatusBits';
 
@@ -77,6 +78,9 @@ export function PairPage({
   const insets = useSafeAreaInsets();
   const { large, landscape } = useScreenSize();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Wide layout: the flow is a dialog over the page it was opened from; Esc closes it.
+  const dialog = useWideLayout();
+  useEscapeKey(onExit, dialog);
   const step = Math.min(Math.max(0, currentStep), steps.length - 1);
   // An empty page (nothing to connect) is a centred empty state; a failure keeps its checklist.
   const empty = !!hero && !children;
@@ -168,6 +172,28 @@ export function PairPage({
     </>
   );
 
+  const dialogFooter = (
+    <View style={styles.dialogFooter}>
+      {hint ? (
+        <Text numberOfLines={2} style={[styles.hint, styles.hintStart, styles.dialogHint]}>
+          {hint}
+        </Text>
+      ) : (
+        <View style={styles.flex} />
+      )}
+      {backAction ? <Button title={backAction.title} variant="ghost" onPress={backAction.onPress} /> : null}
+      {primaryAction ? (
+        <Button
+          testID="pair.primary"
+          title={primaryAction.title}
+          disabled={!primaryAction.enabled}
+          onPress={primaryAction.onPress}
+          style={styles.dialogPrimary}
+        />
+      ) : null}
+    </View>
+  );
+
   const footer = (
     <View style={styles.footer}>
       {hint ? (
@@ -206,6 +232,27 @@ export function PairPage({
     paddingLeft: Math.max(insets.left, spacing.md),
     paddingRight: Math.max(insets.right, spacing.md),
   };
+
+  if (dialog) {
+    return (
+      <View style={styles.backdrop}>
+        <View accessibilityRole="none" style={styles.dialog}>
+          <View style={styles.dialogTop}>{topBar}</View>
+          <ScrollView
+            style={styles.dialogScroll}
+            contentContainerStyle={[styles.content, styles.dialogContent, empty && styles.dialogEmpty]}
+            keyboardShouldPersistTaps="handled"
+          >
+            {hero ? null : stepper}
+            {intro}
+            {content}
+          </ScrollView>
+          {primaryAction || backAction || hint ? dialogFooter : null}
+        </View>
+        {menu}
+      </View>
+    );
+  }
 
   if (split) {
     return (
@@ -255,6 +302,45 @@ export function PairPage({
 function createStyles(colors: ThemeColors) {
   return {
     root: { flex: 1, backgroundColor: colors.background },
+    backdrop: {
+      flex: 1,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      padding: spacing.xl,
+      backgroundColor: 'rgba(0,0,0,0.45)',
+    },
+    dialog: {
+      width: '100%' as const,
+      maxWidth: FLOW_MAX_WIDTH,
+      maxHeight: '100%' as const,
+      minHeight: 420,
+      borderRadius: radius.xl,
+      backgroundColor: colors.background,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.borderStrong,
+      overflow: 'hidden' as const,
+      shadowColor: '#000',
+      shadowOpacity: 0.28,
+      shadowRadius: 40,
+      shadowOffset: { width: 0, height: 18 },
+      elevation: 12,
+    },
+    dialogTop: { paddingHorizontal: 18, paddingTop: 6 },
+    dialogScroll: { flexGrow: 0, flexShrink: 1 },
+    dialogContent: { paddingHorizontal: 28, paddingBottom: spacing.lg },
+    dialogEmpty: { minHeight: 300, justifyContent: 'center' as const },
+    dialogFooter: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing.sm,
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      marginTop: 'auto' as const,
+    },
+    dialogHint: { flex: 1, paddingBottom: 0 },
+    dialogPrimary: { minWidth: 120 },
     flex: { flex: 1 },
     column: { flex: 1, width: '100%' as const, alignSelf: 'center' as const },
     columnLarge: { maxWidth: FLOW_MAX_WIDTH },
