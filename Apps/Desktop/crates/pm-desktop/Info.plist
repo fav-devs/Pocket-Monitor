@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the macOS bundle's Info.plist by Tauri, and embedded into macOS debug builds
+  (tauri-build), so `cargo run -p pm-desktop` may use Bluetooth and Location too.
+  build-tauri-macos.sh has macos/package-app.py merge it into the bundle it makes.
+  The same usage strings as the old viewfinder's bundle (macos/package-app.py).
+-->
+<plist version="1.0">
+<dict>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Pair with your DJI Osmo camera over Bluetooth.</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Pair with your DJI Osmo camera over Bluetooth.</string>
+  <key>NSLocationUsageDescription</key>
+  <string>Fill in the name of your Wi-Fi network when adding the camera to it.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Fill in the name of your Wi-Fi network when adding the camera to it.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Use a webcam for hand gesture controls.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Monitor audio from your selected input.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Find and connect to cameras and shared feeds on your network.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_pocket-mon._tcp</string>
+    <string>_opc-mon._tcp</string>
+  </array>
+</dict>
+</plist>
