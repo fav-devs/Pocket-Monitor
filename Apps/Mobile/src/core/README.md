@@ -66,6 +66,7 @@ repeats belong only to `connection/feedWatchdog.ts`.
 | `multicam/recovery.ts` | OpenCineMulticam `Recovery.swift` (`RecoveryBudget`), OpenCineDJI `MultiviewRecovery` budget, AppKit `MultiviewRepairRace` | done, tested |
 | `multicam/recordAll.ts` | OpenCineMulticam `RecordAll.swift`, `GroupRecord.swift` (strict plan), AppKit `MultiviewRecordConfirmation` (8 s) | done, tested (slots stand in for entries; no leases/epochs) |
 | `multicam/stageJournal.ts` | AppKit `MultiviewStageJournal.swift`, `MultiviewCopy`, OpenCineDJI `MultiviewExit.swift` (`restoreWithRetry`) | done, tested |
+| `gestures/` (`gesture`, `hand`, `vision`, `clap`, `drive`) | Desktop Rust `pm_controller` `gesture.rs`, `hand.rs` (+ `handnet::Hand` helpers and landmark smoothing), `vision.rs` `FeedReader`/`HandOverlay`, `clap.rs`, the gesture parts of `input.rs` | done, tested (the Rust unit tests with the same vectors); not in the barrel, import `@/core/gestures` |
 | `index.ts` | barrel | done |
 
 Not ported: `GimbalCluster` (UI layout; lives with the RN live screen), `GimbalMoveEngine`,
