@@ -36,7 +36,12 @@ repeats belong only to `connection/feedWatchdog.ts`.
 | `status/camCap.ts` | `CamCap.swift`, `CamCap+DJIWire.swift` | done, tested |
 | `status/audio.ts` | OpenCineDJI `CamAudioStatus.swift` | done, tested |
 | `status/trackingBox.ts` | `TrackingBox.swift` (geometry), `TrackingBox+DJIWire.swift` | done; face/AF policies not ported |
-| `status/mediaManifest.ts` | `MediaManifest+DJIWire.swift` (chunk assembler + CompositePack decode) | done, tested on `nano-manifest.bin`; pagination + HTTP paths not ported |
+| `status/mediaManifest.ts` | `MediaManifest+DJIWire.swift` (chunk assembler + CompositePack decode) | done, tested on `nano-manifest.bin` |
+| `library/http.ts` | `MediaManifest.swift` `MediaHTTP`, `DJIMediaHTTPSource.swift` (`/v2` URL, store order and winners, preview chain, cache names, retry rule) | done, tested (vectors from the Swift and `opc-media` tests) |
+| `library/pagination.ts` | `MediaManifest+DJIWire.swift` (`seedPagination` / `stepPagination` / `storeHasOlderPage`, slice info) | done, tested |
+| `library/browse.ts` | `DjiAppleMediaService.swift` (enter playback ×3, SD list → trigger → internal list, collect windows, empty-SD retry, older pages while playback holds) | done, tested under a fake clock; upstream order, not the desktop's older `browse.rs` |
+| `library/resume.ts` | `MediaLiveResume.swift`, `DjiAppleMediaLiveReturn.swift` | done, tested |
+| `library/sourcePolicy.ts` | `DJIMediaSourcePolicy.swift` | done, tested |
 | `ble/advert.ts` | OpenCineDJI `BleAdvert.swift` | done, tested |
 | `ble/pairing.ts` | `DjiAppleConnectionRun.swift` (pairing / Wi-Fi handoff decisions) | done, tested |
 | `ble/stationJoin.ts` | OpenCineDJI `StationJoin.swift` | done, tested (I/O injected) |

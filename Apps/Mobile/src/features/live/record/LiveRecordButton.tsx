@@ -2,9 +2,10 @@ import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Animated, { interpolateColor, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useCamera } from '@/camera';
-import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { fonts, type ThemeColors, useThemedStyles } from '@/constants/theme';
+import { recordRed, recordRedRing } from '@/constants/monitor';
 import { isPhotoMode } from '../format';
-import { onVideo, textShadow, withAlphaHex } from '../chrome/primitives';
+import { onVideo, textShadow } from '../chrome/primitives';
 
 const SIZE = 84;
 const CORE = SIZE - 20;
@@ -12,17 +13,16 @@ const CORE_RECORDING = 30;
 const RING_IDLE = 'rgba(255,255,255,0.85)';
 
 /**
- * ai-cut's record button: an 84pt ring (6pt white) around a dotPink core. Recording, the ring
- * grows to 1.15 and turns pink, the core becomes a 30pt rounded square. Stills: a white core.
+ * ai-cut's record button: an 84pt ring (6pt white) around a record-red core. Recording, the ring
+ * grows to 1.15 and turns red, the core becomes a 30pt rounded square. Stills: a white core.
  */
 export function MonitorRecordLamp({ recording, photo }: { recording: boolean; photo: boolean }) {
-  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const t = useSharedValue(recording ? 1 : 0);
   useEffect(() => {
     t.value = withTiming(recording ? 1 : 0, { duration: 220 });
   }, [recording, t]);
-  const ringRecording = withAlphaHex(colors.dotPink, 0.45);
+  const ringRecording = recordRedRing;
   const ring = useAnimatedStyle(() => ({
     transform: [{ scale: 1 + 0.15 * t.value }],
     borderColor: interpolateColor(t.value, [0, 1], [RING_IDLE, ringRecording]),
@@ -84,7 +84,7 @@ export function RecordCountdownOverlay() {
   );
 }
 
-function createStyles(colors: ThemeColors) {
+function createStyles(_colors: ThemeColors) {
   return {
     box: { width: SIZE, height: SIZE, alignItems: 'center' as const, justifyContent: 'center' as const },
     ring: {
@@ -95,7 +95,7 @@ function createStyles(colors: ThemeColors) {
       borderWidth: 6,
       borderColor: RING_IDLE,
     },
-    core: { width: CORE, height: CORE, borderRadius: CORE / 2, backgroundColor: colors.dotPink },
+    core: { width: CORE, height: CORE, borderRadius: CORE / 2, backgroundColor: recordRed },
     corePhoto: { backgroundColor: onVideo.ink },
     countdown: {
       position: 'absolute' as const,

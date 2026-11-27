@@ -5,14 +5,16 @@ import { Pressable } from 'react-native';
 import { Icon } from '@/components/icon';
 import { Sheet, SheetDockProvider } from '@/components/sheet';
 import { useTheme } from '@/constants/theme';
-import { CAPTURE_TITLES, CaptureSheetBody, useCaptureSheetAdmission } from '../capture/CaptureSheetHost';
+import { CameraSettingsSheet } from '../capture/CameraSettingsSheet';
+import { CAPTURE_PANEL_TITLES, CaptureSheetBody, capturePanelFor, useCaptureSheetAdmission, type CapturePanel } from '../capture/CaptureSheetHost';
+import { ExposurePanel } from '../capture/ExposurePanel';
 import { LiveGimbalPanel } from '../gimbal/LiveGimbalControls';
 import { MonitorZoomDial } from '../gimbal/MonitorZoomDial';
 import { MotionControlEditor } from '../gimbal/MotionControl';
 import type { FieldMonitorLayout } from '../layout/fieldMonitorLayout';
-import { useLiveUi, type CaptureSheetId } from '../liveUiStore';
+import { useLiveUi } from '../liveUiStore';
 
-type Panel = { kind: 'capture'; id: CaptureSheetId } | { kind: 'gimbal' } | { kind: 'motion' } | { kind: 'zoom' };
+type Panel = { kind: 'capture'; panel: CapturePanel } | { kind: 'gimbal' } | { kind: 'motion' } | { kind: 'zoom' };
 
 function MinimizeAction() {
   const { colors } = useTheme();
@@ -25,7 +27,8 @@ function MinimizeAction() {
 }
 
 /**
- * Every panel the monitor opens — capture values, gimbal controls, Motion Control, zoom — in
+ * Every panel the monitor opens — exposure, camera settings, format, mode, gimbal controls,
+ * Motion Control, zoom — in
  * one shared preview Sheet with passthrough, so the picture stays in view and live. Landscape
  * docks it beside the picture on the leading side (the stick and record stay reachable);
  * portrait keeps it under the picture.
@@ -35,6 +38,7 @@ export function LiveSheetHost({
   chromeShown,
   notice,
   session,
+  onOpenSettings,
 }: {
   layout: FieldMonitorLayout;
   chromeShown: boolean;
@@ -45,18 +49,21 @@ export function LiveSheetHost({
    * re-scoped inside the sheet. Absent: the panels use the app's session, as before.
    */
   session?: CameraSession;
+  /** Optional (additive). The camera settings sheet's "All settings" row; default pushes /settings. */
+  onOpenSettings?: () => void;
 }) {
   useCaptureSheetAdmission();
   const captureSheet = useLiveUi((s) => s.captureSheet);
   const gimbalPanel = useLiveUi((s) => s.gimbalPanel);
   const zoomDialOpen = useLiveUi((s) => s.zoomDialOpen);
+  const cameraTab = useLiveUi((s) => s.cameraTab);
   const set = useLiveUi((s) => s.set);
 
   let open: Panel | null = null;
   if (gimbalPanel === 'editor') open = { kind: 'motion' };
   else if (chromeShown && gimbalPanel === 'sheet') open = { kind: 'gimbal' };
   else if (chromeShown && zoomDialOpen) open = { kind: 'zoom' };
-  else if (chromeShown && captureSheet) open = { kind: 'capture', id: captureSheet };
+  else if (chromeShown && captureSheet) open = { kind: 'capture', panel: capturePanelFor(captureSheet, cameraTab) };
 
   // What the sheet showed last stays while it slides away.
   const last = useRef<Panel>({ kind: 'gimbal' });
@@ -74,7 +81,7 @@ export function LiveSheetHost({
 
   const title =
     panel.kind === 'capture'
-      ? CAPTURE_TITLES[panel.id]
+      ? CAPTURE_PANEL_TITLES[panel.panel.kind]
       : panel.kind === 'gimbal'
         ? 'Gimbal'
         : panel.kind === 'motion'
@@ -83,7 +90,13 @@ export function LiveSheetHost({
 
   const body =
     panel.kind === 'capture' ? (
-      <CaptureSheetBody id={panel.id} />
+      panel.panel.kind === 'exposure' ? (
+        <ExposurePanel />
+      ) : panel.panel.kind === 'camera' ? (
+        <CameraSettingsSheet onOpenSettings={onOpenSettings} />
+      ) : (
+        <CaptureSheetBody id={panel.panel.kind} />
+      )
     ) : panel.kind === 'gimbal' ? (
       <LiveGimbalPanel notice={notice} />
     ) : panel.kind === 'motion' ? (

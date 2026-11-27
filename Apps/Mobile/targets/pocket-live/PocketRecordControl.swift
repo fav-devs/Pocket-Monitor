@@ -16,7 +16,7 @@ struct PocketRecordControl: ControlWidget {
           isOn ? "Recording" : value.live ? "Standby" : "No camera",
           systemImage: isOn ? "record.circle.fill" : "record.circle")
       }
-      .tint(PocketStyle.dotPink)  // VERIFY: ControlWidgetTemplate.tint on iOS 18
+      .tint(PocketStyle.recordRed)  // VERIFY: ControlWidgetTemplate.tint on iOS 18
     }
     .displayName("Record")
     .description("Start or stop recording on the connected camera.")

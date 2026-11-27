@@ -30,7 +30,7 @@ import LivePicture from '@/features/picture/LivePicture';
 import { useAssists } from '@/state/assists';
 import { usePreferences } from '@/state/preferences';
 import { useTheme } from '@/constants/theme';
-import { CaptureControlBar, captureTileCount } from './capture/CaptureControlBar';
+import { CaptureReadout } from './capture/CaptureReadout';
 import { MonitorExposureGauge } from './capture/MonitorExposureGauge';
 import { LiveSheetHost } from './chrome/LiveSheetHost';
 import { MonitorTransientNotice } from './chrome/MonitorTransientNotice';
@@ -56,6 +56,7 @@ import { LiveRecordButton, RecordCountdownOverlay } from './record/LiveRecordBut
 import { MonitorRecordingBorder } from './record/MonitorRecordingBorder';
 import { StopConfirmSheet } from './record/StopConfirmSheet';
 import { useRecordControl } from './record/useRecordControl';
+import { ShootingModeRail } from './record/ShootingModeRail';
 import { LiveStatusChrome } from './status/LiveStatusChrome';
 
 const ASPECT: Record<string, number> = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:3': 4 / 3, '3:2': 3 / 2 };
@@ -83,10 +84,11 @@ function ShutterFlash({ trigger }: { trigger: number }) {
 }
 
 /**
- * The live field monitor (`MonitorOperatorLiveScreen`) in the Sondr camera style: a black root
- * with the picture in charge, status pills on top, a rail of circle buttons around the record
- * ring, the capture readout strip and the gimbal cluster floating over it. Panels open in the
- * shared preview Sheet so the picture stays visible.
+ * The live field monitor (`MonitorOperatorLiveScreen`), picture first (compared against DJI
+ * Mimo): a black root with the picture in charge, one status cluster per side on top, the
+ * shooting-mode rail beside the record ring, a rail of circle buttons, the exposure readout as
+ * text along the bottom and the gimbal cluster floating over it. Panels (exposure, camera
+ * settings, format, gimbal) open in the shared preview Sheet so the picture stays visible.
  */
 export default function LiveScreen() {
   const { colors } = useTheme();
@@ -98,7 +100,6 @@ export default function LiveScreen() {
 
   const phase = useCamera((s) => s.connection.phase);
   const aspectKey = useCamera((s) => s.format.aspect);
-  const valueCount = useCamera(captureTileCount);
   const recording = useCamera((s) => s.recording.recording);
   const gimbalAvailable = useCamera((s) => s.capabilities.gimbal && s.gimbal.available);
   const lockedAllAxes = useCamera((s) => s.gimbal.lockedAllAxes);
@@ -170,9 +171,8 @@ export default function LiveScreen() {
         safeArea: { top: insets.top, leading: insets.left, bottom: insets.bottom, trailing: insets.right },
         sourceAspect: ASPECT[aspectKey] ?? 16 / 9,
         fill: prefs.pictureFit === 'fill',
-        valueCount,
       }),
-    [width, height, insets.top, insets.left, insets.bottom, insets.right, aspectKey, prefs.pictureFit, valueCount],
+    [width, height, insets.top, insets.left, insets.bottom, insets.right, aspectKey, prefs.pictureFit],
   );
 
   const [drawn, setDrawn] = useState<LayoutRectangle | null>(null);
@@ -380,7 +380,13 @@ export default function LiveScreen() {
             <Slot rect={layout.exposureGauge} pointerEvents="none">
               <MonitorExposureGauge width={layout.exposureGauge.width} height={layout.exposureGauge.height} />
             </Slot>
-            <CaptureControlBar layout={layout} />
+            <CaptureReadout rect={layout.values} />
+            <ShootingModeRail
+              rect={layout.modeRail}
+              axis={portrait ? 'horizontal' : 'vertical'}
+              center={portrait ? w / 2 - layout.modeRail.x : layout.record.y + layout.record.height / 2 - layout.modeRail.y}
+              notice={stableNotice}
+            />
             <View pointerEvents="box-none" style={{ position: 'absolute', left: layout.assists.x, bottom: h - maxY(layout.assists) }}>
               <AssistBar orientation={portrait ? 'portrait' : 'landscape'} />
             </View>
@@ -425,7 +431,12 @@ export default function LiveScreen() {
             ) : null}
 
             <Slot rect={layout.settings}>
-              <LiveSettingsButton onPress={() => router.push('/settings')} />
+              <LiveSettingsButton
+                active={ui.captureSheet === 'camera'}
+                onPress={() =>
+                  ui.set({ captureSheet: ui.captureSheet === 'camera' ? null : 'camera', gimbalPanel: 'none', zoomDialOpen: false })
+                }
+              />
             </Slot>
             <Slot rect={layout.media}>
               <LiveMediaButton onPress={() => router.push('/media')} />
@@ -463,7 +474,7 @@ export default function LiveScreen() {
           <MotionRunPill />
         </View>
       ) : null}
-      <LiveSheetHost layout={layout} chromeShown={chromeShown} notice={stableNotice} />
+      <LiveSheetHost layout={layout} chromeShown={chromeShown} notice={stableNotice} onOpenSettings={() => router.push('/settings')} />
       {/* iOS: Live Activity, Picture in Picture, record control, grace task. Not on web / Android. */}
       {hasBackgroundFeatures ? <BackgroundMonitor onDisconnect={exit} /> : null}
 

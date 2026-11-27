@@ -5,6 +5,7 @@ import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { Sheet } from '@/components/sheet';
 import { fonts, radius, spacing, type ThemeColors, useThemedStyles } from '@/constants/theme';
+import { recordRed } from '@/constants/monitor';
 import { elapsedLabel } from '../format';
 import { useLiveUi } from '../liveUiStore';
 
@@ -48,7 +49,7 @@ function createStyles(colors: ThemeColors) {
       gap: spacing.sm,
       alignItems: 'center' as const,
       justifyContent: 'center' as const,
-      backgroundColor: colors.dotPink,
+      backgroundColor: recordRed,
     },
     stopLabel: { fontFamily: fonts.semibold, fontSize: 15, color: '#ffffff' },
   };

@@ -2,22 +2,12 @@ import { useEffect, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 import { useCamera, useCameraSession, type CameraState } from '@/camera';
 import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
-import { usePreferences } from '@/state/preferences';
-import {
-  COLOR_LABEL,
-  MODE_LABEL,
-  WB_PRESET_LABEL,
-  apertureLabel,
-  evLabel,
-  isPhotoMode,
-  shutterAngleLabel,
-  shutterLabel,
-} from '../format';
-import { useLiveUi, type CaptureSheetId } from '../liveUiStore';
-import { ChoiceChips, FieldLabel, Hint, ModeBar, StepButton, StepperRow, ToggleRow } from './controls';
+import { COLOR_LABEL, MODE_LABEL, WB_PRESET_LABEL, isPhotoMode } from '../format';
+import { useLiveUi, type CameraTab, type CaptureSheetId } from '../liveUiStore';
+import { ChoiceChips, FieldLabel, Hint, ModeBar, StepperRow, ToggleRow } from './controls';
 import { MonitorValueDrum } from './MonitorValueDrum';
 
-const nearestIndex = (options: number[], value: number | null | undefined) => {
+export const nearestIndex = (options: number[], value: number | null | undefined) => {
   if (value == null || options.length === 0) return 0;
   let best = 0;
   options.forEach((o, i) => {
@@ -27,116 +17,20 @@ const nearestIndex = (options: number[], value: number | null | undefined) => {
 };
 
 /** Run a camera write; a refusal must not become an unhandled rejection. */
-function useWrite() {
+export function useWrite() {
   return (p: Promise<unknown>) => {
     p.catch(() => {});
   };
 }
 
-function Stack({ children, gap = spacing.md - 4 }: { children: ReactNode; gap?: number }) {
+export function Stack({ children, gap = spacing.md - 4 }: { children: ReactNode; gap?: number }) {
   return <View style={{ gap }}>{children}</View>;
-}
-
-function IsoSheet({ s }: { s: CameraState }) {
-  const { control } = useCameraSession();
-  const write = useWrite();
-  const e = s.exposure;
-  const limits = e.isoLimitOptions ?? e.isoOptions;
-  return (
-    <Stack>
-      <ModeBar
-        accessibilityLabel="ISO mode"
-        tabs={['Auto', 'Manual']}
-        selected={e.isoAuto ? 0 : 1}
-        details={[e.isoAuto && e.iso != null ? String(e.iso) : undefined, undefined]}
-        onSelect={(i) => write(i === 0 ? control.setIso('auto') : control.setIso(e.iso ?? 400))}
-      />
-      {e.isoAuto ? (
-        <>
-          <FieldLabel>Auto ISO limit</FieldLabel>
-          <MonitorValueDrum
-            accessibilityLabel="Maximum ISO"
-            options={limits.map(String)}
-            index={nearestIndex(limits, e.isoLimit ?? limits[limits.length - 1])}
-            onChange={(i) => write(control.setIsoLimit(limits[i]))}
-          />
-        </>
-      ) : (
-        <MonitorValueDrum
-          accessibilityLabel="ISO"
-          options={e.isoOptions.map(String)}
-          index={nearestIndex(e.isoOptions, e.iso)}
-          onChange={(i) => write(control.setIso(e.isoOptions[i]))}
-        />
-      )}
-    </Stack>
-  );
-}
-
-function ShutterSheet({ s }: { s: CameraState }) {
-  const { control } = useCameraSession();
-  const write = useWrite();
-  const angle = usePreferences((p) => !!p.shutterUsesAngle);
-  const setPref = usePreferences((p) => p.set);
-  const e = s.exposure;
-  const photo = isPhotoMode(s.format.shootingMode);
-  const useAngle = angle && !photo;
-  return (
-    <Stack>
-      <MonitorValueDrum
-        accessibilityLabel="Shutter"
-        options={e.shutterOptions.map((d) => (useAngle ? shutterAngleLabel(d, s.format.fps) : shutterLabel(d)))}
-        index={nearestIndex(e.shutterOptions, e.shutterDenom)}
-        onChange={(i) => write(control.setShutter(e.shutterOptions[i]))}
-      />
-      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-        {!photo ? (
-          <View style={{ flex: 1 }}>
-            <ModeBar
-              accessibilityLabel="Shutter display"
-              tabs={['Speed', 'Angle']}
-              selected={useAngle ? 1 : 0}
-              details={[shutterLabel(e.shutterDenom), shutterAngleLabel(e.shutterDenom, s.format.fps)]}
-              onSelect={(i) => setPref('shutterUsesAngle', i === 1)}
-            />
-          </View>
-        ) : null}
-        <StepButton label="Auto" accessibilityLabel="Auto shutter" active={e.shutterAuto} onPress={() => write(control.setShutter('auto'))} />
-      </View>
-    </Stack>
-  );
-}
-
-function EvSheet({ s }: { s: CameraState }) {
-  const { control } = useCameraSession();
-  const write = useWrite();
-  const e = s.exposure;
-  return (
-    <MonitorValueDrum
-      accessibilityLabel="Exposure compensation"
-      options={e.evOptions.map(evLabel)}
-      index={nearestIndex(e.evOptions, e.ev)}
-      onChange={(i) => write(control.setEv(e.evOptions[i]))}
-    />
-  );
-}
-
-function ExposureSheet({ s }: { s: CameraState }) {
-  const { control } = useCameraSession();
-  const write = useWrite();
-  return (
-    <ModeBar
-      accessibilityLabel="Exposure program"
-      tabs={['Auto', 'Manual']}
-      selected={s.exposure.mode === 'auto' ? 0 : 1}
-      onSelect={(i) => write(control.setExposureMode(i === 0 ? 'auto' : 'manual'))}
-    />
-  );
 }
 
 const WB_PRESETS = ['daylight', 'cloudy', 'incandescent', 'fluorescent'] as const;
 
-function WbSheet({ s }: { s: CameraState }) {
+/** White balance: Auto, presets, or kelvin with G–M tint (the old WB sheet). */
+export function WbControls({ s }: { s: CameraState }) {
   const { control } = useCameraSession();
   const write = useWrite();
   const wb = s.whiteBalance;
@@ -193,7 +87,8 @@ function WbSheet({ s }: { s: CameraState }) {
 
 const MF_STEPS = Array.from({ length: 21 }, (_, i) => i / 20);
 
-function FocusSheet({ s }: { s: CameraState }) {
+/** Focus mode, and the focus-distance drum in MF. */
+export function FocusControls({ s }: { s: CameraState }) {
   const { control } = useCameraSession();
   const write = useWrite();
   const f = s.focus;
@@ -221,21 +116,6 @@ function FocusSheet({ s }: { s: CameraState }) {
   );
 }
 
-function ApertureSheet({ s }: { s: CameraState }) {
-  const { control } = useCameraSession();
-  const write = useWrite();
-  const options = s.exposure.apertureOptions ?? [];
-  if (options.length === 0) return <Hint>This camera reports no iris stops.</Hint>;
-  return (
-    <MonitorValueDrum
-      accessibilityLabel="Aperture"
-      options={options.map((f) => apertureLabel(f))}
-      index={nearestIndex(options, s.exposure.aperture)}
-      onChange={(i) => write(control.setAperture(options[i]))}
-    />
-  );
-}
-
 function Meter({ label, db }: { label: string; db: number }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -251,7 +131,8 @@ function Meter({ label, db }: { label: string; db: number }) {
   );
 }
 
-function AudioSheet() {
+/** Meters, channel, directional audio, wind reduction, vocal boost. */
+export function AudioControls() {
   const { control } = useCameraSession();
   const write = useWrite();
   const a = useCamera((s) => s.audio);
@@ -284,7 +165,7 @@ function AudioSheet() {
 }
 
 /** `CaptureFormatPicker` + `CaptureCodecColorPanel`: resolution, frame-rate drum, codec, bitrate. */
-function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
+export function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   const { control } = useCameraSession();
   const write = useWrite();
   const f = s.format;
@@ -340,7 +221,7 @@ function FormatSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   );
 }
 
-function ColorSheet({ s, locked }: { s: CameraState; locked: boolean }) {
+export function ColorControls({ s, locked }: { s: CameraState; locked: boolean }) {
   const { control } = useCameraSession();
   const write = useWrite();
   return (
@@ -354,7 +235,7 @@ function ColorSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   );
 }
 
-function ModeSheet({ s, locked }: { s: CameraState; locked: boolean }) {
+export function ModeSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   const { control } = useCameraSession();
   const write = useWrite();
   return (
@@ -368,84 +249,64 @@ function ModeSheet({ s, locked }: { s: CameraState; locked: boolean }) {
   );
 }
 
-/** Sheet titles: short, in the words the strip uses. */
-export const CAPTURE_TITLES: Record<CaptureSheetId, string> = {
-  iso: 'ISO',
-  shutter: 'Shutter',
-  ev: 'Exposure compensation',
+/** Which sheet a capture id opens: one exposure panel, one camera settings sheet, format, mode. */
+export type CapturePanel = { kind: 'exposure' } | { kind: 'camera'; tab: CameraTab } | { kind: 'format' } | { kind: 'mode' };
+
+export function capturePanelFor(id: CaptureSheetId, cameraTab: CameraTab): CapturePanel {
+  switch (id) {
+    case 'iso':
+    case 'shutter':
+    case 'ev':
+    case 'exposure':
+    case 'aperture':
+      return { kind: 'exposure' };
+    case 'wb':
+    case 'focus':
+    case 'color':
+      return { kind: 'camera', tab: 'video' };
+    case 'audio':
+      return { kind: 'camera', tab: 'audio' };
+    case 'camera':
+      return { kind: 'camera', tab: cameraTab };
+    case 'format':
+      return { kind: 'format' };
+    case 'mode':
+      return { kind: 'mode' };
+  }
+}
+
+/** Sheet titles: short, in the words the readout uses. */
+export const CAPTURE_PANEL_TITLES: Record<CapturePanel['kind'], string> = {
   exposure: 'Exposure',
-  wb: 'White balance',
-  focus: 'Focus',
-  aperture: 'Aperture',
-  audio: 'Audio',
+  camera: 'Camera',
   format: 'Recording format',
-  color: 'Color',
   mode: 'Shooting mode',
 };
 
-/** The open capture sheet's controls (the Sheet itself is the live screen's). */
-export function CaptureSheetBody({ id }: { id: CaptureSheetId }) {
+/** The format and shooting-mode sheets' bodies (the Sheet itself is the live screen's). */
+export function CaptureSheetBody({ id }: { id: 'format' | 'mode' }) {
   const s = useCamera((st) => st);
-  const recording = s.recording.recording;
-  const formatLocked = recording && (id === 'format' || id === 'color' || id === 'mode');
-  let body: ReactNode = null;
-  switch (id) {
-    case 'iso':
-      body = <IsoSheet s={s} />;
-      break;
-    case 'shutter':
-      body = <ShutterSheet s={s} />;
-      break;
-    case 'ev':
-      body = <EvSheet s={s} />;
-      break;
-    case 'exposure':
-      body = <ExposureSheet s={s} />;
-      break;
-    case 'wb':
-      body = <WbSheet s={s} />;
-      break;
-    case 'focus':
-      body = <FocusSheet s={s} />;
-      break;
-    case 'aperture':
-      body = <ApertureSheet s={s} />;
-      break;
-    case 'audio':
-      body = <AudioSheet />;
-      break;
-    case 'format':
-      body = <FormatSheet s={s} locked={formatLocked} />;
-      break;
-    case 'color':
-      body = <ColorSheet s={s} locked={formatLocked} />;
-      break;
-    case 'mode':
-      body = <ModeSheet s={s} locked={formatLocked} />;
-      break;
-  }
+  const locked = s.recording.recording;
   return (
     <Stack>
-      {formatLocked ? <Hint tone="warning">Stop recording to change this.</Hint> : null}
-      {body}
+      {locked ? <Hint tone="warning">Stop recording to change this.</Hint> : null}
+      {id === 'format' ? <FormatSheet s={s} locked={locked} /> : <ModeSheet s={s} locked={locked} />}
     </Stack>
   );
 }
 
-/** Retire sheets the strip no longer offers (`CaptureReadoutAdmission`). */
+/** Retire sheets the camera no longer offers (`CaptureReadoutAdmission`). */
 export function useCaptureSheetAdmission() {
   const sheet = useLiveUi((s) => s.captureSheet);
   const locked = useLiveUi((s) => s.locked);
   const set = useLiveUi((s) => s.set);
   const photo = useCamera((s) => isPhotoMode(s.format.shootingMode));
-  const auto = useCamera((s) => s.exposure.mode === 'auto');
   useEffect(() => {
     if (!sheet) return;
     if (locked) set({ captureSheet: null });
-    else if (photo && (sheet === 'audio' || sheet === 'format' || sheet === 'color')) set({ captureSheet: null });
-    else if (auto && sheet === 'shutter') set({ captureSheet: 'ev' });
-    else if (!auto && sheet === 'ev') set({ captureSheet: 'shutter' });
-  }, [sheet, locked, photo, auto, set]);
+    else if (photo && sheet === 'format') set({ captureSheet: null });
+    else if (photo && sheet === 'audio') set({ captureSheet: 'camera', cameraTab: 'video' });
+  }, [sheet, locked, photo, set]);
 }
 
 function createStyles(colors: ThemeColors) {

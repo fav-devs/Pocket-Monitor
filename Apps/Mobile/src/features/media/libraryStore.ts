@@ -9,8 +9,9 @@
  */
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import type { CameraMediaItem, CameraMediaService, ColorMode } from '@/camera';
+import type { CameraMediaItem, CameraMediaService, ColorMode, MediaPlaybackSource } from '@/camera';
 import { useCameraSession } from '@/camera';
+import { usePhoneMedia } from '@/state/media';
 import { transferCaption } from './format';
 import { rateReadingLabel, TransferRateEstimator } from './transferRate';
 
@@ -54,6 +55,14 @@ interface MediaLibraryState {
   notice: string | null;
   /** Ids being deleted (shows the deletion overlay). */
   deleting: string[];
+  /** Thumbnails the session fetched on demand (`CameraMediaService.thumbnail`), by media id. */
+  thumbs: Record<string, string>;
+  /** What playback fetched to this device (`preparePlayback`), by media id. */
+  prepared: Record<string, MediaPlaybackSource>;
+  /** Playback fetches in flight: fraction 0–1 (0 while the size is unknown). */
+  preparing: Record<string, number>;
+  /** The connected camera's name, recorded with clips saved to the phone. */
+  cameraName: string | null;
 
   load: (service: CameraMediaService, options?: { refresh?: boolean }) => Promise<void>;
   setCategory: (category: MediaCategory) => void;
@@ -69,9 +78,16 @@ interface MediaLibraryState {
   download: (service: CameraMediaService, id: string) => Promise<string>;
   forgetLocal: (id: string) => void;
   showNotice: (message: string) => void;
+  /** Ask the session for a missing thumbnail (once per id; the cell shows it when it lands). */
+  requestThumbnail: (service: CameraMediaService, id: string) => void;
+  /** Fetch the low-res proxy (or the original) for playback; shared by concurrent callers. */
+  preparePlayback: (service: CameraMediaService, id: string) => Promise<MediaPlaybackSource | null>;
+  setCameraName: (name: string | null) => void;
 }
 
 const inflight = new Map<string, Promise<string>>();
+const thumbAsked = new Set<string>();
+const preparingJobs = new Map<string, Promise<MediaPlaybackSource | null>>();
 const estimators = new Map<string, TransferRateEstimator>();
 let ticker: ReturnType<typeof setInterval> | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -119,20 +135,37 @@ export const useMediaLibrary = create<MediaLibraryState>()((set, get) => {
     localFiles: {},
     notice: null,
     deleting: [],
+    thumbs: {},
+    prepared: {},
+    preparing: {},
+    cameraName: null,
 
     load: async (service, options) => {
       const token = ++loadToken;
       const swapped = get().service !== service;
       if (swapped) {
-        set({ service, items: [], status: 'loading', error: null, selected: [], selecting: false, localFiles: {} });
+        thumbAsked.clear();
+        set({ service, items: [], status: 'loading', error: null, selected: [], selecting: false, localFiles: {}, thumbs: {}, prepared: {} });
       } else if (options?.refresh || get().status !== 'ready') {
         set(get().status === 'ready' ? { refreshing: true } : { status: 'loading', error: null });
       } else {
         // Already listed for this session: refresh quietly in the background.
         set({ refreshing: true });
       }
+      // Originals the session already holds on this device count as downloaded.
+      const withLocal = (items: CameraMediaItem[]) => {
+        const localFiles = { ...get().localFiles };
+        for (const i of items) if (i.localUri) localFiles[i.id] = i.localUri;
+        return localFiles;
+      };
       try {
-        const items = await service.list();
+        const items = await service.list({
+          // A long card fills the grid page by page.
+          onPage: (page) => {
+            if (token !== loadToken || get().status === 'ready') return;
+            set({ items: page, localFiles: withLocal(page) });
+          },
+        });
         if (token !== loadToken) return;
         const ids = new Set(items.map((i) => i.id));
         set((s) => ({
@@ -141,6 +174,7 @@ export const useMediaLibrary = create<MediaLibraryState>()((set, get) => {
           error: null,
           refreshing: false,
           selected: s.selected.filter((id) => ids.has(id)),
+          localFiles: withLocal(items),
         }));
       } catch (error) {
         if (token !== loadToken) return;
@@ -210,7 +244,7 @@ export const useMediaLibrary = create<MediaLibraryState>()((set, get) => {
     },
 
     download: (service, id) => {
-      const cached = get().localFiles[id];
+      const cached = get().localFiles[id] || usePhoneMedia.getState().clips.find((c) => c.id === id)?.localUri;
       if (cached) return Promise.resolve(cached);
       const running = inflight.get(id);
       if (running) return running;
@@ -235,6 +269,9 @@ export const useMediaLibrary = create<MediaLibraryState>()((set, get) => {
         })
         .then((uri) => {
           set((s) => ({ localFiles: uri ? { ...s.localFiles, [id]: uri } : s.localFiles }));
+          // The Phone tab lists every clip this app saved (the demo saves a record, no footage).
+          const listed = get().items.find((i) => i.id === id);
+          if (listed) usePhoneMedia.getState().record({ ...listed, thumbnailUrl: listed.thumbnailUrl ?? get().thumbs[id] }, uri, get().cameraName ?? undefined);
           return uri;
         })
         .finally(() => {
@@ -262,8 +299,66 @@ export const useMediaLibrary = create<MediaLibraryState>()((set, get) => {
       set({ notice });
       noticeTimer = setTimeout(() => set({ notice: null }), 2600);
     },
+
+    requestThumbnail: (service, id) => {
+      if (!service.thumbnail || thumbAsked.has(id) || get().thumbs[id]) return;
+      thumbAsked.add(id);
+      service
+        .thumbnail(id)
+        .then((uri) => {
+          if (uri && get().service === service) set((s) => ({ thumbs: { ...s.thumbs, [id]: uri } }));
+          else if (!uri) thumbAsked.delete(id);
+        })
+        .catch(() => thumbAsked.delete(id));
+    },
+
+    preparePlayback: (service, id) => {
+      const done = get().prepared[id];
+      if (done) return Promise.resolve(done);
+      if (!service.preparePlayback) return Promise.resolve(null);
+      const running = preparingJobs.get(id);
+      if (running) return running;
+      set((s) => ({ preparing: { ...s.preparing, [id]: 0 } }));
+      const job = service
+        .preparePlayback(id, (p) => {
+          const fraction = p.bytesTotal > 0 ? Math.min(1, p.bytesDone / p.bytesTotal) : 0;
+          set((s) => ({ preparing: { ...s.preparing, [id]: fraction } }));
+        })
+        .then((source) => {
+          set((s) => ({ prepared: { ...s.prepared, [id]: source } }));
+          return source;
+        })
+        .finally(() => {
+          preparingJobs.delete(id);
+          set((s) => {
+            const preparing = { ...s.preparing };
+            delete preparing[id];
+            return { preparing };
+          });
+        });
+      preparingJobs.set(id, job);
+      return job;
+    },
+
+    setCameraName: (cameraName) => {
+      if (get().cameraName !== cameraName) set({ cameraName });
+    },
   };
 });
+
+/**
+ * The thumbnail to draw for an item: its own `thumbnailUrl`, else one the session fetched on
+ * demand. Asking is cheap and once per id; the session queues fetches newest first.
+ */
+export function useMediaThumbnail(item: CameraMediaItem | undefined, service?: CameraMediaService | null): string | undefined {
+  const fetched = useMediaLibrary((s) => (item ? s.thumbs[item.id] : undefined));
+  useEffect(() => {
+    if (!item || item.thumbnailUrl || fetched) return;
+    const svc = service ?? useMediaLibrary.getState().service;
+    if (svc) useMediaLibrary.getState().requestThumbnail(svc, item.id);
+  }, [item, fetched, service]);
+  return item?.thumbnailUrl ?? fetched;
+}
 
 /** The cell's download readout: "18% · 42 MB/s". */
 export function transferReadout(t: MediaTransfer | undefined, withRate = true): string | null {

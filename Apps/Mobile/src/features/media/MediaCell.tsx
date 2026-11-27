@@ -1,11 +1,14 @@
-import { Image01Icon, Layers01Icon, SmartPhone01Icon, StarIcon, Tick02Icon, Video01Icon } from '@hugeicons/core-free-icons';
+import { Download04Icon, Image01Icon, Layers01Icon, SmartPhone01Icon, StarIcon, Tick02Icon, Video01Icon } from '@hugeicons/core-free-icons';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { memo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
+import type { CameraMediaItem } from '@/camera';
 import { Icon } from '@/components/icon';
 import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { cardDetail, colorModeLabel, durationLabel, formatLabel } from './format';
 import type { GalleryEntry } from './gallery';
+import { useMediaThumbnail } from './libraryStore';
 import { ArtPill, favoriteColor, Glyph, ProgressBar } from './MediaChips';
 
 /** Name + detail under a grid tile's picture. Used by the masonry for placement. */
@@ -17,6 +20,13 @@ const TILE_RADIUS = 14;
 export interface MediaCellProps {
   entry: GalleryEntry;
   layout: 'grid' | 'list';
+  /**
+   * Grid only: Mimo's dense tile (square crop, no caption, marks over the picture). Otherwise
+   * the captioned card at the picture's own shape.
+   */
+  dense?: boolean;
+  /** Dense only: the download-state mark (off on the Phone tab, where everything is local). */
+  downloadMarks?: boolean;
   tablet?: boolean;
   /** Grid only: tile width; the picture keeps `aspect`. */
   width?: number;
@@ -42,8 +52,10 @@ function stateLabel(p: MediaCellProps): string {
   return 'On camera';
 }
 
-function Thumbnail({ uri, kind }: { uri?: string; kind: 'video' | 'photo' }) {
+function Thumbnail({ item }: { item: CameraMediaItem }) {
   const { colors } = useTheme();
+  const uri = useMediaThumbnail(item);
+  const kind = item.kind;
   // Not a touch target: on web this also stops the browser's native image drag from
   // swallowing the drag-select sweep.
   return (
@@ -123,7 +135,7 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
           style={({ pressed }) => [styles.listPress, { paddingLeft: selecting ? 0 : 12 }, pressed && { opacity: 0.75 }]}
         >
           <View style={[styles.listThumb, p.tablet && styles.listThumbLarge]}>
-            <Thumbnail uri={item.thumbnailUrl} kind={item.kind} />
+            <Thumbnail item={item} />
             {p.transferCaption ? (
               <View pointerEvents="none" style={styles.dim}>
                 <Text style={styles.dimText}>{p.transferCaption.split(' · ')[0]}</Text>
@@ -158,6 +170,8 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
     );
   }
 
+  if (p.dense) return <DenseTile {...p} favorite={favorite} duration={duration} burst={burst} a11y={a11y} press={press} />;
+
   const width = p.width ?? 160;
   const pictureHeight = width / (p.aspect ?? 16 / 9);
   return (
@@ -172,7 +186,7 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
         style={({ pressed }) => [pressed && { opacity: 0.8 }]}
       >
         <View style={[styles.picture, { width, height: pictureHeight }]}>
-          <Thumbnail uri={item.thumbnailUrl} kind={item.kind} />
+          <Thumbnail item={item} />
           {p.transferCaption ? (
             <View pointerEvents="none" style={styles.dim}>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.dimText}>
@@ -206,6 +220,94 @@ export const MediaCell = memo(function MediaCell(p: MediaCellProps) {
     </View>
   );
 });
+
+/** A mark over a dense tile: a white glyph with a soft shadow, no plate (Mimo). */
+function TileGlyph({ icon, size = 14, color = '#ffffff', filled }: { icon: Parameters<typeof Glyph>[0]['icon']; size?: number; color?: string; filled?: boolean }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.tileGlyph}>
+      <Glyph icon={icon} size={size} color={color} filled={filled} strokeWidth={2} />
+    </View>
+  );
+}
+
+/**
+ * Mimo's library tile: the picture cropped square edge to edge, duration bottom-left, the
+ * download state top-left (arrow until the original is on the phone), a favourite star and the
+ * burst count. The selection check takes the download mark's corner while selecting.
+ */
+function DenseTile(p: MediaCellProps & { favorite: boolean; duration: string; burst: number | null; a11y: string; press: () => void }) {
+  const styles = useThemedStyles(createStyles);
+  const { entry, selecting, selected } = p;
+  const item = entry.cover;
+  const size = p.width ?? 120;
+  const downloading = p.transferFraction != null;
+  const percent = downloading ? `${Math.round((p.transferFraction ?? 0) * 100)}%` : null;
+  return (
+    <View style={{ width: size, height: size }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${p.a11y}${p.favorite ? ', favorite' : ''}${p.onPhone ? ', on phone' : ''}`}
+        accessibilityState={{ selected }}
+        onPress={p.press}
+        onLongPress={() => !selecting && p.onBeginSelection(entry.id)}
+        delayLongPress={400}
+        style={({ pressed }) => [styles.dense, { width: size, height: size }, pressed && { opacity: 0.8 }]}
+      >
+        <Thumbnail item={item} />
+        <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.38)']} style={styles.denseShade} />
+        {downloading ? <View pointerEvents="none" style={styles.denseDim} /> : null}
+        {!selecting && p.downloadMarks !== false ? (
+          <View pointerEvents="none" style={styles.denseTopLeft}>
+            {percent ? (
+              <Text style={styles.denseText}>{percent}</Text>
+            ) : p.onPhone ? (
+              <TileGlyph icon={SmartPhone01Icon} size={13} />
+            ) : (
+              <TileGlyph icon={Download04Icon} size={15} />
+            )}
+          </View>
+        ) : null}
+        {p.duration || p.burst ? (
+          <View pointerEvents="none" style={styles.denseBottom}>
+            {p.duration ? (
+              <View style={styles.denseRow}>
+                <TileGlyph icon={Video01Icon} size={13} />
+                <Text style={styles.denseText}>{p.duration}</Text>
+              </View>
+            ) : (
+              <View />
+            )}
+            {p.burst ? (
+              <View style={styles.denseRow}>
+                <TileGlyph icon={Layers01Icon} size={12} />
+                <Text style={styles.denseText}>{p.burst}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+        {downloading ? <ProgressBar fraction={p.transferFraction ?? 0} height={2} onVideo style={styles.transferBar} /> : null}
+        {selected ? <View pointerEvents="none" style={styles.denseSelected} /> : null}
+      </Pressable>
+      {selecting ? (
+        <View style={styles.denseMarkPos}>
+          <SelectMark selected={selected} title={item.fileName} onPress={() => p.onSelect(entry.id)} />
+        </View>
+      ) : null}
+      {p.favorite ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Remove favorite"
+          onPress={() => p.onFavorite(entry.id)}
+          hitSlop={11}
+          style={({ pressed }) => [styles.denseFav, pressed && { opacity: 0.7 }]}
+        >
+          <TileGlyph icon={StarIcon} size={14} color={favoriteColor} filled />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
 function SelectMarkList({ selected, title, onPress }: { selected: boolean; title: string; onPress: () => void }) {
   const { colors } = useTheme();
@@ -267,5 +369,35 @@ function createStyles(colors: ThemeColors) {
     listName: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
     listDetail: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedForeground },
     listColumn: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground },
+    dense: { overflow: 'hidden' as const, backgroundColor: colors.surface, borderRadius: 2 },
+    denseShade: { position: 'absolute' as const, left: 0, right: 0, bottom: 0, height: '38%' as const },
+    denseDim: { ...fill, backgroundColor: 'rgba(0,0,0,0.4)' },
+    denseTopLeft: { position: 'absolute' as const, top: 5, left: 6 },
+    denseBottom: {
+      position: 'absolute' as const,
+      left: 6,
+      right: 6,
+      bottom: 5,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'space-between' as const,
+    },
+    denseRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4 },
+    denseText: {
+      fontFamily: fonts.semibold,
+      fontSize: 11,
+      color: '#ffffff',
+      fontVariant: ['tabular-nums' as const],
+      textShadowColor: 'rgba(0,0,0,0.55)',
+      textShadowRadius: 4,
+    },
+    // A glyph-shaped shadow: iOS shadows follow the drawn alpha; web needs a drop-shadow filter.
+    tileGlyph:
+      Platform.OS === 'web'
+        ? ({ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.6))' } as object)
+        : { shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 3, shadowOffset: { width: 0, height: 0 } },
+    denseSelected: { ...fill, borderWidth: 3, borderColor: colors.primary, backgroundColor: 'rgba(23,169,243,0.18)' },
+    denseMarkPos: { position: 'absolute' as const, top: -4, left: -4 },
+    denseFav: { position: 'absolute' as const, top: 4, right: 5, width: 22, height: 22, alignItems: 'center' as const, justifyContent: 'center' as const },
   };
 }

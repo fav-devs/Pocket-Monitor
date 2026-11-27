@@ -15,6 +15,9 @@
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "Pocket Monitor uses Bluetooth to find and pair with your Osmo camera.",
         "NSLocalNetworkUsageDescription": "Pocket Monitor talks to your camera over its Wi-Fi to show the live picture.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
         "NSBonjourServices": [
           "_pocket-mon._tcp",
           "_opc-mon._tcp"
@@ -105,7 +108,8 @@
             "deploymentTarget": "17.0"
           },
           "android": {
-            "minSdkVersion": 29
+            "minSdkVersion": 29,
+            "usesCleartextTraffic": true
           }
         }
       ],

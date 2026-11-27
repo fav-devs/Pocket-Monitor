@@ -52,6 +52,8 @@ export interface OperatorPreferences {
   remoteShutter?: boolean;
   /** Rotate the feed with the phone. */
   autoRotateFeed?: boolean;
+  /** Live view: show the camera's timecode beside REC (when the camera reports one). */
+  showTimecode?: boolean;
 }
 
 export const defaultPreferences: OperatorPreferences = {
@@ -84,6 +86,7 @@ export const defaultPreferences: OperatorPreferences = {
   gamepadStick: 'left',
   remoteShutter: false,
   autoRotateFeed: true,
+  showTimecode: true,
 };
 
 interface PreferencesStore extends OperatorPreferences {

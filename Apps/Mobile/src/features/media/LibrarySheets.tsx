@@ -70,7 +70,7 @@ export function FilterSheet({
   );
 }
 
-/** Sort order, grid or list, thumbnail size and grouping: how the library is shown. */
+/** Sort order, grid or list, thumbnail size, captions and grouping: how the library is shown. */
 export function ViewSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -117,6 +117,13 @@ export function ViewSheet({ visible, onClose }: { visible: boolean; onClose: () 
           />
         </FieldSection>
         <View>
+          <SwitchRow
+            inset={false}
+            title="Captions"
+            disabled={prefs.layout !== 'grid'}
+            value={prefs.layout === 'grid' && prefs.gridCaptions}
+            onChange={(v) => prefs.set('gridCaptions', v)}
+          />
           <SwitchRow inset={false} title="Group by day" value={prefs.groupByDay} onChange={(v) => prefs.set('groupByDay', v)} />
           <SwitchRow inset={false} last title="Stack bursts" value={prefs.stackBursts} onChange={(v) => prefs.set('stackBursts', v)} />
         </View>

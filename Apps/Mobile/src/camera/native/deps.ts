@@ -42,7 +42,33 @@ export interface StationDiscovery {
   probeWidth?: number;
 }
 
+/**
+ * Optional (additive). Where camera media lands on this device (expo-file-system on phones,
+ * `mediaFileStore.ts`). Paths are relative to the store's area root: `cache` for thumbnails and
+ * playback proxies (the OS may purge them), `document` for downloaded originals. Absent (tests,
+ * Multiview tiles): thumbnails stay empty and downloads report "not available", as before.
+ */
+export interface MediaFileStore {
+  /** The file when it exists and is not empty. */
+  existing(area: MediaFileArea, path: string): { uri: string; size: number } | null;
+  /**
+   * GET `url` into `path` (written to a `.part` file, renamed when whole). Rejects on a non-2xx
+   * answer with the status in the message, on a transport error, and on `signal` abort.
+   */
+  download(
+    url: string,
+    area: MediaFileArea,
+    path: string,
+    options?: { onProgress?: (bytesDone: number, bytesTotal: number) => void; signal?: AbortSignal },
+  ): Promise<{ uri: string; size: number }>;
+  remove(area: MediaFileArea, path: string): void;
+}
+
+export type MediaFileArea = 'cache' | 'document';
+
 export interface NativeSessionDeps {
+  /** Optional (additive): camera media files on this device. */
+  mediaFiles?: MediaFileStore;
   /** Optional (additive): Multiview station discovery. */
   station?: StationDiscovery;
   io: NativeCameraIO;

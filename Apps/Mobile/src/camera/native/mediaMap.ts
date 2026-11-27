@@ -1,7 +1,7 @@
 /**
  * Decoded on-camera manifest (`MediaFile`, core `MediaManifest`) → UI `CameraMediaItem`. Pure.
- * Thumbnail / preview / original URLs stay empty: the camera's HTTP media paths are not ported
- * to src/core yet (see `status/mediaManifest.ts` header).
+ * The session adds what lives on this device (cached thumbnail, proxy, downloaded original) and
+ * the `/v2` URLs (`src/core/library/http.ts`).
  */
 import { type MediaFile, MediaFiles, MediaManifest } from '@/core/status/mediaManifest';
 import type { CameraMediaItem } from '../session';

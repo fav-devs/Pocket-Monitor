@@ -8,8 +8,8 @@ enum PocketStyle {
   static let surfaceStrong = Color(white: 1, opacity: 0.12)
   static let foreground = Color(red: 0xf4 / 255, green: 0xf4 / 255, blue: 0xf4 / 255)
   static let muted = Color(red: 0x8b / 255, green: 0x8b / 255, blue: 0x8b / 255)
-  /// Recording (`dotPink`).
-  static let dotPink = Color(red: 0xd6 / 255, green: 0x15 / 255, blue: 0x5f / 255)
+  /// Recording only (`recordRed` in src/constants/monitor.ts, the logo's red): REC dot, keyline, badge.
+  static let recordRed = Color(red: 0xe5 / 255, green: 0x27 / 255, blue: 0x3a / 255)
   /// The logo's record dot.
   static let logoRed = Color(red: 0xe5 / 255, green: 0x27 / 255, blue: 0x3a / 255)
   static let success = Color(red: 0x22 / 255, green: 0xc5 / 255, blue: 0x5e / 255)
@@ -75,14 +75,14 @@ struct PocketLogoMark: View {
   }
 }
 
-/// The REC dot: dotPink while recording, white at standby.
+/// The REC dot: recordRed while recording, white at standby.
 struct PocketRecDot: View {
   var recording: Bool
   var size: CGFloat = 8
 
   var body: some View {
     Circle()
-      .fill(recording ? PocketStyle.dotPink : PocketStyle.foreground.opacity(0.85))
+      .fill(recording ? PocketStyle.recordRed : PocketStyle.foreground.opacity(0.85))
       .frame(width: size, height: size)
   }
 }

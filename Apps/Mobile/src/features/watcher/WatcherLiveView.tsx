@@ -23,6 +23,7 @@ import { Chip } from '@/components/chip';
 import { ChipRow } from '@/components/field-section';
 import { Sheet } from '@/components/sheet';
 import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { recordRed } from '@/constants/monitor';
 import AssistBar from '@/features/assists/AssistBar';
 import AssistOverlays from '@/features/assists/AssistOverlays';
 import { MonitorTransientNotice } from '@/features/live/chrome/MonitorTransientNotice';
@@ -190,8 +191,8 @@ export function WatcherLiveView({
           </View>
           {recording ? (
             <View style={styles.rec} accessibilityLabel="Camera recording">
-              <View style={[styles.recDot, { backgroundColor: colors.dotPink }]} />
-              <Text style={[styles.recText, { color: colors.dotPink }]}>REC</Text>
+              <View style={[styles.recDot, { backgroundColor: recordRed }]} />
+              <Text style={[styles.recText, { color: recordRed }]}>REC</Text>
             </View>
           ) : null}
           <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setClean((c) => !c)} style={({ pressed }) => [styles.headerAction, pressed && styles.pressed]}>
@@ -245,7 +246,7 @@ export function WatcherLiveView({
                   onPress={record}
                   style={({ pressed }) => [styles.controlKey, pressed && styles.pressed]}
                 >
-                  <Text style={[styles.controlKeyText, { color: colors.dotPink }]}>{recording ? 'Stop REC' : 'REC'}</Text>
+                  <Text style={[styles.controlKeyText, { color: recordRed }]}>{recording ? 'Stop REC' : 'REC'}</Text>
                 </Pressable>
               </>
             ) : info.control === 'available' || info.control === 'requested' ? (

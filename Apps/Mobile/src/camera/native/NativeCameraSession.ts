@@ -59,14 +59,35 @@ import {
 import { type CameraModel, hasGimbal, liveViewEnableReceiver, pairingToken, sendsLiveViewPrepare, ssidConflictsWithBody, usesNanoLiveViewGate, BleConstants } from '@/core/status/cameraModel';
 import { CamCapVideoFormat } from '@/core/status/camCap';
 import { StatusQueries } from '@/core/status/cameraStatus';
-import { MEDIA_INTERNAL_COUNTER, MEDIA_NEWEST_INTERNAL, MEDIA_NEWEST_SD, MEDIA_SD_COUNTER, MediaChunkAssembler, MediaManifest, type MediaFile } from '@/core/status/mediaManifest';
+import {
+  cameraCacheFolder,
+  enterMediaPlayback,
+  httpStatusOf,
+  isCompleteOriginal,
+  isProxyPath,
+  listMediaCatalog,
+  MediaListingRetired,
+  MediaLiveResume,
+  mediaSourcePolicy,
+  MediaStorageMemo,
+  originalCacheFileName,
+  playbackCacheFileName,
+  playbackCandidates,
+  playbackMimeType,
+  runMediaLiveReturn,
+  thumbnailCacheFileName,
+} from '@/core/library';
+import { type MediaChunkAssembler, type MediaFile, MediaFiles } from '@/core/status/mediaManifest';
 import { TrackingBoxes } from '@/core/status/trackingBox';
 import { handshakeDatagram, DatalinkSequencer } from '@/core/transport/datalink';
 import { initialCameraState } from '../defaults';
 import type {
   CameraController,
+  CameraMediaItem,
   CameraMediaService,
   CameraSession,
+  MediaPlaybackSource,
+  MediaTransferProgress,
   ConnectOptions,
   GimbalController,
   SessionEvent,
@@ -88,7 +109,7 @@ import {
   wifiJoinFailure,
 } from './connectCopy';
 import { type ClockTimer, type SessionClock, systemClock } from './clock';
-import type { NativeSessionDeps } from './deps';
+import type { MediaFileArea, NativeSessionDeps } from './deps';
 import { ExchangeClosed, ExchangeTimeout, FrameExchange, opcodeMatcher } from './exchange';
 import { FeedTracker, type PictureStats } from './feedTracker';
 import { mediaHandle, mediaItemId, mediaItemsOf } from './mediaMap';
@@ -117,7 +138,6 @@ const SCAN_FOR_TARGET_MS = 8000;
 const SIGHTING_FRESH_MS = 60000;
 const WIFI_JOIN_ATTEMPT_MS = 45000;
 const DATALINK_OPEN_TIMEOUT_MS = 20000;
-const MEDIA_QUERY_BUDGET_MS = 12000;
 const CAMERA_HOST = CameraSoftAP.host;
 const TCP_POKE_PORT = 7001;
 const ACK_HZ = 40;
@@ -226,6 +246,16 @@ export class NativeCameraSession implements CameraSession {
   private mediaChunks: MediaChunkAssembler | null = null;
   private mediaFiles = new Map<string, MediaFile>();
   private mediaActionCounter = 1;
+  /** Bumped by every list and every return to live: retires the one before. */
+  private browseGeneration = 0;
+  /** The return-to-live loop is running (watchdog repairs held, like browsing). */
+  private mediaResuming = false;
+  private resumeToken = 0;
+  /** `/v2` store winners for this connection (`DJIMediaHTTPSource`). */
+  private readonly mediaMemo = new MediaStorageMemo();
+  private thumbJobs = new Map<string, Promise<string | null>>();
+  private thumbQueue: Array<() => Promise<void>> = [];
+  private thumbWorkers = 0;
 
   constructor(private readonly deps: NativeSessionDeps) {
     this.io = deps.io;
@@ -1324,7 +1354,7 @@ export class NativeCameraSession implements CameraSession {
 
   private tickWatchdog(): void {
     if (this.corePhase.kind !== 'live') return;
-    this.feed.repairBlocked = this.browsing || this.repairing;
+    this.feed.repairBlocked = this.browsing || this.mediaResuming || this.repairing;
     const now = this.now();
     const action = this.watchdog.tick(this.feed.snapshot(now, true));
     if (action !== 'none') {
@@ -1429,7 +1459,11 @@ export class NativeCameraSession implements CameraSession {
     this.zoomRateSent = 0;
     this.repairing = false;
     this.browsing = false;
+    this.mediaResuming = false;
+    this.browseGeneration += 1;
     this.mediaChunks = null;
+    this.mediaMemo.reset();
+    this.thumbJobs.clear();
     this.recordingSeen = false;
     this.wasRecording = false;
     this.stateWaiters.forEach((w) => w());
@@ -1984,65 +2018,163 @@ export class NativeCameraSession implements CameraSession {
   }
 
   // ───────────────────────────── CameraMediaService ─────────────────────────────
+  //
+  // The sequence (src/core/library, from upstream `DjiAppleMediaService` / `CameraMedia`):
+  // enter playback (`0x02/0x0c` ×3) → page the catalogue (SD list, trigger, internal list per
+  // page; older pages only while playback holds) → thumbnails, proxies and originals over
+  // `/v2?storage=N&path=…` at the camera's address, store order from `MediaStorageMemo` →
+  // leaving: exit playback until the bit clears, then one `media-resume` enable.
 
-  private async enterPlayback(): Promise<boolean> {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const ok = await this.sets.submit(Commands.enterPlayback(), true);
-      if (ok.kind === 'ok' || this.reducer.status.inPlayback) return true;
-      await new Promise<void>((r) => this.clock.setTimeout(r, 120));
-    }
-    return this.reducer.status.inPlayback;
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>((r) => this.clock.setTimeout(r, ms));
   }
 
-  /** Collect `0x00/0x27` chunks until the store closes or goes idle (upstream `collect`). */
-  private async collectMedia(a: MediaChunkAssembler, counter: number | null, floorS: number, idleS: number, deadline: number): Promise<void> {
-    const start = this.now();
-    let lastChange = start;
-    let lastCount = counter != null ? a.chunkCountFor(counter) : a.chunkCount;
-    for (;;) {
-      const now = this.now();
-      if (now >= deadline || !this.live) return;
-      if (counter != null && now - start >= floorS * 1000 && a.didEnd(counter)) return;
-      await new Promise<void>((r) => this.clock.setTimeout(r, 50));
-      const count = counter != null ? a.chunkCountFor(counter) : a.chunkCount;
-      if (count !== lastCount) {
-        lastCount = count;
-        lastChange = this.now();
+  /** Pocket 3 is one microSD card: every `/v2` is `storage=0`. */
+  private get singleSdStorage(): boolean {
+    const st = this.reducer.status;
+    return mediaSourcePolicy(this.model, st.inPlayback, st.internalTotalMb).singleSdStorage === true;
+  }
+
+  /** Per-camera cache folder: the saved / BLE id, else the model. */
+  private get mediaFolder(): string {
+    return cameraCacheFolder(this.state.identity?.id ?? this.lastTarget?.id ?? this.model.name);
+  }
+
+  private mediaPath(kind: 'thumbs' | 'files' | 'play', name: string): string {
+    return `${this.mediaFolder}/${kind}/${name}`;
+  }
+
+  private mediaFile(id: string): MediaFile {
+    const file = this.mediaFiles.get(id);
+    if (!file) throw new Error('That clip is no longer on the camera list.');
+    return file;
+  }
+
+  /** The listed record plus what this device already holds of it. */
+  private mediaItemFor(file: MediaFile, base: CameraMediaItem): CameraMediaItem {
+    const store = this.deps.mediaFiles;
+    const item: CameraMediaItem = {
+      ...base,
+      originalUrl: this.mediaMemo.resourcesFor(file, file.path, this.singleSdStorage)[0]?.url,
+    };
+    if (!store) return item;
+    const thumb = store.existing('cache', this.mediaPath('thumbs', thumbnailCacheFileName(file)));
+    if (thumb) item.thumbnailUrl = thumb.uri;
+    const original = store.existing('document', this.mediaPath('files', originalCacheFileName(file)));
+    if (original && isCompleteOriginal(original.size, file.sizeBytes)) item.localUri = original.uri;
+    for (const c of playbackCandidates(file, 0)) {
+      if (!isProxyPath(c.path)) continue;
+      const proxy = store.existing('cache', this.mediaPath('play', playbackCacheFileName(c.path)));
+      if (proxy) {
+        item.previewUrl = proxy.uri;
+        break;
       }
-      const after = this.now();
-      if (after - start >= floorS * 1000 && after - lastChange >= idleS * 1000) return;
+    }
+    return item;
+  }
+
+  private mediaItemsFor(files: MediaFile[]): CameraMediaItem[] {
+    const byId = new Map(files.map((f) => [mediaItemId(f), f]));
+    return mediaItemsOf(files).map((item) => {
+      const f = byId.get(item.id);
+      return f ? this.mediaItemFor(f, item) : item;
+    });
+  }
+
+  /**
+   * GET one camera path to a local file, trying the stores in the memo's order and remembering the
+   * one that answered (keyed on the listed file's path, like upstream).
+   */
+  private async fetchMediaPath(
+    file: MediaFile,
+    path: string,
+    area: MediaFileArea,
+    local: string,
+    generation: number | null,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ uri: string; size: number }> {
+    const store = this.deps.mediaFiles;
+    if (!store) throw new Error('Downloading from the camera is not available in this build.');
+    this.mediaMemo.route = { host: this.host, addressing: 'storageQuery' };
+    let last: Error = new Error('The camera did not answer. Check the connection, then try again.');
+    for (const resource of this.mediaMemo.resourcesFor(file, path, this.singleSdStorage)) {
+      if (generation != null && generation !== this.connectionGeneration) throw new MediaListingRetired();
+      try {
+        const got = await store.download(resource.url, area, local, { onProgress });
+        if (generation != null && generation !== this.connectionGeneration) throw new MediaListingRetired();
+        this.mediaMemo.remember(resource.storage, file.path);
+        this.log(`media: fetched ${path} storage=${resource.storage} bytes=${got.size}`);
+        return got;
+      } catch (e) {
+        if (e instanceof MediaListingRetired) throw e;
+        const status = httpStatusOf(errorText(e));
+        last = e instanceof Error ? e : new Error(errorText(e));
+        this.log(`media: ${path} storage=${resource.storage} failed (${status ?? 'transport'})`);
+        if (!MediaStorageMemo.shouldRetry(status != null ? { kind: 'status', status } : { kind: 'transport' }, path) && path !== file.thumbPath) break;
+      }
+    }
+    throw last;
+  }
+
+  /** A token for "the link these bytes were asked over is still the one we have". */
+  private get connectionGeneration(): number {
+    return this.attempt;
+  }
+
+  /** One thumbnail fetch at a time, newest request first (the cells on screen asked last). */
+  private pumpThumbs(): void {
+    while (this.thumbWorkers < 1 && this.thumbQueue.length) {
+      const job = this.thumbQueue.pop()!;
+      this.thumbWorkers += 1;
+      void job().finally(() => {
+        this.thumbWorkers -= 1;
+        this.pumpThumbs();
+      });
     }
   }
 
   readonly media: CameraMediaService = {
-    list: async () => {
+    list: async (options) => {
       if (!this.live) throw new Error('Connect a camera to browse its media.');
       this.browsing = true;
       this.restStick();
-      const entered = await this.enterPlayback();
+      this.mediaMemo.route = { host: this.host, addressing: 'storageQuery' };
+      const generation = ++this.browseGeneration;
+      const isCurrent = () => this.live && this.browsing && generation === this.browseGeneration;
+      const entered = await enterMediaPlayback({
+        isCurrent,
+        sleep: (ms) => this.sleep(ms),
+        attempt: async () => (await this.sets.submit(Commands.enterPlayback(), true)).kind === 'ok',
+        inPlayback: () => this.reducer.status.inPlayback,
+      });
       this.browseEnteredPlayback = this.browseEnteredPlayback || entered;
-      const a = new MediaChunkAssembler();
-      this.mediaChunks = a;
-      const deadline = this.now() + MEDIA_QUERY_BUDGET_MS;
-      try {
-        // Newest page per store only: pagination helpers are not ported to src/core.
-        this.sendDatalink(Commands.mediaList(MEDIA_SD_COUNTER, MEDIA_NEWEST_SD));
-        await this.collectMedia(a, MEDIA_SD_COUNTER, 0.8, 1, deadline);
-        this.sendDatalink(Commands.mediaListTrigger());
-        await this.collectMedia(a, null, 0.4, 0.2, deadline);
-        this.sendDatalink(Commands.mediaList(MEDIA_INTERNAL_COUNTER, MEDIA_NEWEST_INTERNAL));
-        await this.collectMedia(a, MEDIA_INTERNAL_COUNTER, 0.8, 1, deadline);
-      } finally {
-        if (this.mediaChunks === a) this.mediaChunks = null;
-      }
-      if (a.chunkCount === 0 && !a.sawEnd) throw new Error('The camera did not send its media list. Try again.');
-      const files = MediaManifest.decodeStores(a);
-      this.mediaFiles = new Map(files.map((f) => [mediaItemId(f), f]));
-      return mediaItemsOf(files);
+      this.log(`media: enter playback ${entered ? 'ok' : 'refused — newest page only'}`);
+      const result = await listMediaCatalog(
+        {
+          now: () => this.now(),
+          sleep: (ms) => this.sleep(ms),
+          isCurrent,
+          sendList: (counter, cursor) => void this.sendDatalink(Commands.mediaList(counter, cursor)),
+          sendTrigger: () => void this.sendDatalink(Commands.mediaListTrigger()),
+          attach: (a) => {
+            this.mediaChunks = a;
+          },
+        },
+        {
+          playbackHeld: entered,
+          onPage: (files, page) => {
+            this.mediaFiles = new Map(files.map((f) => [mediaItemId(f), f]));
+            this.log(`media: page ${page} → ${files.length} files`);
+            if (options?.onPage) options.onPage(this.mediaItemsFor(files));
+          },
+        },
+      );
+      this.mediaFiles = new Map(result.files.map((f) => [mediaItemId(f), f]));
+      this.log(`media: listed ${result.files.length} files in ${result.pages} page(s)${result.complete ? '' : ' (more on the camera)'}`);
+      return this.mediaItemsFor(result.files);
     },
     setFavorite: async (id, favorite) => {
-      const file = this.mediaFiles.get(id);
-      if (!file) throw new Error('That clip is no longer on the camera list.');
+      const file = this.mediaFile(id);
       const frame = Commands.setMediaFavorite(mediaHandle(file), favorite, this.nextMediaCounter(), this.model);
       const reply = await this.sets.submit(frame, true);
       if (reply.kind !== 'ok') throw new Error('The camera did not star that clip.');
@@ -2060,21 +2192,116 @@ export class NativeCameraSession implements CameraSession {
       }
       if (failed.length) throw new Error(`The camera did not delete ${failed.length === 1 ? 'one clip' : `${failed.length} clips`}.`);
     },
-    download: async () => {
-      throw new Error('Downloading from the camera is not available in this build yet: the camera media file paths are not ported.');
+    download: async (id, onProgress) => {
+      if (!this.deps.mediaFiles) throw new Error('Downloading from the camera is not available in this build.');
+      const file = this.mediaFile(id);
+      const local = this.mediaPath('files', originalCacheFileName(file));
+      const have = this.deps.mediaFiles.existing('document', local);
+      if (have && isCompleteOriginal(have.size, file.sizeBytes)) return have.uri;
+      if (!this.live) throw new Error('Connect the camera to download this clip.');
+      const started = this.now();
+      const report = (done: number, total: number) =>
+        onProgress?.({ itemId: id, bytesDone: done, bytesTotal: total || file.sizeBytes, rate: done / Math.max(0.001, (this.now() - started) / 1000) });
+      const got = await this.fetchMediaPath(file, file.path, 'document', local, this.connectionGeneration, report);
+      if (!isCompleteOriginal(got.size, file.sizeBytes)) {
+        this.deps.mediaFiles.remove('document', local);
+        throw new Error(`The transfer stopped at ${Math.round((got.size / Math.max(1, file.sizeBytes)) * 100)}%. Try again.`);
+      }
+      return got.uri;
+    },
+    thumbnail: (id) => {
+      const store = this.deps.mediaFiles;
+      const file = this.mediaFiles.get(id);
+      if (!store || !file || !file.thumbPath) return Promise.resolve(null);
+      const local = this.mediaPath('thumbs', thumbnailCacheFileName(file));
+      const have = store.existing('cache', local);
+      if (have) return Promise.resolve(have.uri);
+      const running = this.thumbJobs.get(id);
+      if (running) return running;
+      if (!this.live) return Promise.resolve(null);
+      const generation = this.connectionGeneration;
+      const job = new Promise<string | null>((resolve) => {
+        this.thumbQueue.push(async () => {
+          try {
+            resolve(this.live ? (await this.fetchMediaPath(file, file.thumbPath, 'cache', local, generation)).uri : null);
+          } catch {
+            resolve(null);
+          } finally {
+            this.thumbJobs.delete(id);
+          }
+        });
+      });
+      this.thumbJobs.set(id, job);
+      this.pumpThumbs();
+      return job;
+    },
+    preparePlayback: async (id, onProgress) => {
+      const store = this.deps.mediaFiles;
+      const file = this.mediaFile(id);
+      const original = store?.existing('document', this.mediaPath('files', originalCacheFileName(file)));
+      const video = MediaFiles.isVideo(file);
+      // A proxy on disk first (the 720p sidecar plays smoothly), then a whole original.
+      const first = this.mediaMemo.resolvedStorage(file, this.singleSdStorage);
+      const paths = video ? [...new Set(playbackCandidates(file, first).map((c) => c.path))] : [file.path];
+      for (const path of paths) {
+        if (!isProxyPath(path)) break;
+        const have = store?.existing('cache', this.mediaPath('play', playbackCacheFileName(path)));
+        if (have) return { uri: have.uri, mimeType: playbackMimeType(path), rendition: 'low-res' } satisfies MediaPlaybackSource;
+      }
+      if (original && isCompleteOriginal(original.size, file.sizeBytes)) return { uri: original.uri, mimeType: playbackMimeType(file.path), rendition: 'original' };
+      if (!store) throw new Error('Playback from the camera is not available in this build.');
+      if (!this.live) throw new Error('Connect the camera to play this clip.');
+      const started = this.now();
+      let last: unknown = null;
+      for (const path of paths) {
+        const isOriginal = path === file.path;
+        const area: MediaFileArea = isOriginal && !video ? 'document' : 'cache';
+        const local = isOriginal && !video ? this.mediaPath('files', originalCacheFileName(file)) : this.mediaPath('play', playbackCacheFileName(path));
+        try {
+          const got = await this.fetchMediaPath(file, path, area, local, this.connectionGeneration, (done, total) =>
+            onProgress?.({ itemId: id, bytesDone: done, bytesTotal: total || (isOriginal ? file.sizeBytes : 0), rate: done / Math.max(0.001, (this.now() - started) / 1000) }),
+          );
+          return { uri: got.uri, mimeType: playbackMimeType(path), rendition: isProxyPath(path) ? 'low-res' : 'original' };
+        } catch (e) {
+          if (e instanceof MediaListingRetired) throw new Error('The camera link changed. Try again.');
+          last = e;
+        }
+      }
+      throw new Error(`This clip could not be fetched from the camera (${errorText(last)}).`);
     },
     resumeLive: async () => {
       if (!this.browsing) return;
       const entered = this.browseEnteredPlayback || this.reducer.status.inPlayback;
-      // MediaLiveResume: `0x02/0x0c` exit until the playback bit clears, then the captured
-      // live start (`0x02/0x68 08` + `0x09/0xa8`). Without playback the feed never stopped.
-      for (let attempt = 1; attempt <= 3 && this.reducer.status.inPlayback; attempt++) {
-        await this.sets.submit(Commands.exitPlayback(), true);
-        await new Promise<void>((r) => this.clock.setTimeout(r, 180));
-      }
+      const generation = ++this.browseGeneration;
       this.browsing = false;
       this.browseEnteredPlayback = false;
-      if (entered && this.live) this.enableLiveView('media-resume', true);
+      this.mediaChunks = null;
+      // Without playback the feed never stopped: no exit, no enable (enable-once holds).
+      if (!entered || !this.live) return;
+      this.mediaResuming = true;
+      const token = ++this.resumeToken;
+      const since = this.now();
+      try {
+        const result = await runMediaLiveReturn({
+          now: () => this.now(),
+          sleep: (ms) => this.sleep(ms),
+          isCurrent: () => this.live && !this.browsing && generation === this.browseGeneration,
+          inPlayback: () => this.reducer.status.inPlayback,
+          // A presented frame after the resume started; without picture stats, video packets
+          // after an enable this loop sent.
+          pictureFresh: () =>
+            MediaLiveResume.isPictureFresh(this.feed.lastPictureAt, since) ||
+            (this.feed.enabledAt != null && this.feed.enabledAt >= since && this.feed.lastVideoAt != null && this.feed.lastVideoAt > this.feed.enabledAt),
+          exitPlayback: async () => {
+            this.log(`media: exit playback inPlayback=${this.reducer.status.inPlayback ? 1 : 0}`);
+            return (await this.sets.submit(Commands.exitPlayback(), true)).kind === 'ok';
+          },
+          enableLiveView: () => this.enableLiveView('media-resume', true),
+        });
+        this.log(`media: live resume ${result}`);
+      } finally {
+        if (token === this.resumeToken) this.mediaResuming = false;
+      }
     },
   };
 

@@ -27,7 +27,7 @@ export function batteryTint(colors: ThemeColors, percent: number | null): string
   return onVideo.ink;
 }
 
-function GaugeBars({ filled, tint }: { filled: number; tint: string }) {
+export function GaugeBars({ filled, tint }: { filled: number; tint: string }) {
   const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.bars}>

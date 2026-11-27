@@ -1,202 +1,206 @@
-import { SdCardIcon, ThermometerIcon } from '@hugeicons/core-free-icons';
+import {
+  BatteryCharging01Icon,
+  BatteryEmptyIcon,
+  BatteryFullIcon,
+  BatteryLowIcon,
+  BatteryMedium01Icon,
+  SdCardIcon,
+  ThermometerIcon,
+} from '@hugeicons/core-free-icons';
 import { useState, type ReactNode } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useCamera, type CameraState } from '@/camera';
 import { Icon } from '@/components/icon';
+import { recordRed, recordRedSoft } from '@/constants/monitor';
 import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
-import {
-  COLOR_LABEL,
-  MODE_LABEL,
-  TIMECODE_PLACEHOLDER,
-  elapsedLabel,
-  formatChip,
-  isPhotoMode,
-  storageForms,
-  timecodeComponents,
-} from '../format';
-import { STATUS_GAP, STATUS_ROW, type FieldMonitorLayout } from '../layout/fieldMonitorLayout';
-import { useLiveUi, type CaptureSheetId } from '../liveUiStore';
+import { usePreferences } from '@/state/preferences';
+import { DASH, elapsedLabel, isPhotoMode, storageForms, timecodeComponents } from '../format';
+import { STATUS_ROW, type FieldMonitorLayout } from '../layout/fieldMonitorLayout';
+import { useLiveUi } from '../liveUiStore';
 import { LiveBackButton } from '../chrome/SystemButtons';
-import { PillText, VideoPill, onVideo, textShadow } from '../chrome/primitives';
-import { CameraBatteryGauge, LinkGauge, PhoneBatteryGauge } from './LiveTelemetry';
+import { onVideo, textShadow } from '../chrome/primitives';
+import { GaugeBars, batteryTint, linkTint } from './LiveTelemetry';
 
-/** `MonitorRecordingReadout`: a pill with the dotPink REC dot (white at standby) and elapsed time. */
-export function RecordingReadout() {
-  const styles = useThemedStyles(createStyles);
-  const rec = useCamera((s) => s.recording);
-  const recording = rec.recording;
-  return (
-    <VideoPill
-      label={recording ? 'Recording' : 'Standby'}
-      accessibilityValue={{ text: elapsedLabel(rec.elapsedSec) }}
-      style={recording ? styles.recPill : undefined}
-    >
-      <View style={[styles.recDot, recording && styles.recDotOn]} />
-      <PillText>{recording ? 'REC' : 'STBY'}</PillText>
-      <PillText mono>{elapsedLabel(recording ? rec.elapsedSec : 0)}</PillText>
-    </VideoPill>
-  );
-}
+/** One cluster's soft capsule over the picture. */
+const CLUSTER_FILL = 'rgba(0,0,0,0.32)';
 
-/** `MonitorClock`: the reported timecode; the last field in accent. Never invents a clock. */
-export function MonitorClock() {
-  const styles = useThemedStyles(createStyles);
-  const tc = useCamera((s) => s.recording.timecode);
-  const { base, accent } = timecodeComponents(tc ?? TIMECODE_PLACEHOLDER);
-  return (
-    <Text numberOfLines={1} style={styles.clock} accessibilityLabel={tc ? `Timecode ${tc}` : 'Timecode not available'}>
-      {base}
-      <Text style={styles.clockAccent}>{accent}</Text>
-    </Text>
-  );
-}
-
-// Selector returns a primitive so the subscription stays stable.
-const storageFormsKey = (s: CameraState) => storageForms(s).join('|');
-
-/** Storage remaining; tap cycles free space → record time → percent. */
-export function StorageReadout() {
-  const forms = useCamera(storageFormsKey);
-  const [form, setForm] = useState(0);
-  const list = forms.split('|');
-  const value = list[form % list.length];
-  const locked = useLiveUi((s) => s.locked);
-  return (
-    <VideoPill label="Storage remaining" accessibilityValue={{ text: value }} disabled={locked} onPress={() => setForm((f) => (f + 1) % list.length)}>
-      <Icon icon={SdCardIcon} size={14} color={onVideo.ink} />
-      <PillText mono>{value}</PillText>
-    </VideoPill>
-  );
-}
-
-/** A pill that opens one of the top-edge capture sheets (format, colour, mode). */
-function SheetPill({ sheet, value, label, accent }: { sheet: CaptureSheetId; value: string; label: string; accent?: boolean }) {
-  const { colors } = useTheme();
-  const open = useLiveUi((s) => s.captureSheet === sheet);
-  const locked = useLiveUi((s) => s.locked);
-  const set = useLiveUi((s) => s.set);
-  return (
-    <VideoPill
-      testID={`monitor.capture.${sheet}`}
-      label={label}
-      accessibilityValue={{ text: value }}
-      chosen={open}
-      disabled={locked}
-      onPress={() => set({ captureSheet: open ? null : sheet, gimbalPanel: 'none', zoomDialOpen: false })}
-    >
-      <PillText chosen={open} color={accent ? colors.accent : undefined}>
-        {value}
-      </PillText>
-    </VideoPill>
-  );
-}
-
-function ThermalBadge() {
-  const { colors } = useTheme();
-  const thermal = useCamera((s) => s.power.thermal);
-  if (thermal === 'normal') return null;
-  const tint = thermal === 'hot' ? colors.destructive : colors.warning;
-  return (
-    <VideoPill label={thermal === 'hot' ? 'Camera hot' : 'Camera warm'}>
-      <Icon icon={ThermometerIcon} size={14} color={tint} />
-      <PillText color={tint}>{thermal === 'hot' ? 'Hot' : 'Warm'}</PillText>
-    </VideoPill>
-  );
-}
-
-function Row({ children, style }: { children: ReactNode; style?: object }) {
+function Cluster({ children, tint, label }: { children: ReactNode; tint?: string; label?: string }) {
   const styles = useThemedStyles(createStyles);
   return (
-    <View pointerEvents="box-none" style={[styles.row, style]}>
+    <View accessibilityLabel={label} style={[styles.cluster, tint ? { backgroundColor: tint } : null]}>
       {children}
     </View>
   );
 }
 
+function Readout({ children, color, mono = true }: { children: ReactNode; color?: string; mono?: boolean }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <Text numberOfLines={1} style={[styles.text, mono && styles.mono, color ? { color } : null]}>
+      {children}
+    </Text>
+  );
+}
+
 /**
- * `LiveStatusChrome`: status pills along the top. Landscape is one row (back, REC and timecode
- * leading; format, colour, mode and telemetry trailing). Portrait is two rows: telemetry, then
- * REC + timecode with format and colour.
+ * Leading cluster (`MonitorRecordingReadout` + `MonitorClock`): the REC dot (record red, grey at
+ * standby, on a red-tinted capsule while recording), REC / STBY and the take's elapsed time, then the camera's timecode when it reports one
+ * and Display → Timecode is on. Never invents a clock.
+ */
+export function RecordingReadout() {
+  const styles = useThemedStyles(createStyles);
+  const { colors } = useTheme();
+  const rec = useCamera((s) => s.recording);
+  const showTimecode = usePreferences((p) => p.showTimecode ?? true);
+  const recording = rec.recording;
+  const tc = showTimecode ? rec.timecode : undefined;
+  const { base, accent } = timecodeComponents(tc ?? '');
+  return (
+    <Cluster tint={recording ? recordRedSoft : undefined}>
+      <View
+        accessible
+        accessibilityLabel={recording ? 'Recording' : 'Standby'}
+        accessibilityValue={{ text: elapsedLabel(rec.elapsedSec) }}
+        style={styles.item}
+      >
+        <View style={[styles.recDot, recording && styles.recDotOn]} />
+        {/* With a timecode beside it the red dot and tint say REC; the word would crowd the clock. */}
+        {!tc ? <Readout mono={false}>{recording ? 'REC' : 'STBY'}</Readout> : null}
+        <Readout>{elapsedLabel(recording ? rec.elapsedSec : 0)}</Readout>
+      </View>
+      {tc ? (
+        <Text numberOfLines={1} style={[styles.text, styles.mono, styles.clock]} accessibilityLabel={`Timecode ${tc}`}>
+          {base}
+          <Text style={{ color: colors.accent }}>{accent}</Text>
+        </Text>
+      ) : null}
+    </Cluster>
+  );
+}
+
+/** Card forms, record time first (Mimo's SD 5:36:07), then free space, then percent. */
+function cardForms(s: CameraState): string[] {
+  const forms = storageForms(s);
+  return forms.length > 1 && s.recording.remainingSec >= 0 ? [forms[1], forms[0], ...forms.slice(2)] : forms;
+}
+// Selector returns a primitive so the subscription stays stable.
+const cardFormsKey = (s: CameraState) => cardForms(s).join('|');
+
+function cameraBatteryIcon(pct: number | null, charging: boolean) {
+  if (charging) return BatteryCharging01Icon;
+  if (pct == null) return BatteryEmptyIcon;
+  return pct > 60 ? BatteryFullIcon : pct > 20 ? BatteryMedium01Icon : pct > 5 ? BatteryLowIcon : BatteryEmptyIcon;
+}
+
+/**
+ * Trailing cluster: thermal (only when warm or hot), camera battery, card time left (tap cycles
+ * free space and percent), and the link bars (tap shows the feed frame rate). The phone battery
+ * would join only when low; no battery API is wired, so it never shows.
+ */
+export function CameraStatusCluster() {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const locked = useLiveUi((s) => s.locked);
+  const power = useCamera((s) => s.power);
+  const conn = useCamera((s) => s.connection);
+  const forms = useCamera(cardFormsKey).split('|');
+  const [form, setForm] = useState(0);
+  const [showsFps, setShowsFps] = useState(false);
+  const card = forms[form % forms.length];
+  const known = power.batteryPercent >= 0 && power.batteryPercent <= 100;
+  const pct = known ? power.batteryPercent : null;
+  const batteryColor = batteryTint(colors, pct);
+  const link = linkTint(colors, conn.linkBand);
+  const thermal = power.thermal;
+  const hot = thermal === 'hot' ? colors.destructive : colors.warning;
+  return (
+    <Cluster>
+      {thermal !== 'normal' ? (
+        <View accessible accessibilityLabel={thermal === 'hot' ? 'Camera hot' : 'Camera warm'} style={styles.item}>
+          <Icon icon={ThermometerIcon} size={14} color={hot} />
+          <Readout mono={false} color={hot}>
+            {thermal === 'hot' ? 'Hot' : 'Warm'}
+          </Readout>
+        </View>
+      ) : null}
+      <View
+        accessible
+        accessibilityLabel={known ? `Camera battery ${pct} percent${power.charging ? ', charging' : ''}` : 'Camera battery unavailable'}
+        style={styles.item}
+      >
+        <Icon icon={cameraBatteryIcon(pct, power.charging)} size={16} color={power.charging ? colors.success : batteryColor} />
+        <Readout color={batteryColor}>{known ? `${pct}%` : DASH}</Readout>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Storage remaining"
+        accessibilityValue={{ text: card }}
+        disabled={locked}
+        hitSlop={{ top: 8, bottom: 8 }}
+        onPress={() => setForm((f) => (f + 1) % forms.length)}
+        style={({ pressed }) => [styles.item, pressed && styles.pressed]}
+      >
+        <Icon icon={SdCardIcon} size={14} color={onVideo.ink} />
+        <Readout>{card}</Readout>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={showsFps ? `Feed ${conn.videoFps} frames per second` : `Signal ${conn.signalBars} of 4 bars`}
+        hitSlop={{ top: 8, bottom: 8, right: 6 }}
+        onPress={() => setShowsFps((v) => !v)}
+        style={({ pressed }) => [styles.item, pressed && styles.pressed]}
+      >
+        {showsFps ? <Readout color={link}>{conn.videoFps > 0 ? `${conn.videoFps} fps` : DASH}</Readout> : <GaugeBars filled={conn.signalBars} tint={link} />}
+      </Pressable>
+    </Cluster>
+  );
+}
+
+/**
+ * `LiveStatusChrome`, picture first: back, then one cluster per side — REC and timecode leading,
+ * the camera's battery, card and link trailing. Format, colour and mode live in their own
+ * controls (the readout and the mode rail), so nothing here repeats them.
  */
 export function LiveStatusChrome({ layout, onBack }: { layout: FieldMonitorLayout; onBack: () => void }) {
   const styles = useThemedStyles(createStyles);
-  const format = useCamera((s) => s.format);
-  const photo = isPhotoMode(format.shootingMode);
+  const photo = useCamera((s) => isPhotoMode(s.format.shootingMode));
   const { status } = layout;
-
-  const formatPills = photo ? (
-    <SheetPill sheet="mode" value={MODE_LABEL[format.shootingMode]} accent label="Shooting mode" />
-  ) : (
-    <>
-      <SheetPill sheet="format" value={formatChip(format.resolution, format.fps)} label="Recording format" />
-      <SheetPill sheet="color" value={COLOR_LABEL[format.colorMode]} label="Color mode" />
-    </>
-  );
-  const recGroup = !photo ? (
-    <>
-      <RecordingReadout />
-      <MonitorClock />
-    </>
-  ) : null;
-
-  if (layout.portrait) {
-    const roomy = status.width >= 560;
-    return (
-      <View pointerEvents="box-none" style={[styles.box, { left: status.x, top: status.y, width: status.width }]}>
-        <Row>
-          <LiveBackButton onPress={onBack} />
-          <StorageReadout />
-          <LinkGauge />
-          <ThermalBadge />
-          <View style={styles.spacer} />
-          <PhoneBatteryGauge />
-          <CameraBatteryGauge />
-        </Row>
-        <Row style={{ marginTop: STATUS_GAP }}>
-          {recGroup}
-          <View style={styles.spacer} />
-          {formatPills}
-          {!photo && roomy ? <SheetPill sheet="mode" value={MODE_LABEL[format.shootingMode]} accent label="Shooting mode" /> : null}
-        </Row>
-      </View>
-    );
-  }
-
-  const showsMode = !photo && status.width >= 700;
   return (
-    <View pointerEvents="box-none" style={[styles.box, { left: status.x, top: status.y, width: status.width }]}>
-      <Row>
-        <LiveBackButton onPress={onBack} />
-        {recGroup}
-        <View style={styles.spacer} />
-        {formatPills}
-        {showsMode ? <SheetPill sheet="mode" value={MODE_LABEL[format.shootingMode]} accent label="Shooting mode" /> : null}
-        <StorageReadout />
-        <LinkGauge />
-        <PhoneBatteryGauge />
-        <CameraBatteryGauge />
-        <ThermalBadge />
-      </Row>
+    <View pointerEvents="box-none" style={[styles.row, { left: status.x, top: status.y, width: status.width }]}>
+      <LiveBackButton onPress={onBack} />
+      {!photo ? <RecordingReadout /> : null}
+      <View style={styles.spacer} />
+      <CameraStatusCluster />
     </View>
   );
 }
 
 function createStyles(colors: ThemeColors) {
   return {
-    box: { position: 'absolute' as const },
-    row: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, height: STATUS_ROW },
-    spacer: { flex: 1, minWidth: 4 },
-    recPill: { backgroundColor: 'rgba(214,21,95,0.28)' },
-    recDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: onVideo.inkMuted },
-    recDotOn: { backgroundColor: colors.dotPink },
-    clock: {
-      fontFamily: fonts.semibold,
-      fontSize: 13,
-      color: onVideo.ink,
-      fontVariant: ['tabular-nums' as const],
-      marginLeft: 2,
-      ...textShadow,
+    row: {
+      position: 'absolute' as const,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 8,
+      height: STATUS_ROW,
     },
-    clockAccent: { color: colors.accent },
+    spacer: { flex: 1, minWidth: 4 },
+    cluster: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 10,
+      height: 28,
+      paddingHorizontal: 10,
+      borderRadius: 999,
+      backgroundColor: CLUSTER_FILL,
+      flexShrink: 1,
+    },
+    item: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4, minHeight: 28 },
+    text: { fontFamily: fonts.semibold, fontSize: 12.5, color: onVideo.ink, ...textShadow },
+    mono: { fontVariant: ['tabular-nums' as const] },
+    clock: { color: onVideo.ink },
+    recDot: { width: 7, height: 7, borderRadius: 3.5, marginRight: 1, backgroundColor: onVideo.inkMuted },
+    recDotOn: { backgroundColor: recordRed },
+    pressed: { opacity: 0.7 },
   };
 }

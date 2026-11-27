@@ -9,11 +9,13 @@ import { haptics } from '../haptics';
 /** Finger travel per detent (`MonitorDrumMetrics`: independent 56-point detent policy). */
 const DETENT = 56;
 const HEIGHT = 64;
+/** The exposure panel's denser rows. */
+const HEIGHT_COMPACT = 42;
 
-function drumMetrics(options: string[]) {
+function drumMetrics(options: string[], compact: boolean) {
   const length = Math.max(4, ...options.map((o) => o.length));
-  const selectedSize = length > 9 ? 20 : length > 6 ? 24 : 28;
-  const cellWidth = Math.max(76, Math.round(length * selectedSize * 0.62 + 20));
+  const selectedSize = (length > 9 ? 20 : length > 6 ? 24 : 28) - (compact ? 6 : 0);
+  const cellWidth = Math.max(compact ? 64 : 76, Math.round(length * selectedSize * 0.62 + 20));
   return { selectedSize, cellWidth };
 }
 
@@ -23,6 +25,8 @@ export interface MonitorValueDrumProps {
   onChange: (index: number) => void;
   disabled?: boolean;
   accessibilityLabel?: string;
+  /** A 48pt row with smaller type (the exposure panel). */
+  compact?: boolean;
 }
 
 /**
@@ -30,10 +34,10 @@ export interface MonitorValueDrumProps {
  * jump to it, or use the chevrons. The chosen value sits centred and large over a primary tick.
  * Commits on release (the camera sees one SET per gesture, not every detent).
  */
-export function MonitorValueDrum({ options, index, onChange, disabled, accessibilityLabel }: MonitorValueDrumProps) {
+export function MonitorValueDrum({ options, index, onChange, disabled, accessibilityLabel, compact = false }: MonitorValueDrumProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const { selectedSize, cellWidth } = useMemo(() => drumMetrics(options), [options]);
+  const { selectedSize, cellWidth } = useMemo(() => drumMetrics(options, compact), [options, compact]);
   const [width, setWidth] = useState(320);
   const [preview, setPreview] = useState<number | null>(null);
   const live = useRef({ index, options, onChange, start: index, last: index });
@@ -91,18 +95,22 @@ export function MonitorValueDrum({ options, index, onChange, disabled, accessibi
         if (e.nativeEvent.actionName === 'increment') step(1);
         if (e.nativeEvent.actionName === 'decrement') step(-1);
       }}
-      style={[styles.root, disabled && styles.disabled]}
+      style={[styles.root, compact && styles.rootCompact, disabled && styles.disabled]}
     >
       <Pressable
         accessibilityLabel="Previous value"
         disabled={disabled || index <= 0}
         onPress={() => step(-1)}
-        style={[styles.chevron, index <= 0 && styles.faint]}
+        style={[styles.chevron, compact && styles.chevronCompact, index <= 0 && styles.faint]}
       >
         <Icon icon={ArrowLeft01Icon} size={18} color={colors.mutedForeground} strokeWidth={2} />
       </Pressable>
       <GestureDetector gesture={pan}>
-        <View collapsable={false} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)} style={styles.window}>
+        <View
+          collapsable={false}
+          onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
+          style={[styles.window, compact && styles.windowCompact]}
+        >
           {options.map((label, i) => {
             const offset = i - shown;
             if (Math.abs(offset) > span) return null;
@@ -142,7 +150,7 @@ export function MonitorValueDrum({ options, index, onChange, disabled, accessibi
         accessibilityLabel="Next value"
         disabled={disabled || index >= options.length - 1}
         onPress={() => step(1)}
-        style={[styles.chevron, index >= options.length - 1 && styles.faint]}
+        style={[styles.chevron, compact && styles.chevronCompact, index >= options.length - 1 && styles.faint]}
       >
         <Icon icon={ArrowRight01Icon} size={18} color={colors.mutedForeground} strokeWidth={2} />
       </Pressable>
@@ -153,11 +161,14 @@ export function MonitorValueDrum({ options, index, onChange, disabled, accessibi
 function createStyles(colors: ThemeColors) {
   return {
     root: { flexDirection: 'row' as const, alignItems: 'center' as const, height: HEIGHT, borderRadius: 16, backgroundColor: colors.surface },
+    rootCompact: { height: HEIGHT_COMPACT, borderRadius: 14 },
     window: { flex: 1, height: HEIGHT, overflow: 'hidden' as const },
+    windowCompact: { height: HEIGHT_COMPACT },
     cell: { position: 'absolute' as const, top: 0, bottom: 0, alignItems: 'center' as const, justifyContent: 'center' as const },
     label: { fontFamily: fonts.medium, fontSize: 15, color: colors.mutedForeground, fontVariant: ['tabular-nums' as const] },
-    tick: { position: 'absolute' as const, bottom: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: colors.primary },
+    tick: { position: 'absolute' as const, bottom: 4, width: 4, height: 4, borderRadius: 2, backgroundColor: colors.primary },
     chevron: { width: 40, height: 44, alignItems: 'center' as const, justifyContent: 'center' as const },
+    chevronCompact: { width: 32 },
     faint: { opacity: 0.3 },
     disabled: { opacity: 0.4 },
   };

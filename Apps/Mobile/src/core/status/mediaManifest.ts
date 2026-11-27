@@ -4,8 +4,8 @@
  *
  * Source of truth: OpenCine `OpenCineDJI/MediaManifest+DJIWire.swift` (`MediaChunkAssembler`,
  * `MediaManifest`) and `OpenCineCameraVocabulary/MediaManifest.swift` (`MediaFile`,
- * `MediaListCommand.store`). Pagination helpers (`seedPagination` / `stepPagination`) and the HTTP
- * path builders are not ported yet. List/delete/favourite frames live in commands/commands.ts.
+ * `MediaListCommand.store`). Pagination, the listing sequence and the `/v2` HTTP paths live in
+ * `../library`. List/delete/favourite frames live in commands/commands.ts.
  */
 import { type ByteInput, u32le } from '../bytes';
 import type { DumlFrame } from '../duml/frame';

@@ -124,6 +124,17 @@ export interface CameraMediaItem {
   previewUrl?: string;
   /** Full-quality original URL. */
   originalUrl?: string;
+  /** Optional (additive). The original, already downloaded to this device (file URI). */
+  localUri?: string;
+}
+
+/** Optional (additive). A playable file for one item: the low-res proxy, else the original. */
+export interface MediaPlaybackSource {
+  /** Local file URI (cached from the camera) or a remote URL the player can open. */
+  uri: string;
+  mimeType: string;
+  /** `low-res`: the camera's 720p LRF/XRF proxy. `original`: the full file. */
+  rendition: 'low-res' | 'original';
 }
 
 export interface MediaTransferProgress {
@@ -135,13 +146,27 @@ export interface MediaTransferProgress {
 }
 
 export interface CameraMediaService {
-  list(): Promise<CameraMediaItem[]>;
+  /**
+   * The camera's media, newest first. `onPage` (optional, additive) sees the list so far after
+   * each page of a long listing, so the grid can fill in while older pages arrive.
+   */
+  list(options?: { onPage?: (items: CameraMediaItem[]) => void }): Promise<CameraMediaItem[]>;
   setFavorite(id: string, favorite: boolean): Promise<void>;
   delete(ids: string[]): Promise<void>;
   /** Download an original to a local file URI. */
   download(id: string, onProgress?: (p: MediaTransferProgress) => void): Promise<string>;
   /** Live view is paused while browsing media on the camera; call when leaving. */
   resumeLive(): Promise<void>;
+  /**
+   * Optional (additive). A local thumbnail file URI for an item without `thumbnailUrl`, fetched
+   * from the camera on first ask and cached. Null when the camera has none or cannot be reached.
+   */
+  thumbnail?(id: string): Promise<string | null>;
+  /**
+   * Optional (additive). Fetch what playback needs (the low-res proxy for a clip, the original
+   * for a photo) to this device and return it. Sessions without it play `previewUrl`.
+   */
+  preparePlayback?(id: string, onProgress?: (p: MediaTransferProgress) => void): Promise<MediaPlaybackSource>;
 }
 
 export type SessionEvent =

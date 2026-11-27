@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { Platform, RefreshControl, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { MediaLayout, MediaThumbnailSize } from '@/state/media';
+import { gridColumns } from '@/constants/layout';
 import { fonts, radius, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { DragSelection } from './dragSelection';
 import type { GalleryEntry, GallerySection } from './gallery';
@@ -12,6 +13,15 @@ import { transferReadout } from './libraryStore';
 const gridSpacing = 8;
 const sectionHeaderHeight = 36;
 const sectionGap = 12;
+/** Mimo's dense grid: square tiles 2 pt apart. */
+export const denseGap = 2;
+const denseSectionGap = 6;
+const denseMinTile: Record<MediaThumbnailSize, number> = { small: 130, medium: 180, large: 300 };
+
+/** Dense columns: 3 · 2 · 1 on a phone, more on a landscape phone or a tablet (`gridColumns`). */
+export function denseColumnsFor(size: MediaThumbnailSize, width: number): number {
+  return gridColumns(width, denseMinTile[size], denseGap, size === 'small' ? 3 : size === 'medium' ? 2 : 1, 8);
+}
 
 export function columnsFor(size: MediaThumbnailSize, tablet: boolean, wide: boolean): number {
   const base = size === 'small' ? (tablet ? 5 : 3) : size === 'medium' ? (tablet ? 4 : 2) : tablet ? 2 : 1;
@@ -39,6 +49,12 @@ export interface MediaGalleryProps {
   sections: GallerySection[];
   layout: MediaLayout;
   thumbnailSize: MediaThumbnailSize;
+  /** Grid: captioned cards (true) or the dense square grid (false). */
+  captions: boolean;
+  /** Dense grid: draw the download-state mark (off on the Phone tab). */
+  downloadMarks?: boolean;
+  /** Dense grid runs edge to edge; section titles keep this inset. */
+  titleInset?: number;
   tablet: boolean;
   wide: boolean;
   selecting: boolean;
@@ -74,7 +90,8 @@ export function MediaGallery(p: MediaGalleryProps) {
   const holdArmed = useRef(false);
   const drag = useRef<DragSelection | null>(null);
 
-  const columns = columnsFor(p.thumbnailSize, p.tablet, p.wide);
+  const dense = p.layout === 'grid' && !p.captions;
+  const columns = dense ? denseColumnsFor(p.thumbnailSize, width) : columnsFor(p.thumbnailSize, p.tablet, p.wide);
   const { placed, headers, height, order, firsts, lasts } = useMemo(() => {
     const placed: Placed[] = [];
     const headers: PlacedHeader[] = [];
@@ -84,7 +101,17 @@ export function MediaGallery(p: MediaGalleryProps) {
         headers.push({ key: section.key, title: section.title, count: section.entries.length, y });
         y += sectionHeaderHeight;
       }
-      if (p.layout === 'grid') {
+      if (dense) {
+        // Rows of squares in reading order; the last row keeps the column width.
+        const tile = Math.max(0, (width - denseGap * (columns - 1)) / columns);
+        section.entries.forEach((entry, i) => {
+          const col = i % columns;
+          const row = Math.floor(i / columns);
+          placed.push({ entry, x: col * (tile + denseGap), y: y + row * (tile + denseGap), width: tile, height: tile, aspect: 1 });
+        });
+        const rows = Math.ceil(section.entries.length / columns);
+        y += rows * tile + Math.max(0, rows - 1) * denseGap + denseSectionGap;
+      } else if (p.layout === 'grid') {
         const m = layoutMasonry(
           section.entries.map((e) => uprightAspect(e.cover.width, e.cover.height)),
           columns,
@@ -108,8 +135,8 @@ export function MediaGallery(p: MediaGalleryProps) {
     const order = p.sections.flatMap((s) => s.entries.map((e) => e.id));
     const firsts = new Set(p.sections.map((s) => s.entries[0]?.id));
     const lasts = new Set(p.sections.map((s) => s.entries[s.entries.length - 1]?.id));
-    return { placed, headers, height: Math.max(0, y - sectionGap), order, firsts, lasts };
-  }, [p.sections, p.layout, columns, width]);
+    return { placed, headers, height: Math.max(0, y - (dense ? denseSectionGap : sectionGap)), order, firsts, lasts };
+  }, [p.sections, p.layout, columns, width, dense]);
 
   // Only realize cards near the viewport (large cards hold thousands of clips).
   const visible = useMemo(() => {
@@ -226,7 +253,7 @@ export function MediaGallery(p: MediaGalleryProps) {
             style={{ height, width: '100%' }}
           >
             {headers.map((h) => (
-              <View key={h.key} style={[styles.header, { top: h.y }]}>
+              <View key={h.key} style={[styles.header, { top: h.y, left: dense ? (p.titleInset ?? 2) : 2 }]}>
                 <Text style={styles.headerTitle}>{h.title}</Text>
                 <Text style={styles.headerCount}>{h.count}</Text>
               </View>
@@ -252,6 +279,8 @@ export function MediaGallery(p: MediaGalleryProps) {
                     <MediaCell
                       entry={c.entry}
                       layout={p.layout}
+                      dense={dense}
+                      downloadMarks={p.downloadMarks}
                       tablet={p.tablet}
                       width={c.width}
                       aspect={c.aspect}

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { CameraMediaItem } from '@/camera/session';
 import { persistStorage } from './storage';
 
 /**
@@ -18,6 +19,8 @@ export type MediaPostExportAction = 'system-share' | 'save-to-photos';
 export type MediaShareFormat = 'original' | 'h264' | 'hevc';
 /** Output curve when converting log footage. */
 export type MediaOutputCurve = 'rec709' | 'hlg';
+/** The library's two sources: media on the camera, or clips this app saved to the phone. */
+export type MediaLibrarySource = 'camera' | 'phone';
 
 export interface MediaPreferences {
   // Gallery
@@ -28,6 +31,13 @@ export interface MediaPreferences {
   stackBursts: boolean;
   /** Group the gallery under day headers. */
   groupByDay: boolean;
+  /**
+   * Grid only: file name and details under each tile (rounded cards at the picture's shape).
+   * Off (default): Mimo's dense grid of square crops, 2 pt apart, with marks over the picture.
+   */
+  gridCaptions: boolean;
+  /** The library tab last shown (Camera / Phone). */
+  librarySource: MediaLibrarySource;
   // Playback
   loopPlayback: boolean;
   mutePlayback: boolean;
@@ -65,10 +75,12 @@ export interface MediaPreferences {
 
 export const defaultMediaPreferences: MediaPreferences = {
   layout: 'grid',
-  thumbnailSize: 'medium',
+  thumbnailSize: 'small',
   sort: 'newest',
   stackBursts: true,
   groupByDay: true,
+  gridCaptions: false,
+  librarySource: 'camera',
   loopPlayback: false,
   mutePlayback: false,
   playbackTimecode: false,
@@ -117,6 +129,71 @@ export const useMediaPreferences = create<MediaPreferencesStore>()(
         set((s) => (s.frameioUploaded.includes(key) ? s : { frameioUploaded: [...s.frameioUploaded.slice(-499), key] })),
       reset: () => set(defaultMediaPreferences),
     }),
-    { name: 'pm.media.v1', storage: persistStorage },
+    {
+      name: 'pm.media.v1',
+      storage: persistStorage,
+      version: 1,
+      // v1: the dense 3-column grid became the default. An untouched old default (medium) moves to it.
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<MediaPreferences>;
+        if (version < 1 && state.thumbnailSize === 'medium') state.thumbnailSize = 'small';
+        return state as MediaPreferencesStore;
+      },
+    },
   ),
 );
+
+/**
+ * A clip this app saved to the phone (a download from the camera): what the Phone tab lists.
+ * Persisted; the file itself lives under the app's documents (`localUri`). Additive only.
+ */
+export interface PhoneClip {
+  /** The camera item's id (`<store>:<path>` on a real camera). */
+  id: string;
+  item: CameraMediaItem;
+  /** The original on this phone. Empty for a demo-camera copy (the demo has no footage). */
+  localUri: string;
+  /** Camera it came from, when known. */
+  cameraName?: string;
+  savedAt: number;
+  favorite: boolean;
+}
+
+interface PhoneMediaStore {
+  clips: PhoneClip[];
+  /** Adds or refreshes a saved clip (newest first). */
+  record: (item: CameraMediaItem, localUri: string, cameraName?: string) => void;
+  remove: (ids: string[]) => void;
+  setFavorite: (ids: string[], favorite: boolean) => void;
+}
+
+export const usePhoneMedia = create<PhoneMediaStore>()(
+  persist(
+    (set) => ({
+      clips: [],
+      record: (item, localUri, cameraName) =>
+        set((s) => {
+          const prior = s.clips.find((c) => c.id === item.id);
+          // Remote URLs point at the camera; on the phone only the local file and thumbnail count.
+          const kept: CameraMediaItem = { ...item, previewUrl: undefined, originalUrl: undefined, localUri: localUri || undefined };
+          const clip: PhoneClip = {
+            id: item.id,
+            item: kept,
+            localUri,
+            cameraName: cameraName ?? prior?.cameraName,
+            savedAt: prior?.savedAt ?? Date.now(),
+            favorite: prior?.favorite ?? item.favorite,
+          };
+          return { clips: [clip, ...s.clips.filter((c) => c.id !== item.id)].slice(0, 2000) };
+        }),
+      remove: (ids) => set((s) => ({ clips: s.clips.filter((c) => !ids.includes(c.id)) })),
+      setFavorite: (ids, favorite) => set((s) => ({ clips: s.clips.map((c) => (ids.includes(c.id) ? { ...c, favorite } : c)) })),
+    }),
+    { name: 'pm.media.phone.v1', storage: persistStorage },
+  ),
+);
+
+/** A saved clip as a library item (favorite and local file from the phone record). */
+export function phoneClipItem(c: PhoneClip): CameraMediaItem {
+  return { ...c.item, favorite: c.favorite, localUri: c.localUri || undefined };
+}

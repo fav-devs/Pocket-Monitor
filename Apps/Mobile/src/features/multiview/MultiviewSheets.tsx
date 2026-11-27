@@ -14,6 +14,7 @@ import { Sheet } from '@/components/sheet';
 import { Spinner } from '@/components/spinner';
 import { TextField } from '@/components/text-field';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { recordRed } from '@/constants/monitor';
 import { BUILT_IN_LOOKS } from '@/core/media';
 import { MultiviewCopy } from '@/core/multicam';
 import { formatChip } from '@/features/live/format';
@@ -369,7 +370,7 @@ function createStyles(colors: ThemeColors) {
       gap: spacing.sm,
       alignItems: 'center' as const,
       justifyContent: 'center' as const,
-      backgroundColor: colors.dotPink,
+      backgroundColor: recordRed,
     },
     stopLabel: { fontFamily: fonts.semibold, fontSize: 15, color: '#ffffff' },
   };

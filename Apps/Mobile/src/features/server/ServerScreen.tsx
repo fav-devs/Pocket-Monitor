@@ -58,6 +58,7 @@ import { DEMO_CAMERA } from "@/features/pairing/useConnectActions";
 import LivePicture from "@/features/picture/LivePicture";
 import { ValueText } from "@/features/settings/components/ui";
 import { useSavedCameras } from "@/state/savedCameras";
+import { recordRed } from '@/constants/monitor';
 import type {
   ServerDeviceStatus,
   ServerPrimaryWifi,
@@ -251,7 +252,7 @@ function ServerPanel() {
             {recording ? (
               <View style={styles.pill}>
                 <View
-                  style={[styles.dot, { backgroundColor: colors.dotPink }]}
+                  style={[styles.dot, { backgroundColor: recordRed }]}
                 />
                 <Text
                   style={styles.pillText}

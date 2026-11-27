@@ -1,6 +1,7 @@
 /**
- * Live monitor geometry after OpenCine `FieldMonitorLayout` + `GimbalCluster`, laid out in the
- * Sondr camera style: status pills on top, a rail of circle buttons, the record ring.
+ * Live monitor geometry after OpenCine `FieldMonitorLayout` + `GimbalCluster`, laid out picture
+ * first (compared against DJI Mimo): one status cluster per side on top, the shooting-mode rail
+ * beside the record ring, a rail of circle buttons, and the readout as text along the bottom.
  * Pure geometry: every chrome region of the live monitor for a viewport, safe area and
  * picture aspect. No React here so it can be unit tested.
  */
@@ -51,9 +52,9 @@ function fitting(r: Rect, aspect: number): Rect {
 export const RAIL_CIRCLE = 40;
 export const RAIL_W = 56;
 export const RAIL_H = 58;
-/** ai-cut record button: 84pt ring around a dotPink core. */
+/** ai-cut record button: 84pt ring around a record-red core. */
 export const RECORD_SIZE = 84;
-/** Status pills row height. */
+/** Status row height (one cluster per side). */
 export const STATUS_ROW = 32;
 export const STATUS_GAP = 6;
 export const MIN_TAP = 44;
@@ -62,7 +63,13 @@ export const STICK_SIDE = 101;
 /** `GimbalCluster` constants. */
 export const ZOOM_SIZE = 44;
 export const CLUSTER_GAP = 8;
-/** Readout strip: tile height and the plate's padding. */
+/** Shooting-mode rail: a column of words (landscape) or a row (portrait). */
+export const MODE_RAIL_W = 74;
+export const MODE_ITEM_H = 44;
+export const MODE_ROW_H = 36;
+/** One line of the bottom readout text. */
+export const READOUT_LINE_H = 26;
+/** Readout strip (Multiview): tile height and the plate's padding. */
 export const READOUT_TILE_H = 44;
 export const READOUT_PAD = 4;
 export const READOUT_MIN_TILE = 50;
@@ -84,12 +91,15 @@ export interface MonitorSheetPlacement {
 export interface FieldMonitorLayout {
   viewport: Rect;
   picture: Rect;
-  /** The status pills: one row in landscape, two in portrait (see `statusRows`). */
+  /** The status row: one cluster leading (REC), one trailing (camera). */
   status: Rect;
   statusRows: 1 | 2;
+  /** The capture readout: shadowed text along the bottom edge (a tile strip in Multiview). */
   values: Rect;
-  /** Readout tiles per row of the strip. */
+  /** Readout tiles per row of the strip (Multiview), or text lines of the readout. */
   valuesPerRow: number;
+  /** The shooting-mode rail: vertical at the trailing edge (landscape), a row under record (portrait). */
+  modeRail: Rect;
   system: Rect;
   lock: Rect;
   settings: Rect;
@@ -132,10 +142,16 @@ function portraitHeaderSafeTop(w: number, h: number, safeTop: number) {
   return h > w && w < 600 ? Math.max(44, safeTop) : Math.max(12, safeTop);
 }
 
-function landscapeFrame(w: number, h: number, cut: number, aspect: number): Rect {
-  const imageW = Math.min(w - 2 * cut, h * aspect);
+/**
+ * The largest `aspect` frame in `room`, `cut` clear of the leading edge and against it, so the
+ * spare width gathers at the trailing side under the record column and the mode rail (Mimo).
+ */
+function landscapeFrameIn(room: Rect, cut: number, aspect: number): Rect {
+  const left = room.x + cut;
+  const width = Math.max(1, maxX(room) - left);
+  const imageW = Math.min(width, room.height * aspect);
   const imageH = imageW / aspect;
-  return rect((w - imageW) / 2, (h - imageH) / 2, imageW, imageH);
+  return rect(left, room.y + (room.height - imageH) / 2, imageW, imageH);
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -158,21 +174,22 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
 
   let picture: Rect, status: Rect, values: Rect, system: Rect, lock: Rect;
   let settings: Rect, media: Rect, record: Rect, display: Rect, assists: Rect, stick: Rect;
-  let aspectToggle: Rect, exposureGauge: Rect;
+  let aspectToggle: Rect, exposureGauge: Rect, modeRail: Rect;
   let fillsPicture: boolean;
   let sheet: MonitorSheetPlacement;
   let valuesPerRow: number;
-  const statusRows: 1 | 2 = portrait ? 2 : 1;
+  const statusRows: 1 | 2 = 1;
 
   if (portrait) {
     const headerTop = portraitHeaderSafeTop(w, h, safeArea.top);
-    status = rect(lead, headerTop, trail - lead, STATUS_ROW * 2 + STATUS_GAP);
-    // Bottom rail: lock and DISP, record, media and settings.
-    const systemH = rec + 16;
-    const systemY = Math.max(0, h - Math.max(12, safeArea.bottom - 14) - systemH);
+    status = rect(lead, headerTop, trail - lead, STATUS_ROW);
+    // Bottom rail: lock and DISP, record, media and settings; the mode rail runs under record.
+    const systemH = rec + 16 + MODE_ROW_H;
+    const systemY = Math.max(0, h - Math.max(8, safeArea.bottom - 14) - systemH);
     system = rect(0, systemY, w, h - systemY);
-    const cy = systemY + systemH / 2;
+    const cy = systemY + 6 + rec / 2;
     record = rect((w - rec) / 2, cy - rec / 2, rec, rec);
+    modeRail = rect(lead, maxY(record) + 10, trail - lead, MODE_ROW_H);
     const railY = cy - RAIL_H / 2;
     // Each pair centres in its side, but never drifts far from record on a wide tablet.
     const leftMid = Math.max((lead + record.x - 8) / 2, record.x - 96);
@@ -181,12 +198,11 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     display = rect(leftMid + 4, railY, RAIL_W, RAIL_H);
     media = rect(rightMid - RAIL_W - 4, railY, RAIL_W, RAIL_H);
     settings = rect(rightMid + 4, railY, RAIL_W, RAIL_H);
-    // The readout strip sits on the rail.
-    const strip = readoutRows(input.valueCount, trail - lead);
-    valuesPerRow = strip.perRow;
-    const valuesH = showsValues ? READOUT_PAD * 2 + strip.rows * READOUT_TILE_H : 0;
+    // The readout text sits just above the rail: two lines on a phone, one on a tablet.
+    valuesPerRow = trail - lead >= 560 ? 1 : 2;
+    const valuesH = showsValues ? valuesPerRow * READOUT_LINE_H : 0;
     values = rect(lead, systemY - 4 - valuesH, trail - lead, valuesH);
-    const floor = values.y - (showsValues ? 10 : 0);
+    const floor = values.y - (showsValues ? 6 : 0);
     fillsPicture = !!input.fill || aspect < 1;
     const ratio = fillsPicture ? Math.min(aspect, 9 / 16) : aspect;
     const ceiling = maxY(status) + 8;
@@ -204,7 +220,7 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     } else if (pictureH > h || pictureH > floor - ceiling) {
       pictureY = (h - pictureH) / 2;
     } else {
-      // Centred between the status rows and the top of the gimbal cluster, so the cluster sits
+      // Centred between the status row and the top of the gimbal cluster, so the cluster sits
       // under the picture rather than over its corner when there is room.
       const clusterTop = floor - 12 - stickSide - CLUSTER_GAP - ZOOM_SIZE - 8;
       const room = clusterTop - ceiling;
@@ -224,13 +240,19 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
   } else {
     fillsPicture = false;
     const cut = Math.max(0, Math.max(safeArea.leading, safeArea.trailing) - 14);
-    const frame = landscapeFrame(w, h, cut, FRAME_ASPECT);
-    picture = aspect < FRAME_ASPECT ? fitting(frame, aspect) : landscapeFrame(w, h, cut, aspect);
-    system = rect();
     const top = Math.max(8, safeArea.top + 6);
     const bottom = h - (safeArea.bottom > 0 ? safeArea.bottom + 4 : 10);
-    // Trailing column: settings and media above record, DISP and lock below, record centred.
-    const colX = trail - rec;
+    // Trailing edge: the mode rail; inside it the record column (settings and media above
+    // record, DISP and lock below, record centred).
+    const railW = tablet ? MODE_RAIL_W + 8 : MODE_RAIL_W;
+    modeRail = rect(trail - railW, top, railW, bottom - top);
+    // Clear of the recording ring (it grows 15 %).
+    const colX = modeRail.x - 8 - rec;
+    // The picture fills the room leading of the mode rail (Mimo: the words sit beside it).
+    const room = rect(0, 0, Math.max(1, modeRail.x - 2), h);
+    const frame = landscapeFrameIn(room, cut, FRAME_ASPECT);
+    picture = aspect < FRAME_ASPECT ? fitting(frame, aspect) : landscapeFrameIn(room, cut, aspect);
+    system = rect();
     const colMid = colX + rec / 2;
     const gap = clamp((bottom - top - RAIL_H * 4 - rec) / 4, 4, tablet ? 28 : 18);
     record = rect(colX, (top + bottom) / 2 - rec / 2, rec, rec);
@@ -238,14 +260,14 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     settings = rect(media.x, media.y - gap - RAIL_H, RAIL_W, RAIL_H);
     display = rect(media.x, maxY(record) + gap, RAIL_W, RAIL_H);
     lock = rect(media.x, maxY(display) + gap, RAIL_W, RAIL_H);
-    status = rect(lead, top, colX - 16 - lead, STATUS_ROW);
+    status = rect(lead, top, colX - 12 - lead, STATUS_ROW);
     stick = rect(colX - 16 - stickSide, bottom - stickSide, stickSide, stickSide);
     assists = rect(lead, bottom - assistHeightLandscape, ASSIST_CELL + PALETTE_INSETS, assistHeightLandscape);
     const stripLeft = maxX(assists) + 12;
     const stripRight = stick.x - 12;
-    const valuesH = showsValues ? READOUT_PAD * 2 + READOUT_TILE_H : 0;
+    valuesPerRow = 1;
+    const valuesH = showsValues ? READOUT_LINE_H + 4 : 0;
     values = rect(stripLeft, bottom - valuesH, stripRight - stripLeft, valuesH);
-    valuesPerRow = Math.max(1, input.valueCount ?? 7);
     aspectToggle = rect();
     const gaugeX = Math.max(lead, picture.x + 10);
     const gaugeTopY = maxY(status) + 12;
@@ -281,6 +303,7 @@ export function computeFieldMonitorLayout(input: FieldMonitorLayoutInput): Field
     gimbal,
     aspectToggle,
     exposureGauge,
+    modeRail,
     sheet,
     portrait,
     tablet,

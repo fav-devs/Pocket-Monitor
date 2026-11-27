@@ -410,3 +410,96 @@ describe('NativeCameraSession on a switchable clock', () => {
     expect(clock.pending).toBe(0);
   });
 });
+
+// Additive (media): the listing sequence, `/v2` fetches through the file store, and the return
+// to live view, against the Nano manifest fixture.
+describe('NativeCameraSession media', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const fixture = new Uint8Array(
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../../../../../Tests/OpenPocketViewCoreTests/Fixtures/nano-manifest.bin')),
+  );
+
+  function mediaCamera() {
+    const cam = fakeCamera();
+    const send = cam.datalink.sendDuml;
+    cam.datalink.sendDuml = (sid, bytes) => {
+      send(sid, bytes);
+      const f = decodeFrame(bytes)?.frame;
+      if (!f || f.cmdSet !== 0x00 || f.cmdId !== 0x26 || f.payload[1] !== 0x00) return;
+      const counter = f.payload[4];
+      const emit = (payload: number[] | Uint8Array, at: number) =>
+        setTimeout(() => cam.dlEvents.emit('onDuml', { sessionId: sid, bytes: encodeFrame(makeFrame({ sender: 0x01, receiver: 0x02, seq: 1, flags: 0xc0, cmdSet: 0x00, cmdId: 0x27, payload })) }), at);
+      // Real chunks stay under the DUML length field: 800 bytes each.
+      if (counter === 2) for (let o = 0, n = 0; o < fixture.length; o += 800, n++) emit(concat([0x4a, 0x01, 0, 0, 2, 0, n, 0, 0, 0], fixture.subarray(o, o + 800)), 60 + n * 5);
+      emit([0x4a, 0x03, 0, 0, counter, 0, 0, 0, 0, 0], 300);
+    };
+    const files = new Map<string, number>();
+    const fetched: string[] = [];
+    const mediaFiles = {
+      existing: (area: string, path: string) => (files.has(`${area}:${path}`) ? { uri: `file:///${area}/${path}`, size: files.get(`${area}:${path}`)! } : null),
+      download: vi.fn(async (url: string, area: string, path: string, options?: { onProgress?: (d: number, t: number) => void }) => {
+        fetched.push(url);
+        // The Nano lists on the internal store: storage=0 answers 404.
+        if (url.includes('storage=0')) throw new Error('UnableToDownload: status 404');
+        // Originals answer whole (at least the listed size); thumbnails and proxies are small.
+        const size = path.includes('/files/') ? 8_000_000_000 : 4_000;
+        options?.onProgress?.(size / 2, size);
+        options?.onProgress?.(size, size);
+        files.set(`${area}:${path}`, size);
+        return { uri: `file:///${area}/${path}`, size };
+      }),
+      remove: (area: string, path: string) => void files.delete(`${area}:${path}`),
+    };
+    return { cam, files, fetched, mediaFiles };
+  }
+
+  it('lists through playback, fetches thumbnails over /v2 store by store, and resumes live once', async () => {
+    const { cam, fetched, mediaFiles } = mediaCamera();
+    const session = new NativeCameraSession({ ...cam.deps, mediaFiles });
+    let sid: string | null = null;
+    cam.dlEvents.addListener('onState', ((e: { sessionId: string }) => (sid = e.sessionId)) as Handler);
+    const video = { on: true };
+    const stop = startCameraTraffic(cam, () => sid, video);
+    const done = session.connect(TARGET);
+    await vi.advanceTimersByTimeAsync(5000);
+    await done;
+
+    const listing = session.media.list();
+    await vi.advanceTimersByTimeAsync(15000);
+    const items = await listing;
+    expect(items).toHaveLength(34);
+    expect(items[0].fileName).toBe('DJI_20260814125250_0034_D.MP4');
+    expect(items[0].originalUrl).toBe('http://192.168.2.1/v2?storage=1&path=DCIM/DJI_001/DJI_20260814125250_0034_D.MP4');
+    const asked = cam.dumlSent.map(opcode);
+    expect(asked).toContain(0x020c);
+    const lists = cam.dumlSent.filter((s) => opcode(s) === 0x0026).map((s) => `${s.frame.payload[1]}:${s.frame.payload[4]}`);
+    // SD list, trigger, internal list; the empty SD answer is asked once more while playback holds.
+    expect(lists).toEqual(['0:1', '4:1', '0:2', '0:1', '4:1']);
+
+    const thumb = session.media.thumbnail!(items[0].id);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await thumb).toBe('file:///cache/cam-1/thumbs/DCIM_DJI_001_DJI_20260814125250_0034_D.MP4.jpg');
+    expect(fetched).toEqual(['http://192.168.2.1/v2?storage=1&path=MISC/THM/DJI_001/DJI_20260814125250_0034_D.scr']);
+
+    const progress: number[] = [];
+    const uri = await session.media.download(items[0].id, (p) => progress.push(p.bytesDone));
+    expect(uri).toBe('file:///document/cam-1/files/DCIM_DJI_001_DJI_20260814125250_0034_D.MP4');
+    expect(progress.length).toBeGreaterThan(0);
+
+    const play = await session.media.preparePlayback!(items[1].id);
+    expect(play.rendition).toBe('low-res');
+    expect(play.uri.endsWith('DCIM_DJI_001_DJI_20260814122657_0033_D.mp4')).toBe(true);
+
+    const enablesBefore = enables(cam).length;
+    const resume = session.media.resumeLive();
+    await vi.advanceTimersByTimeAsync(4000);
+    await resume;
+    expect(cam.dumlSent.filter((s) => opcode(s) === 0x020c && s.frame.payload[3] === 0x00).length).toBeGreaterThanOrEqual(1);
+    expect(enables(cam).length - enablesBefore).toBe(1);
+    stop();
+    await session.disconnect();
+  });
+});

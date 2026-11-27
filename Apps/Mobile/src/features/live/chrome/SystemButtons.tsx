@@ -59,8 +59,19 @@ export function LiveDispToggle() {
   );
 }
 
-export function LiveSettingsButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
-  return <RailButton testID="monitor.system.settings" icon={Settings02Icon} label="Settings" onPress={onPress} disabled={disabled} />;
+/** Opens the camera settings sheet over the picture (its last row opens the app's Settings). */
+export function LiveSettingsButton({ onPress, disabled, active }: { onPress: () => void; disabled?: boolean; active?: boolean }) {
+  return (
+    <RailButton
+      testID="monitor.system.settings"
+      icon={Settings02Icon}
+      label="Camera settings"
+      caption="Settings"
+      onPress={onPress}
+      disabled={disabled}
+      active={active}
+    />
+  );
 }
 
 export function LiveMediaButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {

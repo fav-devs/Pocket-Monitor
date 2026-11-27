@@ -33,6 +33,7 @@ export function DisplaySection() {
   const [fit, setFit] = usePref('pictureFit');
   const [opacity, setOpacity] = usePref('chromeOpacity');
   const [stats, setStats] = usePref('showLinkStats');
+  const [timecode, setTimecode] = usePref('showTimecode');
   const ev = useAssists((st) => st.on.EV);
   const setAssist = useAssists((st) => st.setOn);
   return (
@@ -85,6 +86,7 @@ export function DisplaySection() {
       </Group>
       <Group label="DISP 1 readouts">
         <SwitchRow icon={Activity01Icon} title="Link stats" value={stats} onChange={setStats} />
+        <SwitchRow icon={Timer01Icon} title="Timecode" value={timecode} onChange={setTimecode} />
         <SwitchRow icon={Sun02Icon} title="EV meter" value={ev} onChange={(v) => setAssist('EV', v)} last />
       </Group>
     </>

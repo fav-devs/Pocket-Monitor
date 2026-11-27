@@ -53,7 +53,7 @@ struct PocketLiveActivityWidget: Widget {
         if state.recording {
           PocketElapsed(state: state)
             .font(PocketStyle.font(.semibold, 14))
-            .foregroundStyle(PocketStyle.dotPink)
+            .foregroundStyle(PocketStyle.recordRed)
             .frame(maxWidth: 56, alignment: .trailing)
         } else if state.batteryPercent >= 0 {
           Text("\(state.batteryPercent)%")
@@ -69,7 +69,7 @@ struct PocketLiveActivityWidget: Widget {
         }
       }
       .widgetURL(PocketStyle.liveURL)
-      .keylineTint(state.recording ? PocketStyle.dotPink : PocketStyle.foreground)
+      .keylineTint(state.recording ? PocketStyle.recordRed : PocketStyle.foreground)
     }
   }
 }
@@ -126,7 +126,7 @@ struct PocketRecLine: View {
         .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 2 }
       Text(state.recording ? "REC" : "STBY")
         .font(PocketStyle.font(.bold, 13))
-        .foregroundStyle(state.recording ? PocketStyle.dotPink : PocketStyle.muted)
+        .foregroundStyle(state.recording ? PocketStyle.recordRed : PocketStyle.muted)
       PocketElapsed(state: state)
         .font(PocketStyle.font(.bold, timerSize))
         .foregroundStyle(isStale ? PocketStyle.muted : PocketStyle.foreground)
@@ -201,7 +201,7 @@ struct PocketActionButtons: View {
         }
         .foregroundStyle(Color.white)
         .frame(maxWidth: .infinity, minHeight: 40)
-        .background(PocketStyle.dotPink, in: Capsule())
+        .background(PocketStyle.recordRed, in: Capsule())
       }
       .buttonStyle(.plain)
       .disabled(state.phase != "live")

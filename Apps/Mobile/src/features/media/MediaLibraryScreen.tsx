@@ -3,6 +3,7 @@ import {
   ArrowLeft01Icon,
   ArrowUpDownIcon,
   Cancel01Icon,
+  CheckmarkCircle02Icon,
   CloudUploadIcon,
   Delete02Icon,
   FilterHorizontalIcon,
@@ -11,6 +12,7 @@ import {
   Search01Icon,
   Settings02Icon,
   Share08Icon,
+  SmartPhone01Icon,
   StarIcon,
   StarOffIcon,
   WifiDisconnected01Icon,
@@ -27,11 +29,12 @@ import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
 import { useScreenSize } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
-import { useMediaPreferences } from '@/state/media';
+import { type MediaLibrarySource, phoneClipItem, useMediaPreferences, usePhoneMedia } from '@/state/media';
 import { DeliveryProgressPill, DeliveryQueueSheet } from './DeliveryQueue';
+import { deliveryPlatform } from './deliveryPlatform';
 import { DeliverySheet } from './DeliverySheet';
 import { useDelivery } from './deliveryStore';
-import { storageReadout } from './format';
+import { byteLabel, storageReadout } from './format';
 import { categoryTitles, deriveGallery, selectedItems } from './gallery';
 import { FilterSheet, ViewSheet } from './LibrarySheets';
 import { activeFilterCount, emptyFilters, type MediaCategory, useMediaBrowsing, useMediaLibrary } from './libraryStore';
@@ -45,7 +48,37 @@ const copy = {
   emptyPull: 'Pull to refresh.',
   selectingHint: 'Drag to select more',
   cachedOnly: 'Offline · clips on this phone',
+  phoneEmpty: 'Downloads from the camera land here.',
 };
+
+const sourceTitles: Record<MediaLibrarySource, string> = { camera: 'Camera', phone: 'Phone' };
+
+/** Mimo's "Device  Local" title tabs: the chosen source in full ink, the other muted. */
+function SourceTabs({ value, onChange }: { value: MediaLibrarySource; onChange: (s: MediaLibrarySource) => void }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.sourceTabs} accessibilityRole="tablist">
+      {(['camera', 'phone'] as const).map((s) => {
+        const on = s === value;
+        return (
+          <Pressable
+            key={s}
+            accessibilityRole="tab"
+            accessibilityLabel={s === 'camera' ? 'Media on the camera' : 'Clips on this phone'}
+            accessibilityState={{ selected: on }}
+            onPress={() => onChange(s)}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+            style={({ pressed }) => [styles.sourceTab, pressed && !on && { opacity: 0.6 }]}
+          >
+            <Text numberOfLines={1} style={[styles.title, !on && styles.titleOff]}>
+              {sourceTitles[s]}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
 
 const categories: MediaCategory[] = ['all', 'video', 'photo', 'favorites'];
 const DOCK_HEIGHT = 66;
@@ -130,6 +163,10 @@ export default function MediaLibraryScreen() {
 
   const lib = useMediaLibrary();
   const prefs = useMediaPreferences();
+  const source = prefs.librarySource;
+  const onPhoneTab = source === 'phone';
+  const phoneClips = usePhoneMedia((s) => s.clips);
+  const phoneItems = useMemo(() => phoneClips.map(phoneClipItem), [phoneClips]);
   const deliveryPanelOpen = useDelivery((s) => s.panelOpen);
   const setDeliveryPanel = useDelivery((s) => s.setPanelOpen);
   const deliveryCount = useDelivery((s) => s.batches.filter((b) => b.status === 'running' || b.status === 'queued').length);
@@ -142,17 +179,25 @@ export default function MediaLibraryScreen() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareItems, setShareItems] = useState<CameraMediaItem[]>([]);
 
+  // Listing pauses live view on the camera, so it runs only while the Camera tab is shown.
   useEffect(() => {
-    if (sourceAvailable) void lib.load(session.media);
+    if (sourceAvailable && !onPhoneTab) void lib.load(session.media);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, sourceAvailable]);
+  }, [session, sourceAvailable, onPhoneTab]);
+
+  // Originals on this phone: downloaded this session, or saved earlier (the Phone tab's records).
+  const onPhone = useMemo(() => {
+    const map: Record<string, string> = { ...lib.localFiles };
+    for (const c of phoneClips) if (!map[c.id]) map[c.id] = c.localUri || 'saved';
+    return map;
+  }, [lib.localFiles, phoneClips]);
 
   // Offline (native camera dropped), only clips cached on this phone are browsable.
   const visibleItems = useMemo(() => {
-    const available = sourceAvailable ? lib.items : lib.items.filter((i) => lib.localFiles[i.id]);
+    const available = onPhoneTab ? phoneItems : sourceAvailable ? lib.items : lib.items.filter((i) => onPhone[i.id]);
     const q = query.trim().toLowerCase();
     return q ? available.filter((i) => i.fileName.toLowerCase().includes(q)) : available;
-  }, [lib.items, lib.localFiles, sourceAvailable, query]);
+  }, [onPhoneTab, phoneItems, lib.items, onPhone, sourceAvailable, query]);
   const model = useMemo(
     () =>
       deriveGallery(visibleItems, {
@@ -167,13 +212,23 @@ export default function MediaLibraryScreen() {
 
   const filterCount = activeFilterCount(lib.filters);
   const cameraName = identityName ?? (session.kind === 'demo' ? 'Demo camera' : 'Camera');
+  useEffect(() => lib.setCameraName(cameraName), [cameraName, lib]);
+  const setSource = (next: MediaLibrarySource) => {
+    if (next === source) return;
+    haptic();
+    lib.endSelection();
+    prefs.set('librarySource', next);
+  };
 
   const back = () => {
     if (lib.selecting) return lib.endSelection();
     if (router.canGoBack()) router.back();
     else router.replace('/live');
   };
-  const open = useCallback((id: string) => router.push(`/media/${encodeURIComponent(id)}`), [router]);
+  const open = useCallback(
+    (id: string) => router.push(onPhoneTab ? `/media/${encodeURIComponent(id)}?from=phone` : `/media/${encodeURIComponent(id)}`),
+    [router, onPhoneTab],
+  );
   const onSelect = useCallback((id: string) => {
     haptic();
     useMediaLibrary.getState().toggleSelected(id);
@@ -187,21 +242,35 @@ export default function MediaLibraryScreen() {
       const entry = model.entries.find((e) => e.id === id);
       if (!entry) return;
       const fav = !entry.members.some((m) => m.favorite);
-      void useMediaLibrary.getState().setFavorite(session.media, entry.members.map((m) => m.id), fav);
+      const ids = entry.members.map((m) => m.id);
+      if (onPhoneTab) usePhoneMedia.getState().setFavorite(ids, fav);
+      else void useMediaLibrary.getState().setFavorite(session.media, ids, fav);
     },
-    [model.entries, session.media],
+    [model.entries, session.media, onPhoneTab],
   );
 
   const selection = selectedItems(model.entries, lib.selected);
   const allSelected = model.entries.length > 0 && model.entries.every((e) => lib.selected.includes(e.id));
   const allFavorite = selection.length > 0 && selection.every((i) => i.favorite);
-  const refresh = () => sourceAvailable && void lib.load(session.media, { refresh: true });
+  const refresh = () => sourceAvailable && !onPhoneTab && void lib.load(session.media, { refresh: true });
   const searching = query.trim().length > 0;
+  const setFavorites = (ids: string[], favorite: boolean) =>
+    onPhoneTab ? usePhoneMedia.getState().setFavorite(ids, favorite) : void lib.setFavorite(session.media, ids, favorite);
+  /** Phone tab: deletes the copies on this phone; the camera keeps its own. */
+  const deleteFromPhone = async (ids: string[]) => {
+    for (const c of phoneClips.filter((x) => ids.includes(x.id))) if (c.localUri) await deliveryPlatform.discard(c.localUri);
+    usePhoneMedia.getState().remove(ids);
+    ids.forEach((id) => lib.forgetLocal(id));
+    lib.endSelection();
+    lib.showNotice(ids.length === 1 ? 'Deleted 1 item from this phone' : `Deleted ${ids.length} items from this phone`);
+  };
 
   const empty =
-    lib.status === 'loading' ? (
+    onPhoneTab && !visibleItems.length && !searching ? (
+      <EmptyState icon={SmartPhone01Icon} title="No clips on this phone" message={copy.phoneEmpty} />
+    ) : !onPhoneTab && lib.status === 'loading' ? (
       <EmptyState icon={Image01Icon} title="Listing clips on camera…" busy />
-    ) : lib.status === 'error' ? (
+    ) : !onPhoneTab && lib.status === 'error' ? (
       <EmptyState icon={AlertCircleIcon} title="Couldn't list clips" message={lib.error ?? undefined} action={{ title: 'Try again', onPress: refresh }} />
     ) : !sourceAvailable && !visibleItems.length && !searching ? (
       <EmptyState icon={WifiDisconnected01Icon} title="Camera disconnected" />
@@ -216,8 +285,15 @@ export default function MediaLibraryScreen() {
     );
 
   const storage = sdPresent || totalMb > 0 ? `${storageReadout(freeMb, totalMb)} free` : session.kind === 'demo' ? 'Demo card' : null;
-  const subline = lib.selecting ? copy.selectingHint : [cameraName, storage, `${model.entries.length} item${model.entries.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+  const count = `${model.entries.length} item${model.entries.length === 1 ? '' : 's'}`;
+  const phoneBytes = phoneItems.reduce((n, i) => n + (i.sizeBytes || 0), 0);
+  const subline = lib.selecting
+    ? copy.selectingHint
+    : (onPhoneTab ? ['On this phone', count, phoneBytes ? byteLabel(phoneBytes) : null] : [cameraName, storage, count]).filter(Boolean).join(' · ');
   const pad = Math.max(insets.left, insets.right, spacing.md);
+  const dense = prefs.layout === 'grid' && !prefs.gridCaptions;
+  // The dense grid runs edge to edge (2 pt in from a phone's edge, the notch side on landscape).
+  const gridPad = dense ? Math.max(insets.left, insets.right, 2) : pad;
   const dockInset = lib.selecting ? DOCK_HEIGHT + Math.max(insets.bottom, 12) + 8 : 0;
   const pillBottom = lib.selecting ? dockInset : Math.max(insets.bottom, 12) + 4;
   const galleryBottom = dockInset + (deliveryActive ? 84 : 0) + (lib.selecting ? 0 : Math.max(insets.bottom, 12));
@@ -228,9 +304,13 @@ export default function MediaLibraryScreen() {
         <Pressable accessibilityRole="button" accessibilityLabel={lib.selecting ? 'Exit selection' : 'Back'} onPress={back} hitSlop={8} style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}>
           <Icon icon={lib.selecting ? Cancel01Icon : ArrowLeft01Icon} size={22} color={colors.foreground} />
         </Pressable>
-        <Text accessibilityRole="header" accessibilityLiveRegion="polite" numberOfLines={1} style={[styles.title, lib.selecting && styles.selectionTitle]}>
-          {lib.selecting ? `${lib.selected.length} selected` : 'Media'}
-        </Text>
+        {lib.selecting ? (
+          <Text accessibilityRole="header" accessibilityLiveRegion="polite" numberOfLines={1} style={[styles.title, styles.selectionTitle]}>
+            {`${lib.selected.length} selected`}
+          </Text>
+        ) : (
+          <SourceTabs value={source} onChange={setSource} />
+        )}
         {wide ? (
           <Text numberOfLines={1} style={styles.sublineInline}>
             {subline}
@@ -248,9 +328,15 @@ export default function MediaLibraryScreen() {
           </>
         ) : (
           <>
-            <HeaderButton icon={RefreshIcon} label="Refresh" busy={lib.refreshing} onPress={refresh} disabled={!sourceAvailable || lib.refreshing || lib.status === 'loading'} />
+            <HeaderButton
+              icon={RefreshIcon}
+              label="Refresh"
+              busy={!onPhoneTab && lib.refreshing}
+              onPress={refresh}
+              disabled={onPhoneTab || !sourceAvailable || lib.refreshing || lib.status === 'loading'}
+            />
             <HeaderButton icon={CloudUploadIcon} label="Deliveries" badge={deliveryCount || undefined} onPress={() => setDeliveryPanel(true)} />
-            <TextAction title="Select" onPress={() => lib.beginSelection()} />
+            <HeaderButton icon={CheckmarkCircle02Icon} label="Select" onPress={() => lib.beginSelection()} disabled={!model.entries.length} />
             <HeaderButton icon={Settings02Icon} label="Media settings" round onPress={() => router.push('/media/settings')} />
           </>
         )}
@@ -294,13 +380,13 @@ export default function MediaLibraryScreen() {
 
   const notices = (
     <>
-      {!sourceAvailable && lib.items.length > 0 ? (
+      {!onPhoneTab && !sourceAvailable && lib.items.length > 0 ? (
         <View style={styles.notice}>
           <Icon icon={WifiDisconnected01Icon} size={16} color={colors.warning} />
           <Text style={[styles.noticeText, { color: colors.warning }]}>{copy.cachedOnly}</Text>
         </View>
       ) : null}
-      {lib.error && lib.status === 'ready' ? (
+      {!onPhoneTab && lib.error && lib.status === 'ready' ? (
         <View style={styles.notice}>
           <Icon icon={AlertCircleIcon} size={16} color={colors.destructive} />
           <Text style={[styles.noticeText, { color: colors.destructive }]} numberOfLines={2}>
@@ -336,20 +422,23 @@ export default function MediaLibraryScreen() {
         </View>
       </View>
 
-      <View style={[styles.body, { paddingLeft: pad, paddingRight: pad }]}>
+      <View style={[styles.body, { paddingLeft: gridPad, paddingRight: gridPad }]}>
         <View style={styles.bodyColumn}>
           <MediaGallery
             sections={model.sections}
             layout={prefs.layout}
             thumbnailSize={prefs.thumbnailSize}
+            captions={prefs.gridCaptions}
+            downloadMarks={!onPhoneTab}
+            titleInset={pad - gridPad + 2}
             tablet={large}
             wide={landscape}
             selecting={lib.selecting}
             selected={lib.selected}
             transfers={lib.transfers}
-            localFiles={lib.localFiles}
-            refreshing={lib.refreshing}
-            onRefresh={sourceAvailable ? refresh : undefined}
+            localFiles={onPhone}
+            refreshing={!onPhoneTab && lib.refreshing}
+            onRefresh={sourceAvailable && !onPhoneTab ? refresh : undefined}
             onOpen={open}
             onSelect={onSelect}
             onBeginSelection={onBeginSelection}
@@ -370,7 +459,7 @@ export default function MediaLibraryScreen() {
               variant="secondary"
               accessibilityLabel="Favorite selected"
               disabled={!selection.length}
-              onPress={() => void lib.setFavorite(session.media, selection.map((i) => i.id), !allFavorite)}
+              onPress={() => setFavorites(selection.map((i) => i.id), !allFavorite)}
               style={styles.dockButton}
             />
             <Button
@@ -379,7 +468,7 @@ export default function MediaLibraryScreen() {
               accessibilityLabel="Share selected"
               disabled={!selection.length}
               onPress={() => {
-                setShareItems(lib.items.filter((i) => selection.some((s) => s.id === i.id)));
+                setShareItems((onPhoneTab ? phoneItems : lib.items).filter((i) => selection.some((s) => s.id === i.id)));
                 setShareOpen(true);
               }}
               style={styles.dockButton}
@@ -390,7 +479,7 @@ export default function MediaLibraryScreen() {
               variant="ghost"
               destructive
               accessibilityLabel="Delete selected"
-              disabled={!selection.length || !sourceAvailable}
+              disabled={!selection.length || (!onPhoneTab && !sourceAvailable)}
               onPress={() => setConfirmDelete(selection.map((i) => i.id))}
               style={styles.dockButton}
             />
@@ -415,13 +504,14 @@ export default function MediaLibraryScreen() {
       <DeliveryQueueSheet visible={deliveryPanelOpen} onClose={() => setDeliveryPanel(false)} />
       <ConfirmSheet
         visible={confirmDelete !== null}
-        title={confirmDelete?.length === 1 ? 'Delete 1 item from the camera?' : `Delete ${confirmDelete?.length ?? 0} items from the camera?`}
-        message="Copies on this phone stay."
+        title={`Delete ${confirmDelete?.length === 1 ? '1 item' : `${confirmDelete?.length ?? 0} items`} from ${onPhoneTab ? 'this phone' : 'the camera'}?`}
+        message={onPhoneTab ? 'The camera keeps its copy.' : 'Copies on this phone stay.'}
         onCancel={() => setConfirmDelete(null)}
         onConfirm={() => {
           const ids = confirmDelete ?? [];
           setConfirmDelete(null);
-          void lib.deleteItems(session.media, ids);
+          if (onPhoneTab) void deleteFromPhone(ids);
+          else void lib.deleteItems(session.media, ids);
         }}
       />
     </View>
@@ -434,11 +524,14 @@ function createStyles(colors: ThemeColors) {
     header: { paddingBottom: spacing.sm },
     headerColumn: { width: '100%' as const, maxWidth: 1200, alignSelf: 'center' as const },
     titleRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-between' as const, gap: spacing.sm, minHeight: 44 },
-    titleLeft: { flex: 1, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6, minWidth: 0 },
+    titleLeft: { flex: 1, flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4, minWidth: 0 },
     iconBtn: { padding: 4, marginLeft: -4 },
-    title: { fontFamily: fonts.semibold, fontSize: 28, letterSpacing: -0.6, color: colors.foreground, flexShrink: 1 },
+    title: { fontFamily: fonts.semibold, fontSize: 24, letterSpacing: -0.6, color: colors.foreground, flexShrink: 1 },
+    titleOff: { color: colors.mutedForeground, opacity: 0.75 },
+    sourceTabs: { flexDirection: 'row' as const, alignItems: 'baseline' as const, gap: 12, flexShrink: 1, minWidth: 0 },
+    sourceTab: { minHeight: 44, justifyContent: 'center' as const },
     selectionTitle: { fontSize: 20, letterSpacing: -0.3 },
-    headerRight: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 14 },
+    headerRight: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 6 },
     subline: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, marginTop: 2, marginBottom: spacing.sm + 4 },
     sublineInline: { flexShrink: 1, fontFamily: fonts.regular, fontSize: 13, color: colors.mutedForeground, marginLeft: spacing.sm, marginTop: 6 },
     notice: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 8, marginBottom: spacing.sm },

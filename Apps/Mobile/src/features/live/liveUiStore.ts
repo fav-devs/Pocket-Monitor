@@ -2,7 +2,11 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { persistStorage } from '@/state/storage';
 
-/** Which capture drawer is open (`CaptureSheet`). Top-edge: format, color, mode. */
+/**
+ * Which capture drawer is open (`CaptureSheet`). `iso`, `shutter`, `ev`, `exposure` and `aperture`
+ * all open the one exposure panel; `wb`, `focus`, `color`, `audio` and `camera` open the camera
+ * settings sheet (at `cameraTab`, or the tab that holds that value); `format` and `mode` their own.
+ */
 export type CaptureSheetId =
   | 'iso'
   | 'shutter'
@@ -14,7 +18,11 @@ export type CaptureSheetId =
   | 'audio'
   | 'format'
   | 'color'
-  | 'mode';
+  | 'mode'
+  | 'camera';
+
+/** The camera settings sheet's tabs (Mimo's Video panel). */
+export type CameraTab = 'video' | 'audio' | 'display';
 
 export const TOP_EDGE_SHEETS: CaptureSheetId[] = ['format', 'color', 'mode'];
 
@@ -28,6 +36,8 @@ interface LiveUiState {
   disp: DispMode;
   locked: boolean;
   captureSheet: CaptureSheetId | null;
+  /** The camera settings sheet's open tab. */
+  cameraTab: CameraTab;
   gimbalPanel: GimbalPanel;
   zoomDialOpen: boolean;
   stopConfirmOpen: boolean;
@@ -41,6 +51,7 @@ const initial = {
   disp: 'live' as DispMode,
   locked: false,
   captureSheet: null,
+  cameraTab: 'video' as CameraTab,
   gimbalPanel: 'none' as GimbalPanel,
   zoomDialOpen: false,
   stopConfirmOpen: false,

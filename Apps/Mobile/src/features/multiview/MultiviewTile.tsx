@@ -6,7 +6,8 @@ import type { TileLook, TileSnapshot } from '@/camera/multiview/types';
 import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
 import { Squircle } from '@/components/squircle';
-import { fonts, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { fonts, type ThemeColors, useThemedStyles } from '@/constants/theme';
+import { recordRed } from '@/constants/monitor';
 import { onVideo, rectStyle, textShadow } from '@/features/live/chrome/primitives';
 import { elapsedLabel, formatChip } from '@/features/live/format';
 import type { Rect } from '@/features/live/layout/fieldMonitorLayout';
@@ -73,7 +74,6 @@ export const MultiviewTile = memo(function MultiviewTile(props: TileProps) {
 });
 
 function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPress, onReconnect }: TileProps) {
-  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const session = useCameraSession();
   // `session.video` changes with the link phase; re-render on it.
@@ -111,7 +111,7 @@ function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPres
       {/* Name and tally, top leading. */}
       <View pointerEvents="none" style={[styles.topRow, small && styles.topRowSmall, compact && styles.topRowCompact]}>
         <View style={[styles.namePill, compact && styles.namePillCompact]}>
-          {recording ? <View style={[styles.recDot, { backgroundColor: colors.dotPink }]} /> : null}
+          {recording ? <View style={[styles.recDot, { backgroundColor: recordRed }]} /> : null}
           <Text numberOfLines={1} style={[styles.name, compact && styles.nameCompact]}>
             {tile.camera!.name}
           </Text>
@@ -181,7 +181,7 @@ function TileBody({ tile, rect, look, fill, selected, large, onPress, onLongPres
 
       {/* Tally border while recording; a white edge on the selected grid tile. */}
       {recording ? (
-        <View pointerEvents="none" style={[styles.border, { borderColor: colors.dotPink, borderWidth: large ? 3 : 2.5 }]} />
+        <View pointerEvents="none" style={[styles.border, { borderColor: recordRed, borderWidth: large ? 3 : 2.5 }]} />
       ) : selected && !large ? (
         <View pointerEvents="none" style={[styles.border, { borderColor: onVideo.ink, borderWidth: 2 }]} />
       ) : null}

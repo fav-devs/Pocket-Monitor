@@ -221,6 +221,7 @@ class PocketServerService : Service() {
       // Keep the chronometer steady unless the camera's clock disagrees by more than 2 s.
       if (kept == null || kotlin.math.abs(kept - base) > 2_000) recordingBase = base
       builder.setSubText("REC")
+        .setColor(RECORD_RED)
         .setWhen(recordingBase!!)
         .setShowWhen(true)
         .setUsesChronometer(true)
@@ -257,6 +258,8 @@ class PocketServerService : Service() {
     private const val TAG = "PocketServer"
     const val CHANNEL_ID = "pocket.server"
     const val NOTIFICATION_ID = 0x504d
+    /** Record red (`recordRed` in src/constants/monitor.ts): the REC accent while recording. */
+    const val RECORD_RED = 0xFFE5273A.toInt()
     const val TICK_MS = 100L
     const val ACTION_START = "com.favdevs.pocketnative.server.START"
     const val ACTION_UPDATE = "com.favdevs.pocketnative.server.UPDATE"

@@ -9,6 +9,7 @@ import { useSavedCameras } from '@/state/savedCameras';
 import type { CameraSession } from '../session';
 import { sessionClock } from './clock';
 import type { NativeSessionDeps } from './deps';
+import { expoMediaFileStore } from './mediaFileStore';
 import { NativeCameraSession } from './NativeCameraSession';
 
 /** True when this build links the camera radios (Bluetooth, Wi-Fi join, datalink). Never on web. */
@@ -35,6 +36,7 @@ export function createNativeSession(overrides: NativeSessionOverrides = {}): Cam
     clock: sessionClock,
     credentials: { read: readWifiPassword, save: saveWifiPassword, remove: deleteWifiPassword },
     savedCameras: () => useSavedCameras.getState().cameras,
+    mediaFiles: expoMediaFileStore,
     log: __DEV__ ? (line) => console.log(`[camera] ${line}`) : undefined,
   });
 }
