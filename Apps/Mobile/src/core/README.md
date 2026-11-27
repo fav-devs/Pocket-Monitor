@@ -57,8 +57,12 @@ repeats belong only to `connection/feedWatchdog.ts`.
 | `gimbal/headTrack.ts` | OpenCineMotion `HeadTrack.swift`, `HeadTrackNative.swift` | done, tested |
 | `gimbal/gamepad.ts` | `GamepadOperator.swift` (mapping only) | done, tested |
 | `mapping.ts` | — (status/capabilities → UI `CameraState`, UI → wire values) | done, tested |
+| `multicam/stationSubnet.ts` | OpenCineCore `StationSubnet.swift` (`MulticamDiscovery`); `candidateHosts` infers the mask (iPhone hotspot /28, else /24) | done, tested |
+| `multicam/recovery.ts` | OpenCineMulticam `Recovery.swift` (`RecoveryBudget`), OpenCineDJI `MultiviewRecovery` budget, AppKit `MultiviewRepairRace` | done, tested |
+| `multicam/recordAll.ts` | OpenCineMulticam `RecordAll.swift`, `GroupRecord.swift` (strict plan), AppKit `MultiviewRecordConfirmation` (8 s) | done, tested (slots stand in for entries; no leases/epochs) |
+| `multicam/stageJournal.ts` | AppKit `MultiviewStageJournal.swift`, `MultiviewCopy`, OpenCineDJI `MultiviewExit.swift` (`restoreWithRetry`) | done, tested |
 | `index.ts` | barrel | done |
 
 Not ported: `GimbalCluster` (UI layout; lives with the RN live screen), `GimbalMoveEngine`,
 `DJICameraSessionAdapter` / `DJIIntegration` (session orchestration belongs to `src/camera/native`),
-multiview / watcher relay, LUT/look profiles.
+watcher relay, LUT/look profiles. Multiview's session orchestration lives in `src/camera/multiview`.

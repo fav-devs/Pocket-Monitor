@@ -32,7 +32,6 @@ import {
 import { cameraFromJournal, lookFor } from '@/camera/multiview/stage';
 import { useMultiviewStage } from '@/camera/multiview/stageStore';
 import type { MultiviewCamera, MultiviewNetwork } from '@/camera/multiview/types';
-import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
 import { Squircle } from '@/components/squircle';
@@ -81,6 +80,25 @@ function useCoordinator(native: boolean): MultiviewCoordinator {
     return () => c.dispose();
   }, []);
   return ref.current;
+}
+
+/** A stage button over black (the monitor is always dark): white primary, translucent secondary. */
+function VideoButton({ title, onPress, primary = false, busy = false, testID }: { title: string; onPress: () => void; primary?: boolean; busy?: boolean; testID?: string }) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ busy }}
+      disabled={busy}
+      onPress={onPress}
+      style={({ pressed }) => [styles.videoButton, primary && styles.videoButtonPrimary, pressed && { opacity: 0.75 }]}
+    >
+      {busy ? <Spinner color={primary ? onVideo.dark : onVideo.ink} opacity={0.3} /> : null}
+      <Text style={[styles.videoButtonText, primary && styles.videoButtonTextPrimary]}>{title}</Text>
+    </Pressable>
+  );
 }
 
 /** The group record ring: Record all / Stop all, with each camera's confirmation on its tile. */
@@ -329,13 +347,13 @@ export default function MultiviewScreen() {
           <Text style={styles.emptyLine}>Up to four on one screen.</Text>
           <View style={styles.emptyActions}>
             {!native ? (
-              <Button testID="multiview.empty.demo" title="Add demo cameras" size="lg" onPress={() => DEMO_MULTIVIEW_CAMERAS.forEach((c, i) => add(c, i))} />
+              <VideoButton testID="multiview.empty.demo" title="Add demo cameras" primary onPress={() => DEMO_MULTIVIEW_CAMERAS.forEach((c, i) => add(c, i))} />
             ) : lastStage.length && network ? (
-              <Button title={`Reconnect last ${lastStage.length === 1 ? 'camera' : `${lastStage.length} cameras`}`} size="lg" onPress={restoreLast} />
+              <VideoButton title={`Reconnect last ${lastStage.length === 1 ? 'camera' : `${lastStage.length} cameras`}`} primary onPress={restoreLast} />
             ) : null}
-            <Button testID="multiview.empty.add" title="Add camera" variant={!native || (lastStage.length && network) ? 'secondary' : 'primary'} size="lg" onPress={() => setAddSlot(null)} />
+            <VideoButton testID="multiview.empty.add" title="Add camera" primary={native && !(lastStage.length && network)} onPress={() => setAddSlot(null)} />
             {native && owed.length ? (
-              <Button title={`Return ${owed.length === 1 ? 'camera' : `${owed.length} cameras`} to own Wi-Fi`} variant="ghost" loading={returning} onPress={returnOwed} />
+              <VideoButton title={`Return ${owed.length === 1 ? 'camera' : `${owed.length} cameras`} to own Wi-Fi`} busy={returning} onPress={returnOwed} />
             ) : null}
           </View>
         </View>
@@ -490,6 +508,19 @@ function createStyles(colors: ThemeColors) {
     emptyTitle: { fontFamily: fonts.semibold, fontSize: 20, color: onVideo.ink, marginTop: 8 },
     emptyLine: { fontFamily: fonts.regular, fontSize: 14, color: onVideo.inkMuted, textAlign: 'center' as const },
     emptyActions: { marginTop: 16, gap: 10, width: '100%' as const, maxWidth: 320 },
+    videoButton: {
+      minHeight: 50,
+      borderRadius: 16,
+      flexDirection: 'row' as const,
+      gap: 8,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      paddingHorizontal: 20,
+      backgroundColor: onVideo.well,
+    },
+    videoButtonPrimary: { backgroundColor: onVideo.chosen },
+    videoButtonText: { fontFamily: fonts.semibold, fontSize: 15, color: onVideo.ink },
+    videoButtonTextPrimary: { color: onVideo.dark },
     exitError: { position: 'absolute' as const, left: 24, right: 24, top: 24, alignItems: 'center' as const },
     exitErrorText: { fontFamily: fonts.medium, fontSize: 14, color: onVideo.ink, backgroundColor: onVideo.notice, borderRadius: 12, overflow: 'hidden' as const, paddingHorizontal: 14, paddingVertical: 8, textAlign: 'center' as const, ...textShadow },
   };

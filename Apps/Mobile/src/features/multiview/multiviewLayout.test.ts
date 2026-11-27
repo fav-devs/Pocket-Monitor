@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { intersects, isEmptyRect, maxX, maxY, type Rect } from '@/features/live/layout/fieldMonitorLayout';
+import { addChoices } from './addChoices';
 import { computeMultiviewLayout, type Arrangement } from './multiviewLayout';
 
 const VIEWPORTS = [
@@ -65,7 +66,6 @@ describe('computeMultiviewLayout', () => {
   });
 });
 
-import { addChoices } from './addChoices';
 
 describe('addChoices', () => {
   it('lists saved cameras on the network first, then cameras to move, skipping the stage', () => {
