@@ -44,18 +44,20 @@ export function SettingsNav() {
         </Text>
       </View>
       <ScrollView style={styles.flex} contentContainerStyle={styles.list}>
-        <View style={styles.link} accessible accessibilityRole="summary">
-          <View style={[styles.dot, { backgroundColor: live ? colors.success : colors.mutedForeground }]} />
-          <View style={styles.linkText}>
-            <Text numberOfLines={1} style={styles.linkTitle}>
-              {live ? (cameraName ?? 'Active link') : 'No camera connected'}
-            </Text>
-            <Text numberOfLines={1} style={styles.linkMeta}>
-              {connectionPhaseLabel(phase)}
-            </Text>
+        <View style={styles.link}>
+          <View style={styles.linkRow} accessible accessibilityRole="summary">
+            <View style={[styles.dot, { backgroundColor: live ? colors.success : colors.mutedForeground }]} />
+            <View style={styles.linkText}>
+              <Text numberOfLines={1} style={styles.linkTitle}>
+                {live ? (cameraName ?? 'Active link') : 'No camera connected'}
+              </Text>
+              <Text numberOfLines={1} style={styles.linkMeta}>
+                {connectionPhaseLabel(phase)}
+              </Text>
+            </View>
           </View>
           {live ? (
-            <View testID="monitor.system.disconnect">
+            <View testID="monitor.system.disconnect" style={styles.disconnect}>
               <ToolbarButton icon={Unlink01Icon} title="Disconnect" onPress={disconnect} destructive />
             </View>
           ) : null}
@@ -115,16 +117,15 @@ function createStyles(colors: ThemeColors) {
     },
     heading: { fontFamily: fonts.semibold, fontSize: 20, letterSpacing: -0.3, color: colors.foreground },
     list: { paddingHorizontal: 10, paddingTop: 12, paddingBottom: spacing.lg, gap: 14 },
-    link: {
+    link: { borderRadius: 12, backgroundColor: colors.surface, paddingVertical: 8 },
+    linkRow: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,
       gap: 10,
-      minHeight: 52,
-      paddingLeft: 12,
-      paddingRight: 8,
-      borderRadius: 12,
-      backgroundColor: colors.surface,
+      minHeight: 36,
+      paddingHorizontal: 12,
     },
+    disconnect: { alignItems: 'flex-start' as const, paddingHorizontal: 4, paddingTop: 2 },
     dot: { width: 8, height: 8, borderRadius: 4 },
     linkText: { flex: 1, minWidth: 0, gap: 1 },
     linkTitle: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
