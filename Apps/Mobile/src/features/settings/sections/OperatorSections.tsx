@@ -1,6 +1,7 @@
 import {
   Activity01Icon,
   Alert02Icon,
+  BlurIcon,
   CropIcon,
   FocusPointIcon,
   Layers01Icon,
@@ -17,13 +18,33 @@ import {
 import { ResetAction } from '@/components/reset-action';
 import { Slider } from '@/components/slider';
 import { BackgroundSettingsGroup } from '@/features/background';
+import { defaultGlassMode, glassModeOptions, useGlassEnv, type GlassMode } from '@/features/glass';
 import { useAssists } from '@/state/assists';
+import { usePreferences } from '@/state/preferences';
 import { FieldRow, Group, Segments, SwitchRow } from '../components/ui';
 import { resetPrefs, usePref } from '../components/usePref';
 import { SettingsCopy } from '../copy';
 import { settingsFeedback } from '../components/feedback';
 
 const percent = (v: number) => `${Math.round(v * 100)}%`;
+
+/** Desktop app: Native (macOS 26 Liquid Glass), Web (CSS) or Off. Hidden where there is no glass. */
+function GlassGroup() {
+  const caps = useGlassEnv((s) => s.caps);
+  const chosen = usePreferences((s) => s.desktopGlass);
+  const set = usePreferences((s) => s.set);
+  if (!caps) return null;
+  const options = glassModeOptions(caps);
+  const fallback = defaultGlassMode(caps);
+  const value: GlassMode = options.some((o) => o.value === chosen) ? (chosen as GlassMode) : fallback;
+  return (
+    <Group label="Window">
+      <FieldRow icon={BlurIcon} title="Glass" last>
+        <Segments label="Glass" options={options} value={value} onChange={(v) => set('desktopGlass', v)} />
+      </FieldRow>
+    </Group>
+  );
+}
 
 /** Display: panel, recording chrome and picture fit (`MonitorPanelSettings`, display sections). */
 export function DisplaySection() {
@@ -89,6 +110,7 @@ export function DisplaySection() {
         <SwitchRow icon={Timer01Icon} title="Timecode" value={timecode} onChange={setTimecode} />
         <SwitchRow icon={Sun02Icon} title="EV meter" value={ev} onChange={(v) => setAssist('EV', v)} last />
       </Group>
+      <GlassGroup />
     </>
   );
 }

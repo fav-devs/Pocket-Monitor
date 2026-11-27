@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
 import { useCamera } from '@/camera';
 import { invoke, listen } from '@/camera/desktop/tauri';
+import { notePictureHole } from '@/features/glass/env';
 import { useAssists, usePictureEffects } from '@/state/assists';
 import { pictureAspect, pictureRect, sameRect, type LivePictureProps } from '../LivePicture.shared';
 import { punchThrough, type DesktopFit } from './hole';
@@ -77,7 +78,10 @@ export function DesktopPictureHole({ resizeMode = 'fit', onPictureRect, effects:
     window.addEventListener('resize', send);
     const poll = setInterval(send, 500);
     const restore = punchThrough(node);
+    // Windows keeps its Mica off while a picture is on screen in the shell (`features/glass`).
+    notePictureHole(1);
     return () => {
+      notePictureHole(-1);
       observer?.disconnect();
       window.removeEventListener('resize', send);
       clearInterval(poll);

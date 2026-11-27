@@ -9,6 +9,7 @@ import {
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
 import { router } from 'expo-router';
+import { useEffect, useRef, type ComponentRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useCamera } from '@/camera';
 import { desktopCameraEnabled } from '@/camera/bootstrap';
@@ -17,7 +18,9 @@ import { chromeRegion, dragRegion, isHovered, macOverlayTitleBar } from '@/compo
 import { Icon } from '@/components/icon';
 import { SIDEBAR_WIDTH, TOOLBAR_HEIGHT } from '@/constants/layout';
 import { fonts, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { useGlass, useGlassControl } from '@/features/glass';
 import { connectionPhaseLabel } from '@/features/pairing/presentation';
+import { punchThrough } from '@/features/picture/desktop/hole';
 import { appBrand } from '@/features/startup/brand';
 import { activeDestination, settingsDestination, shellDestinations, type ShellDestination, type ShellDestinationId } from './destinations';
 
@@ -42,16 +45,32 @@ export function openDestination(href: ShellDestination['href']) {
   if (href !== '/') router.push(href);
 }
 
+/**
+ * Makes everything under `ref`'s view transparent while `on`, so a window material behind the
+ * web view shows through (the view itself keeps its own style). Undone when off or unmounted.
+ */
+export function useSeeThrough(ref: { current: unknown }, on: boolean) {
+  useEffect(() => {
+    const node = ref.current as HTMLElement | null;
+    if (!on || !node?.parentElement) return;
+    return punchThrough(node.parentElement);
+  }, [on, ref]);
+}
+
 /** The wide layout's sidebar (macOS Finder / System Settings): the app, its places, the link. */
-export function Sidebar({ pathname }: { pathname: string }) {
+export function Sidebar({ pathname, material = false, preview = false }: { pathname: string; material?: boolean; preview?: boolean }) {
   const styles = useThemedStyles(createStyles);
   const active = activeDestination(pathname);
   const phase = useCamera((s) => s.connection.phase);
   const monitorReady = phase === 'live' || phase === 'recovering';
   const places = shellDestinations({ server: !desktopCameraEnabled });
+  const ref = useRef<ComponentRef<typeof View> | null>(null);
+  useSeeThrough(ref, material);
+  const chrome = chromeRegion() as { dataSet?: Record<string, string> };
+  const dataSet = material && preview ? { ...chrome.dataSet, pocketMaterialPreview: '' } : chrome.dataSet;
 
   return (
-    <View style={styles.sidebar} accessibilityRole="menu" {...chromeRegion()}>
+    <View ref={ref} style={[styles.sidebar, material && styles.sidebarClear]} accessibilityRole="menu" {...({ dataSet } as object)}>
       {macOverlayTitleBar ? <View style={styles.titleBarStrip} {...dragRegion('self')} /> : null}
       <View style={[styles.brand, macOverlayTitleBar && styles.brandUnderLights]} {...dragRegion('deep')}>
         <AppLogo size={26} />
@@ -80,9 +99,13 @@ export function Sidebar({ pathname }: { pathname: string }) {
 function NavItem({ destination, selected, disabled = false }: { destination: ShellDestination; selected: boolean; disabled?: boolean }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const tint = selected ? colors.inkForeground : colors.foreground;
+  const { material } = useGlass();
+  const glass = useGlassControl('item', { radius: 9 });
+  const glassOn = selected && glass.on;
+  const tint = selected && !glassOn ? colors.inkForeground : colors.foreground;
   return (
     <Pressable
+      {...(selected ? glass.props : material ? { dataSet: { pocketMaterialHover: '' } } : {})}
       testID={`shell.nav.${destination.id}`}
       accessibilityRole="menuitem"
       accessibilityLabel={destination.title}
@@ -94,14 +117,14 @@ function NavItem({ destination, selected, disabled = false }: { destination: She
       }}
       style={(state) => [
         styles.item,
-        isHovered(state) && !selected && styles.itemHover,
-        selected && styles.itemOn,
+        isHovered(state) && !selected && !material && styles.itemHover,
+        selected && !glassOn && styles.itemOn,
         state.pressed && !selected && styles.itemPressed,
         disabled && styles.disabled,
       ]}
     >
       <Icon icon={icons[destination.id]} size={18} color={tint} strokeWidth={selected ? 1.9 : 1.6} />
-      <Text numberOfLines={1} style={[styles.itemLabel, selected && styles.itemLabelOn]}>
+      <Text numberOfLines={1} style={[styles.itemLabel, selected && styles.itemLabelOn, glassOn && styles.itemLabelGlass]}>
         {destination.title}
       </Text>
     </Pressable>
@@ -119,14 +142,21 @@ function LinkStatus() {
   const dot = live ? colors.success : busy ? colors.warning : phase === 'failed' ? colors.destructive : colors.mutedForeground;
   const title = live || busy ? (name ?? 'Camera') : 'No camera';
   const detail = connectionPhaseLabel(phase);
+  const glass = useGlassControl('card', { radius: 12 });
   return (
     <Pressable
+      {...glass.props}
       testID="shell.status"
       accessibilityRole="button"
       accessibilityLabel={`${title}, ${detail}`}
       accessibilityHint={live ? 'Opens the monitor' : 'Opens Cameras'}
       onPress={() => openDestination(live ? '/live' : '/')}
-      style={(state) => [styles.status, isHovered(state) && styles.itemHover, state.pressed && styles.itemPressed]}
+      style={(state) => [
+        styles.status,
+        glass.on && styles.statusGlass,
+        isHovered(state) && !glass.on && styles.itemHover,
+        state.pressed && styles.itemPressed,
+      ]}
     >
       <View style={[styles.dot, { backgroundColor: dot }]} />
       <View style={styles.statusText}>
@@ -150,6 +180,7 @@ function createStyles(colors: ThemeColors) {
       borderRightWidth: StyleSheet.hairlineWidth,
       borderRightColor: colors.border,
     },
+    sidebarClear: { backgroundColor: 'transparent' },
     // The traffic lights sit in the default 28 pt title bar; the strip keeps them clear of the brand.
     titleBarStrip: { height: 36 },
     brand: {
@@ -175,6 +206,7 @@ function createStyles(colors: ThemeColors) {
     itemPressed: { opacity: 0.8 },
     itemLabel: { flex: 1, fontFamily: fonts.medium, fontSize: 14, color: colors.foreground },
     itemLabelOn: { fontFamily: fonts.semibold, color: colors.inkForeground },
+    itemLabelGlass: { color: colors.foreground },
     disabled: { opacity: 0.4 },
     foot: {
       paddingHorizontal: 10,
@@ -193,6 +225,7 @@ function createStyles(colors: ThemeColors) {
       borderColor: colors.border,
       backgroundColor: colors.background,
     },
+    statusGlass: { borderWidth: 0, backgroundColor: 'transparent' },
     dot: { width: 8, height: 8, borderRadius: 4 },
     statusText: { flex: 1, minWidth: 0, gap: 1 },
     statusTitle: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },

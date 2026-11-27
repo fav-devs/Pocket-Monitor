@@ -54,6 +54,11 @@ export interface OperatorPreferences {
   autoRotateFeed?: boolean;
   /** Live view: show the camera's timecode beside REC (when the camera reports one). */
   showTimecode?: boolean;
+  /**
+   * Desktop app: glass in the wide layout. Native (macOS 26 Liquid Glass views), Web (CSS
+   * glass) or Off (flat, no window material). Unset: the best this machine has.
+   */
+  desktopGlass?: 'native' | 'web' | 'off';
 }
 
 export const defaultPreferences: OperatorPreferences = {
