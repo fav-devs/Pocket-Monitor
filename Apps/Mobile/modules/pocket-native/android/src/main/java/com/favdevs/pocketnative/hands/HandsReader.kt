@@ -89,15 +89,15 @@ class HandsReader(
   /** Starts (or switches) the source. Returns why not, or null once it runs. */
   suspend fun start(source: Source, sessionId: String?, rate: Double, width: Int, activity: Activity?): String? {
     val intervalMs = (1000.0 / rate.coerceIn(1.0, 20.0)).toLong()
-    val error = onWorker { prepare(source, sessionId, intervalMs, width.coerceIn(160, 960)) }
-    if (error != null) return fail(error)
-    if (source != Source.FRONT_CAMERA) return ready()
-    val owner = activity as? LifecycleOwner ?: return fail("the app is not in front")
+    val (error, startedAt) = onWorker { prepare(source, sessionId, intervalMs, width.coerceIn(160, 960)) to generation }
+    if (error != null) return fail(error, startedAt)
+    if (source != Source.FRONT_CAMERA) return ready(startedAt)
+    val owner = activity as? LifecycleOwner ?: return fail("the app is not in front", startedAt)
     @Suppress("DEPRECATION")
     val rotation = activity.windowManager.defaultDisplay.rotation
-    val camera = onWorker { front } ?: return fail("stopped")
+    val camera = onWorker { front.takeIf { generation == startedAt } } ?: return "stopped"
     val started = suspendCancellableCoroutine { cont -> camera.start(owner, rotation) { cont.resume(it) } }
-    return if (started != null) fail(started) else ready()
+    return if (started != null) fail(started, startedAt) else ready(startedAt)
   }
 
   fun stop() {
@@ -130,14 +130,19 @@ class HandsReader(
 
   private suspend fun <T> onWorker(block: () -> T): T = suspendCancellableCoroutine { cont -> handler.post { cont.resume(block()) } }
 
-  private suspend fun fail(error: String): String {
-    onWorker { teardownSources() }
-    status("failed", null, error)
+  /** A start that did not make it; what it set up goes, unless a later start replaced it. */
+  private suspend fun fail(error: String, startedAt: Int): String {
+    val current = onWorker {
+      if (generation == startedAt) teardownSources()
+      generation == startedAt
+    }
+    if (current) status("failed", null, error)
     return error
   }
 
-  private fun ready(): String? {
-    status("ready", provider, null)
+  private suspend fun ready(startedAt: Int): String? {
+    val running = onWorker { provider.takeIf { generation == startedAt } }
+    if (running != null) status("ready", running, null)
     return null
   }
 

@@ -178,7 +178,8 @@ final class PocketHandsReader: NSObject, AVCaptureVideoDataOutputSampleBufferDel
       device.unlockForConfiguration()
     }
     // Keep the picture upright as the phone turns on its stand.
-    let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+    // The coordinator follows the device's orientation (UIKit): make it on the main thread.
+    let coordinator = DispatchQueue.main.sync { AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil) }
     captureConnection = connection
     applyRotation(coordinator.videoRotationAngleForHorizonLevelCapture)
     rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { [weak self] coordinator, _ in
