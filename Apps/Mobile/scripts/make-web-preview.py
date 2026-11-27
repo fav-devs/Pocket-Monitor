@@ -35,7 +35,7 @@ page = f'''<title>Pocket Monitor</title>
       history[name] = function () {{ try {{ return original.apply(null, arguments); }} catch (e) {{}} }};
     }});
     // Start route from a plain #name link: #live, #media, #settings, #pair.
-    var routes = {{ live: '/live?demo=1', media: '/media', settings: '/settings', pair: '/pair', assists: '/dev/assists' }};
+    var routes = {{ live: '/live?demo=1', media: '/media', settings: '/settings', pair: '/pair', multiview: '/multiview?demo=4', watcher: '/watcher', server: '/server', assists: '/dev/assists' }};
     var start = routes[location.hash.slice(1)] || '/';
     history.replaceState(null, '', start);
     var bundle = document.createElement('script');
