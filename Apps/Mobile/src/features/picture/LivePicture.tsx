@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, type LayoutChangeEvent, type LayoutRectangle } from 'react-native';
 import { useCamera } from '@/camera';
+import { usePictureAllowed } from '@/camera/server';
 import { usePictureEffects } from '@/state/assists';
 import { PocketVideoView } from '@modules/pocket-native/src/PocketVideoView';
 import { PocketVideo } from '@modules/pocket-native/src/native';
@@ -26,7 +27,10 @@ export default function LivePicture({ source, resizeMode = 'fit', onPictureRect,
   const rect = pictureRect(size, pictureAspect(effects, streamW, streamH), resizeMode);
   const sessionId = source.kind === 'native' || source.kind === 'relay' ? source.sessionId : null;
   const scene = demoSceneFor(source, demoScene);
-  const wantsSample = useSampleDemandValue() && publishSamples;
+  // Android server mode with the app in the background: no picture view, so nothing decodes for
+  // display with the screen off (the relay host does its own work natively).
+  const allowed = usePictureAllowed();
+  const wantsSample = useSampleDemandValue() && publishSamples && allowed;
 
   useEffect(() => {
     if (size.width <= 0 || sameRect(lastRect.current, rect)) return;
@@ -64,7 +68,7 @@ export default function LivePicture({ source, resizeMode = 'fit', onPictureRect,
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000', overflow: 'hidden' }} onLayout={onLayout} pointerEvents="none">
-      {source.kind !== 'none' ? (
+      {source.kind !== 'none' && allowed ? (
         <PocketVideoView
           style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
           sessionId={sessionId}
