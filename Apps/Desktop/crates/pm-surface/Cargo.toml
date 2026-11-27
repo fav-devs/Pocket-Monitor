@@ -1,6 +1,6 @@
 [package]
 name = "pm-surface"
-description = "The native picture surface under Pocket Monitor's web view: a hit-test-transparent child HWND on Windows, a CAMetalLayer-backed NSView below the WKWebView on macOS. Window plumbing only, so it builds and checks for every target without FFmpeg or the Swift core."
+description = "The native picture surface under Pocket Monitor's web view: a hit-test-transparent child HWND on Windows, a CAMetalLayer-backed NSView below the WKWebView on macOS; the window material and native glass between it and the web view. Window plumbing only, so it builds and checks for every target without FFmpeg or the Swift core."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,11 +16,25 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# Mica behind the sidebar (glass.rs); both already come with Tauri.
+window-vibrancy = "0.8"
+windows-version = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "objc2-core-foundation"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSResponder", "NSGraphics", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSBox",
+    "NSColor",
+    "NSGlassEffectView",
+    "NSGraphics",
+    "NSResponder",
+    "NSView",
+    "NSVisualEffectView",
+    "NSWindow",
+    "objc2-core-foundation",
+] }
 
 [lints]
 workspace = true

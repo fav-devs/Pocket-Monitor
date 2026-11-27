@@ -114,6 +114,9 @@
     "allow-home-wifi-get",
     "allow-home-wifi-forget",
     "allow-sharing-set",
-    "allow-sharing-state"
+    "allow-sharing-state",
+    "allow-glass-caps",
+    "allow-glass-material",
+    "allow-glass-controls"
   ]
 }

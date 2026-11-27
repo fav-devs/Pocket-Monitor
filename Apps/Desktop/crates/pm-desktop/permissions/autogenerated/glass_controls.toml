@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-glass-controls"
+description = "Enables the glass_controls command without any pre-configured scope."
+commands.allow = ["glass_controls"]
+
+[[permission]]
+identifier = "deny-glass-controls"
+description = "Denies the glass_controls command without any pre-configured scope."
+commands.deny = ["glass_controls"]

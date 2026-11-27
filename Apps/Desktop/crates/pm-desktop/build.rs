@@ -115,6 +115,10 @@ const APP_COMMANDS: &[&str] = &[
     "home_wifi_forget",
     "sharing_set",
     "sharing_state",
+    // The window material and native glass behind the shell (§5.14).
+    "glass_caps",
+    "glass_material",
+    "glass_controls",
 ];
 
 const LIB_NAME: &str = "OpenPocketCineDesktop";

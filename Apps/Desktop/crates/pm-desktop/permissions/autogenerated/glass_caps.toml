@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-glass-caps"
+description = "Enables the glass_caps command without any pre-configured scope."
+commands.allow = ["glass_caps"]
+
+[[permission]]
+identifier = "deny-glass-caps"
+description = "Denies the glass_caps command without any pre-configured scope."
+commands.deny = ["glass_caps"]

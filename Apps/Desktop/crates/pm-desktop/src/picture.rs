@@ -258,6 +258,17 @@ impl PictureHost {
         hub.resize(width, height);
     }
 
+    /// Windows: the picture's child window slid right by `pixels`, leaving the sidebar
+    /// strip to the window's Mica (`glass.rs`). Main thread only.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn set_leading_inset(&self, pixels: u32) {
+        if let Ok(surface) = self.surface.lock() {
+            if let Some(surface) = surface.as_ref() {
+                surface.set_leading_inset(pixels);
+            }
+        }
+    }
+
     /// Stops the render thread, then destroys the surface.
     pub fn shutdown(&self, hub: &PictureHub) {
         hub.stop();

@@ -21,6 +21,7 @@ mod connect;
 mod diagnostics;
 mod gamepad;
 mod gestures;
+mod glass;
 mod input;
 mod keys;
 mod known;
@@ -357,6 +358,9 @@ fn main() {
             connect::home_wifi_forget,
             sharing::sharing_set,
             sharing::sharing_state,
+            glass::glass_caps,
+            glass::glass_material,
+            glass::glass_controls,
         ])
         .build(tauri::generate_context!());
 

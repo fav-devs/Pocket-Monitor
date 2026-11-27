@@ -21,6 +21,8 @@
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+pub mod glass;
+
 /// Where the swapchain goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HostMode {
@@ -83,6 +85,14 @@ impl PictureSurface {
     pub fn resize(&self, width: u32, height: u32) {
         self.inner.resize(width.max(1), height.max(1));
     }
+
+    /// Windows: slides the picture's child window `pixels` to the right (its size, and so
+    /// the swapchain, unchanged; the parent clips the overhang), leaving the window's
+    /// leading strip uncovered for the Mica behind the sidebar. 0 puts it back. Only while
+    /// no picture is on screen there (`glass.rs`). No-op elsewhere. UI thread only.
+    pub fn set_leading_inset(&self, pixels: u32) {
+        self.inner.set_leading_inset(pixels);
+    }
 }
 
 #[cfg(windows)]
@@ -99,8 +109,8 @@ mod platform {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, RegisterClassExW,
         SetWindowPos, CS_HREDRAW, CS_VREDRAW, HTTRANSPARENT, HWND_BOTTOM, IDC_ARROW,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, WM_ERASEBKGND, WM_NCHITTEST, WM_PAINT,
-        WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY, WS_VISIBLE,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_ERASEBKGND, WM_NCHITTEST,
+        WM_PAINT, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY, WS_VISIBLE,
     };
 
     use super::HostMode;
@@ -257,6 +267,24 @@ mod platform {
                 );
             }
         }
+
+        pub fn set_leading_inset(&self, pixels: u32) {
+            if !self.owned {
+                return;
+            }
+            // Safety: our own child window, on the UI thread.
+            unsafe {
+                SetWindowPos(
+                    self.hwnd,
+                    std::ptr::null_mut(),
+                    pixels.min(i32::MAX as u32) as i32,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER,
+                );
+            }
+        }
     }
 
     impl Drop for Surface {
@@ -352,6 +380,9 @@ mod platform {
 
         /// The view follows its parent through its autoresizing mask.
         pub fn resize(&self, _width: u32, _height: u32) {}
+
+        /// The material sits above the picture on macOS (`glass.rs`); nothing moves.
+        pub fn set_leading_inset(&self, _pixels: u32) {}
     }
 
     impl Drop for Surface {
@@ -405,5 +436,7 @@ mod platform {
         }
 
         pub fn resize(&self, _width: u32, _height: u32) {}
+
+        pub fn set_leading_inset(&self, _pixels: u32) {}
     }
 }

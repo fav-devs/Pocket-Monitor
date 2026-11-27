@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-glass-material"
+description = "Enables the glass_material command without any pre-configured scope."
+commands.allow = ["glass_material"]
+
+[[permission]]
+identifier = "deny-glass-material"
+description = "Denies the glass_material command without any pre-configured scope."
+commands.deny = ["glass_material"]
