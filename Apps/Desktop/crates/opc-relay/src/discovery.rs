@@ -32,6 +32,39 @@ pub fn browse_types(info: &ProtocolInfo) -> Vec<String> {
     }
 }
 
+/// Every type a sharing host on this PC advertises: the same list a watcher browses, so
+/// Pocket Monitor phones and PCs (`_pocket-mon._tcp`) and upstream OpenPocketCine iPhones
+/// (the core's legacy `_opc-mon._tcp`) all find it. Watchers that browse both list one row
+/// per name.
+pub fn advertised_types(info: &ProtocolInfo) -> Vec<String> {
+    browse_types(info)
+}
+
+/// The instance name a PC's sharing host advertises: `PocketMonitor (<machine>)` as the
+/// old viewfinder did, or the bare name when the machine has none worth showing.
+pub fn host_instance_name(machine: Option<&str>) -> String {
+    match machine.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("PocketMonitor ({name})"),
+        None => "PocketMonitor".to_string(),
+    }
+}
+
+/// A `.local.` host name from the machine name: letters, digits and hyphens only.
+pub fn local_host_name(machine: Option<&str>) -> String {
+    let label: String = machine
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let label = label.trim_matches('-');
+    let label = if label.is_empty() {
+        "PocketMonitor"
+    } else {
+        label
+    };
+    format!("{label}.local.")
+}
+
 /// Of two records for one name, the one from the type listed first wins.
 fn preferred(existing: Option<&str>, incoming: &str, order: &[String]) -> bool {
     let rank = |t: &str| order.iter().position(|o| o == t).unwrap_or(usize::MAX);
@@ -303,6 +336,23 @@ mod tests {
             browse_types(&info(POCKET_SERVICE_TYPE)),
             vec!["_pocket-mon._tcp.local."]
         );
+    }
+
+    #[test]
+    fn a_pc_host_advertises_ours_and_the_legacy_type() {
+        assert_eq!(
+            advertised_types(&info("_opc-mon._tcp")),
+            vec!["_pocket-mon._tcp.local.", "_opc-mon._tcp.local."]
+        );
+        assert_eq!(
+            host_instance_name(Some("STUDIO-PC")),
+            "PocketMonitor (STUDIO-PC)"
+        );
+        assert_eq!(host_instance_name(Some("  ")), "PocketMonitor");
+        assert_eq!(host_instance_name(None), "PocketMonitor");
+        assert_eq!(local_host_name(Some("Fav's Mac")), "Fav-s-Mac.local.");
+        assert_eq!(local_host_name(Some("STUDIO-PC")), "STUDIO-PC.local.");
+        assert_eq!(local_host_name(None), "PocketMonitor.local.");
     }
 
     #[test]
