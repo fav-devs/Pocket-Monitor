@@ -4,6 +4,7 @@ import { Fragment, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Icon } from "@/components/icon";
 import { Spinner } from "@/components/spinner";
+import { useGlassControl } from "@/features/glass";
 import { TOOLBAR_HEIGHT, WIDE_PAGE_PADDING } from "@/constants/layout";
 import { fonts, type ThemeColors, useTheme, useThemedStyles } from "@/constants/theme";
 import { dragRegion, isHovered, useEscapeKey } from "./desktop";
@@ -89,7 +90,9 @@ export function PageToolbar({
 
 /**
  * A toolbar button: an icon, a label or both, 32 high with a hover fill. `primary` is the ink
- * fill for the page's main action.
+ * fill for the page's main action. In the desktop shell with glass on, it is a glass capsule
+ * (native `NSGlassEffectView` on macOS 26, CSS glass elsewhere; `primary` and `active` are
+ * ink-tinted glass); `glass={false}` keeps it flat (a button inside another glass surface).
  */
 export function ToolbarButton({
 	icon,
@@ -102,6 +105,7 @@ export function ToolbarButton({
 	busy = false,
 	badge,
 	destructive = false,
+	glass: glassAllowed = true,
 	testID,
 }: {
 	icon?: IconSvgElement;
@@ -115,14 +119,23 @@ export function ToolbarButton({
 	busy?: boolean;
 	badge?: number;
 	destructive?: boolean;
+	glass?: boolean;
 	testID?: string;
 }) {
 	const { colors } = useTheme();
 	const styles = useThemedStyles(createStyles);
 	const onInk = variant === "primary" || active;
 	const tint = destructive ? colors.destructive : onInk ? colors.inkForeground : colors.foreground;
+	const control = useGlassControl(onInk ? "prominent" : "button", {
+		radius: 16,
+		// The ink as a strong tint: Liquid Glass's prominent button in the app's primary colour.
+		tint: onInk ? `${colors.ink}d9` : null,
+		native: !disabled,
+	});
+	const glass = glassAllowed && control.on;
 	return (
 		<Pressable
+			{...(glass ? control.props : {})}
 			testID={testID}
 			accessibilityRole="button"
 			accessibilityLabel={label ?? title}
@@ -130,15 +143,19 @@ export function ToolbarButton({
 			disabled={disabled}
 			onPress={onPress}
 			hitSlop={6}
-			style={(state) => [
-				styles.button,
-				!title && styles.square,
-				variant === "secondary" && styles.secondary,
-				onInk && styles.ink,
-				isHovered(state) && !disabled && (onInk ? styles.inkHover : styles.hover),
-				state.pressed && styles.pressed,
-				disabled && styles.disabled,
-			]}
+			style={(state) =>
+				glass
+					? [styles.button, styles.capsule, !title && styles.square, disabled && styles.disabled]
+					: [
+							styles.button,
+							!title && styles.square,
+							variant === "secondary" && styles.secondary,
+							onInk && styles.ink,
+							isHovered(state) && !disabled && (onInk ? styles.inkHover : styles.hover),
+							state.pressed && styles.pressed,
+							disabled && styles.disabled,
+						]
+			}
 		>
 			{busy ? (
 				<Spinner size={16} opacity={1} color={tint} />
@@ -189,6 +206,7 @@ function createStyles(colors: ThemeColors) {
 			gap: 6,
 		},
 		square: { width: 32, paddingHorizontal: 0 },
+		capsule: { borderRadius: 16, paddingHorizontal: 14 },
 		secondary: { backgroundColor: colors.surface },
 		ink: { backgroundColor: colors.ink },
 		hover: { backgroundColor: colors.surfaceStrong },

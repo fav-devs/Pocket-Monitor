@@ -28,6 +28,7 @@ import { Button } from '@/components/button';
 import { Icon } from '@/components/icon';
 import { Spinner } from '@/components/spinner';
 import { PageToolbar, ToolbarButton } from '@/components/page-toolbar';
+import { useGlassControl } from '@/features/glass';
 import { WIDE_PAGE_PADDING, useScreenSize, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { type MediaLibrarySource, phoneClipItem, useMediaPreferences, usePhoneMedia } from '@/state/media';
@@ -89,9 +90,13 @@ function haptic() {
 }
 
 function CategoryPill({ title, count, selected, onPress }: { title: string; count: number; selected: boolean; onPress: () => void }) {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  // Glass in the desktop shell (the chosen one ink-tinted); flat elsewhere.
+  const glass = useGlassControl(selected ? 'prominent' : 'button', { radius: 999, tint: selected ? `${colors.ink}d9` : null });
   return (
     <Pressable
+      {...glass.props}
       accessibilityRole="tab"
       accessibilityLabel={`Show ${title} media`}
       accessibilityState={{ selected }}
@@ -107,8 +112,10 @@ function CategoryPill({ title, count, selected, onPress }: { title: string; coun
 function SquareButton({ icon, label, onPress, active, badge }: { icon: IconSvgElement; label: string; onPress: () => void; active?: boolean; badge?: number }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const glass = useGlassControl(active ? 'prominent' : 'button', { radius: 12, tint: active ? `${colors.ink}d9` : null });
   return (
     <Pressable
+      {...glass.props}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected: !!active }}

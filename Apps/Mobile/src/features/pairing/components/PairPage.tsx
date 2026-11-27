@@ -11,6 +11,7 @@ import { useEscapeKey } from '@/components/desktop';
 import { useScreenSize, useWideLayout } from '@/constants/layout';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
 import { ProgressLabel } from './StatusBits';
+import { useGlassControl } from '@/features/glass';
 
 export interface PairStep {
   title: string;
@@ -78,6 +79,8 @@ export function PairPage({
   const insets = useSafeAreaInsets();
   const { large, landscape } = useScreenSize();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Over the desktop shell the dialog is a glass sheet (web glass only: it sits over web content).
+  const surface = useGlassControl('surface', { radius: radius.xl });
   // Wide layout: the flow is a dialog over the page it was opened from; Esc closes it.
   const dialog = useWideLayout();
   useEscapeKey(onExit, dialog);
@@ -236,7 +239,7 @@ export function PairPage({
   if (dialog) {
     return (
       <View style={styles.backdrop}>
-        <View accessibilityRole="none" style={styles.dialog}>
+        <View accessibilityRole="none" {...surface.props} style={styles.dialog}>
           <View style={styles.dialogTop}>{topBar}</View>
           <ScrollView
             style={styles.dialogScroll}
