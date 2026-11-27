@@ -20,6 +20,7 @@ import { haptics } from '../haptics';
 import { ZOOM_RAMP_CHOICES, rampLabel, useLiveUi, useZoomPresets } from '../liveUiStore';
 import { onVideo } from '../chrome/primitives';
 import { desktopCameraEnabled } from '@/camera/bootstrap';
+import { gesturesAvailable } from '@/camera/desktop/gestures';
 import { DesktopGestureRows } from './DesktopGestureRows';
 
 /** `LiveGimbalButton`: a zoom-sized translucent circle leading of the zoom chip; toggles the sheet. */
@@ -160,7 +161,7 @@ export function LiveGimbalPanel({ notice }: { notice: (m: string, tone?: 'info' 
           onPress={() => setRamp(ZOOM_RAMP_CHOICES[Math.min(ZOOM_RAMP_CHOICES.length - 1, rampIndex + 1)])}
         />
       </PanelRow>
-      {desktopCameraEnabled ? <DesktopGestureRows /> : null}
+      {desktopCameraEnabled || gesturesAvailable() ? <DesktopGestureRows /> : null}
       <PanelRow testID="monitor.gimbal.motion" icon={Route01Icon} title="Motion Control" onPress={() => set({ gimbalPanel: 'editor', captureSheet: null })}>
         <RowValue value={setCount === 0 ? '' : `${setCount} point${setCount === 1 ? '' : 's'}`} />
       </PanelRow>

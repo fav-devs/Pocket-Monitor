@@ -10,30 +10,22 @@
  *   hand view is on), in fractions of the decoded picture before mirroring.
  *
  * Outside the desktop app nothing here calls Rust. `previewGestures()` lets the web preview
- * show the Gestures page with local settings (`?desktopPreview=1`, dev builds only).
+ * show the Gestures page with local settings (`?desktopPreview=1`, dev builds only). On phones
+ * (`src/features/gestures`) the same store and pages serve the phone's own gestures: a
+ * {@link GestureSettingsBackend} keeps the settings in the app's preferences, and the phone
+ * runtime fills `overlay` for the hand view.
  */
 import { create } from 'zustand';
 import type { DesktopAppSettings } from './connect';
 import type { DesktopGesturesState } from './input';
 import { invoke, isTauri, listen, type Unlisten } from './tauri';
+import { DEFAULT_GESTURE_MAP as CORE_DEFAULT_MAP, type GestureActionKey, type GestureKey } from '@/core/gestures/gesture';
 
-/** Gesture keys, as `pm_controller::gesture::Gesture::key`. */
-export type GestureKey =
-  | 'swipe_left'
-  | 'swipe_right'
-  | 'swipe_up'
-  | 'swipe_down'
-  | 'palm'
-  | 'fist'
-  | 'point'
-  | 'two'
-  | 'horns'
-  | 'face_track';
+/** Gesture and action keys, as `pm_controller::gesture` (`src/core/gestures/gesture.ts`). */
+export type { GestureActionKey, GestureKey };
 
-/** Action keys, as `pm_controller::gesture::GestureAction::key`. */
-export type GestureActionKey = 'nothing' | 'recenter' | 'flip' | 'next_preset' | 'previous_preset' | 'stop' | 'record' | 'face_track';
-
-export type GestureSource = 'cameraFeed' | 'webcam';
+/** `webcam` is the desktop's; `frontCamera` the phones' own front camera (`PocketHands`). */
+export type GestureSource = 'cameraFeed' | 'webcam' | 'frontCamera';
 
 /** The gesture guide, in `Gesture::ALL` order. `held` poses fire after a hold. */
 export const GESTURES: readonly { key: GestureKey; label: string; held: boolean }[] = [
@@ -62,18 +54,7 @@ export const GESTURE_ACTIONS: readonly { key: GestureActionKey; label: string }[
 ];
 
 /** `GestureMap::default()`. Raising and lowering a hand reads as a vertical sweep, so those do nothing. */
-export const DEFAULT_GESTURE_MAP: Readonly<Record<GestureKey, GestureActionKey>> = {
-  swipe_left: 'previous_preset',
-  swipe_right: 'next_preset',
-  swipe_up: 'nothing',
-  swipe_down: 'nothing',
-  palm: 'stop',
-  fist: 'recenter',
-  point: 'next_preset',
-  two: 'record',
-  horns: 'flip',
-  face_track: 'face_track',
-};
+export const DEFAULT_GESTURE_MAP: Readonly<Record<GestureKey, GestureActionKey>> = CORE_DEFAULT_MAP;
 
 /** `AppSettings::default()`. */
 export const DEFAULT_APP_SETTINGS: DesktopAppSettings = {
@@ -110,7 +91,7 @@ export function normaliseAppSettings(settings: Partial<DesktopAppSettings> | nul
     gestures: !!settings?.gestures,
     openCameraAtLaunch: !!settings?.openCameraAtLaunch,
     gestureMap: gestureMapOf(settings),
-    gestureSource: settings?.gestureSource === 'webcam' ? 'webcam' : 'cameraFeed',
+    gestureSource: settings?.gestureSource === 'webcam' || settings?.gestureSource === 'frontCamera' ? settings.gestureSource : 'cameraFeed',
     handControl: settings?.handControl ?? DEFAULT_APP_SETTINGS.handControl,
     stickIsRight: settings?.stickIsRight ?? DEFAULT_APP_SETTINGS.stickIsRight,
     autoFaceTrack: settings?.autoFaceTrack ?? DEFAULT_APP_SETTINGS.autoFaceTrack,
@@ -134,14 +115,15 @@ export function holdSeconds(gesture: GestureKey, map: Record<GestureKey, Gesture
 
 /** The source as the live controls name it. */
 export function sourceLabel(source: GestureSource): string {
-  return source === 'webcam' ? 'Webcam' : 'Camera picture';
+  return source === 'webcam' ? 'Webcam' : source === 'frontCamera' ? 'Front camera' : 'Camera picture';
 }
 
 // ───────────── The hand view ─────────────
 
 /** `vision://hands` (`pm_controller::vision::HandOverlay`). */
 export interface DesktopHandOverlay {
-  source: 'cameraFeed' | 'webcam' | 'off';
+  /** `frontCamera`: a phone's front camera (`src/features/gestures`). */
+  source: 'cameraFeed' | 'webcam' | 'frontCamera' | 'off';
   status: string;
   hands: {
     points: [number, number][];
@@ -182,6 +164,38 @@ export const useDesktopGestures = create<DesktopGesturesStore>()(() => ({
 }));
 
 let preview = false;
+
+/**
+ * Where the settings live when Rust does not keep them: a phone with `PocketHands`
+ * (`src/features/gestures/phoneGestures.ts` registers one; it keeps them in the app's
+ * preferences and runs the gestures itself). Desktop behaviour is unchanged.
+ */
+export interface GestureSettingsBackend {
+  /** The sources this device offers, in the order the page lists them. */
+  sources: readonly GestureSource[];
+  load(): DesktopAppSettings;
+  save(settings: DesktopAppSettings): void;
+}
+
+let backend: GestureSettingsBackend | null = null;
+
+/** Registers (or clears) the phone's settings backend and shows its settings at once. */
+export function setGestureSettingsBackend(next: GestureSettingsBackend | null) {
+  if (isTauri()) return;
+  backend = next;
+  if (next) useDesktopGestures.setState({ settings: normaliseAppSettings(next.load()) });
+}
+
+/** The sources the Gestures page offers here: the desktop's camera picture and webcam, or the phone's. */
+export function gestureSources(): readonly GestureSource[] {
+  if (!isTauri() && !preview && backend) return backend.sources;
+  return ['cameraFeed', 'webcam'];
+}
+
+/** True when the Gestures page belongs to a phone (its own models and settings), not the desktop app. */
+export function gesturesRunOnPhone(): boolean {
+  return !isTauri() && !preview && backend != null;
+}
 
 /** The web preview of the desktop pages (dev only): local settings, no Rust. */
 export function previewGestures() {
@@ -235,15 +249,16 @@ if (!isTauri() && previewAskedFor()) {
   }
 }
 
-/** True where the Gestures page belongs: the desktop app, or its web preview. */
+/** True where the Gestures page belongs: the desktop app, its web preview, or a phone with `PocketHands`. */
 export function gesturesAvailable(): boolean {
-  return isTauri() || preview;
+  return isTauri() || preview || backend != null;
 }
 
 /** Reads the settings (once is enough; `gestures://state` refreshes them after `J`). */
 export async function loadGestureSettings(): Promise<DesktopAppSettings | null> {
   if (!isTauri()) {
     if (preview) previewGestures();
+    else if (backend) useDesktopGestures.setState({ settings: normaliseAppSettings(backend.load()) });
     return useDesktopGestures.getState().settings;
   }
   try {
@@ -261,7 +276,10 @@ export async function saveGestureSettings(patch: Partial<DesktopAppSettings>): P
   if (!before) return;
   const next = normaliseAppSettings({ ...before, ...patch });
   useDesktopGestures.setState({ settings: next, error: null });
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    if (!preview) backend?.save(next);
+    return;
+  }
   try {
     const saved = await invoke<DesktopAppSettings>('app_settings_set', { settings: next });
     useDesktopGestures.setState({ settings: normaliseAppSettings(saved) });

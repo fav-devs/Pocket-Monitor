@@ -59,6 +59,23 @@ export interface OperatorPreferences {
    * glass) or Off (flat, no window material). Unset: the best this machine has.
    */
   desktopGlass?: 'native' | 'web' | 'off';
+  /**
+   * Phones: hand gestures (Settings → Gestures, `src/features/gestures`). The desktop app's
+   * `AppSettings` fields with the desktop's key names, so the gesture map reads the same on both.
+   * Unset: gestures off, the desktop's defaults.
+   */
+  gestureSettings?: PhoneGesturePreferences;
+}
+
+/** Phones' gesture settings (the desktop `AppSettings` gesture fields, same names). */
+export interface PhoneGesturePreferences {
+  gestures: boolean;
+  /** Gesture key → action key, as `pm_controller::gesture::GestureMap`'s JSON. */
+  gestureMap?: Record<string, string>;
+  gestureSource?: 'cameraFeed' | 'frontCamera';
+  handControl?: boolean;
+  stickIsRight?: boolean;
+  autoFaceTrack?: boolean;
 }
 
 export const defaultPreferences: OperatorPreferences = {

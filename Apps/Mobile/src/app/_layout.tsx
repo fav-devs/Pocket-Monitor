@@ -16,6 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { CameraProvider } from '@/camera';
 import { isWideWindow } from '@/constants/layout';
 import { AppThemeProvider, useTheme } from '@/constants/theme';
+import { PhoneGesturesHost } from '@/features/gestures/PhoneGesturesHost';
 import { AppShell } from '@/features/shell/AppShell';
 import { FeedSharingHost } from '@/features/watcher/useFeedSharing';
 import '@/camera/bootstrap';
@@ -73,6 +74,8 @@ function RootLayoutInner() {
                   <Stack.Screen name="multiview" options={{ gestureEnabled: false, contentStyle: { backgroundColor: '#000' } }} />
                 </Stack>
               </AppShell>
+              {/* Phones' hand gestures: runs them on the live view and draws their pills over it. */}
+              <PhoneGesturesHost />
             </BottomSheetModalProvider>
           </CameraProvider>
         </ThemeProvider>

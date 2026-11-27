@@ -25,7 +25,7 @@ export type SettingsSectionId =
   | 'operator'
   | 'input'
   | 'motion'
-  /** Desktop only (`desktopOnly`): hand gestures, the gesture guide. */
+  /** Where hand gestures run (`gesturesOnly`): the desktop app, or a phone with `PocketHands`. */
   | 'gestures'
   | 'exposure'
   | 'assists'
@@ -40,8 +40,8 @@ export interface SettingsSectionInfo {
   title: string;
   /** Icon in the row's well on the Settings list. */
   icon: IconSvgElement;
-  /** Only in the desktop app (and its web preview). */
-  desktopOnly?: boolean;
+  /** Only where hand gestures run: the desktop app (and its web preview), or a phone with `PocketHands`. */
+  gesturesOnly?: boolean;
 }
 
 /** How the Settings list groups the sections, in order. */
@@ -59,7 +59,7 @@ export const settingsSections: SettingsSectionInfo[] = [
   { id: 'operator', title: 'Operator', icon: Tap02Icon },
   { id: 'input', title: 'Input & Orientation', icon: GameController03Icon },
   { id: 'motion', title: 'Motion Control', icon: Joystick02Icon },
-  { id: 'gestures', title: 'Gestures', icon: WavingHand01Icon, desktopOnly: true },
+  { id: 'gestures', title: 'Gestures', icon: WavingHand01Icon, gesturesOnly: true },
   { id: 'exposure', title: 'Exposure & Look', icon: Sun03Icon },
   { id: 'assists', title: 'View Assists', icon: ChartHistogramIcon },
   { id: 'media', title: 'Media & Delivery', icon: Video01Icon },
@@ -73,15 +73,15 @@ export function sectionInfo(id: string | undefined): SettingsSectionInfo | undef
   return settingsSections.find((s) => s.id === id);
 }
 
-/** The sections one group lists here: desktop-only ones only where `desktop` is true. */
-export function visibleSectionIds(ids: readonly SettingsSectionId[], desktop: boolean): SettingsSectionId[] {
-  return ids.filter((id) => desktop || !sectionInfo(id)?.desktopOnly);
+/** The sections one group lists here: the gestures page only where `gestures` run. */
+export function visibleSectionIds(ids: readonly SettingsSectionId[], gestures: boolean): SettingsSectionId[] {
+  return ids.filter((id) => gestures || !sectionInfo(id)?.gesturesOnly);
 }
 
 /** The section Settings opens on in the wide layout (split view): the first one listed. */
-export function settingsLanding(desktop: boolean): SettingsSectionId {
+export function settingsLanding(gestures: boolean): SettingsSectionId {
   for (const group of settingsGroups) {
-    const ids = visibleSectionIds(group.ids, desktop);
+    const ids = visibleSectionIds(group.ids, gestures);
     if (ids.length) return ids[0];
   }
   return 'connection';

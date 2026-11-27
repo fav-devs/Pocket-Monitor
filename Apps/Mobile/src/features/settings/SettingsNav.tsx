@@ -30,7 +30,7 @@ export function SettingsNav() {
   const phase = useCamera((s) => s.connection.phase);
   const cameraName = useCamera((s) => s.identity?.name);
   const live = phase === 'live';
-  const desktop = gesturesAvailable();
+  const gestures = gesturesAvailable();
   const { material } = useGlass();
   const ref = useRef<ComponentRef<typeof View> | null>(null);
   useSeeThrough(ref, material);
@@ -71,7 +71,7 @@ export function SettingsNav() {
           ) : null}
         </View>
         {settingsGroups.map((group) => {
-          const ids = visibleSectionIds(group.ids, desktop);
+          const ids = visibleSectionIds(group.ids, gestures);
           if (!ids.length) return null;
           return (
             <View key={group.label} style={styles.group}>

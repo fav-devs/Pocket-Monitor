@@ -49,6 +49,27 @@ Expo SDK 58, React Native 0.88, React 19.3, Expo Router, TypeScript strict.
 - `ios/` and `android/` at the app root are generated (CNG). Never hand-edit them; configure via
   `app.json` and config plugins. Native code lives in `modules/pocket-native/{ios,android}`.
 
+## Hand gestures on phones
+
+The desktop's gestures (`Apps/Desktop/crates/pm-controller`: `hand.rs`, `gesture.rs`, `vision.rs`,
+`clap.rs`, the gesture parts of `input.rs`) run on phones too:
+
+- `src/core/gestures/`: the pure TypeScript port, every number and rule the desktop's, its Rust
+  unit tests ported with the same vectors (`*.test.ts`). `drive.ts` carries them out on a
+  `CameraSession` (stick heartbeat 100 ms, let go 0.5 s after the last reading, zoom by
+  `zoomBy` with the triggers' rest zone, record held 2.5 s, face box → `startTracking`).
+- `modules/pocket-native` `PocketHands`: the models. iOS Apple Vision, Android MediaPipe Tasks
+  (GPU, CPU fallback); source = the camera's decoded picture (480 across, ≤ 15 Hz, off the render
+  path, dropped while busy) or the front camera; the microphone as 10 ms level blocks for the
+  double clap. See its README.
+- `src/features/gestures/`: `PhoneGesturesHost` (mounted in the root layout) runs it only while
+  gestures are on, `/live` is on screen, a camera is live and the app is in front, and draws the
+  status pill and the record hold. Settings live in `usePreferences().gestureSettings` (the
+  desktop's `AppSettings` names); the shared Gestures page, gimbal-panel rows and `HandViewOverlay`
+  read them through `src/camera/desktop/gestures.ts` (a phone `GestureSettingsBackend`).
+- Web: `native.web.ts` gives a made-up `PocketHands` (two hands and a face at 15 Hz) so the page,
+  the pill and the hand view can be checked in a browser. Not inside the desktop app.
+
 ## Commands
 
 ```bash

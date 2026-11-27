@@ -1,8 +1,10 @@
 /**
- * Settings → Gestures (desktop only, `docs/desktop-expo-port.md` §1.T): gestures on or off,
- * where they are read from, both hands' pinch-and-drag control, the stick hand, face tracking
- * by itself, and the gesture guide with what each gesture does. The old viewfinder's home
- * screen guide and Moves-sheet rows, kept in `desktop-app-v1.txt` and applied live by Rust.
+ * Settings → Gestures (`docs/desktop-expo-port.md` §1.T): gestures on or off, where they are
+ * read from, both hands' pinch-and-drag control, the stick hand, face tracking by itself, and the
+ * gesture guide with what each gesture does. The old viewfinder's home screen guide and
+ * Moves-sheet rows. In the desktop app they are kept in `desktop-app-v1.txt` and applied live by
+ * Rust; on a phone with `PocketHands` (`src/features/gestures`) they are kept in the app's
+ * preferences and the source is the camera picture or the phone's front camera.
  */
 import {
   Clapping01Icon,
@@ -23,7 +25,7 @@ import {
   WavingHand01Icon,
 } from '@hugeicons/core-free-icons';
 import type { IconSvgElement } from '@hugeicons/react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import {
   GESTURES,
@@ -31,20 +33,22 @@ import {
   DEFAULT_GESTURE_MAP,
   actionLabel,
   gestureMapOf,
+  gestureSources,
   holdSeconds,
   loadGestureSettings,
   saveGestureSettings,
+  sourceLabel,
   useDesktopGestures,
   withGestureAction,
   type GestureActionKey,
   type GestureKey,
-  type GestureSource,
 } from '@/camera/desktop/gestures';
 import { Icon } from '@/components/icon';
 import { ResetAction } from '@/components/reset-action';
 import { SettingsRow } from '@/components/settings-ui';
 import { Sheet } from '@/components/sheet';
 import { fonts, radius, spacing, type ThemeColors, useTheme, useThemedStyles } from '@/constants/theme';
+import { usePhoneGestures } from '@/features/gestures/phoneGestures';
 import { settingsFeedback } from '../components/feedback';
 import { FieldRow, Group, Segments, SwitchRow, ValueText } from '../components/ui';
 
@@ -62,11 +66,6 @@ export const GESTURE_ICONS: Record<GestureKey, IconSvgElement> = {
   face_track: FaceIdIcon,
 };
 
-const SOURCES: readonly { value: GestureSource; label: string }[] = [
-  { value: 'cameraFeed', label: 'Camera picture' },
-  { value: 'webcam', label: 'Webcam' },
-];
-
 const HANDS = [
   { value: 'right', label: 'Right' },
   { value: 'left', label: 'Left' },
@@ -80,6 +79,10 @@ export function GestureSettings() {
   const running = useDesktopGestures((s) => s.running);
   const error = useDesktopGestures((s) => s.error);
   const [picking, setPicking] = useState<GestureKey | null>(null);
+  // Phones: why the models are not running (camera access off, …) and whether the clap can hear.
+  const phoneProblem = usePhoneGestures((s) => (s.state === 'failed' ? s.error : null));
+  const microphoneOff = usePhoneGestures((s) => s.microphone === 'denied');
+  const sources = useMemo(() => gestureSources().map((value) => ({ value, label: sourceLabel(value) })), []);
 
   useEffect(() => {
     loadGestureSettings().catch(() => {});
@@ -89,12 +92,19 @@ export function GestureSettings() {
   const map = gestureMapOf(settings);
   const source = settings?.gestureSource ?? 'cameraFeed';
   const webcamProblem = settings?.gestures && source === 'webcam' ? running?.problem : null;
+  const problem = error ?? webcamProblem ?? (settings?.gestures ? phoneProblem : null);
+  const handsNote =
+    source === 'webcam'
+      ? 'Hand control and face tracking read the camera picture.'
+      : source === 'frontCamera'
+        ? 'Face tracking reads the camera picture.'
+        : undefined;
   const isDefault = GESTURES.every((g) => map[g.key] === DEFAULT_GESTURE_MAP[g.key]);
   const picked = picking ? GESTURES.find((g) => g.key === picking) : null;
 
   return (
     <>
-      <Group note={error ?? webcamProblem ?? undefined}>
+      <Group note={problem ?? undefined}>
         <SwitchRow
           icon={WavingHand01Icon}
           title="Gestures"
@@ -106,14 +116,14 @@ export function GestureSettings() {
         <FieldRow icon={Video01Icon} title="Source" disabled={!ready} last>
           <Segments
             label="Gesture source"
-            options={SOURCES}
+            options={sources}
             value={source}
             onChange={(gestureSource) => void saveGestureSettings({ gestureSource })}
           />
         </FieldRow>
       </Group>
 
-      <Group label="Hands" note={source === 'webcam' ? 'Hand control and face tracking read the camera picture.' : undefined}>
+      <Group label="Hands" note={handsNote}>
         <SwitchRow
           icon={Drag01Icon}
           title="Hand control"
@@ -168,7 +178,12 @@ export function GestureSettings() {
             </View>
           );
         })}
-        <SettingsRow icon={Clapping01Icon} title="Double clap" accessory={<ValueText value="Recentre" />} last />
+        <SettingsRow
+          icon={Clapping01Icon}
+          title="Double clap"
+          accessory={<ValueText value={microphoneOff ? 'Microphone off' : 'Recentre'} />}
+          last
+        />
       </Group>
 
       <ActionPicker

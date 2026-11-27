@@ -64,7 +64,8 @@ export interface DesktopAppSettings {
   /** Gesture key (`swipe_left`, `palm`, `two`, …) to action key (`nothing`, `recenter`,
    * `flip`, `next_preset`, `previous_preset`, `stop`, `record`, `face_track`). */
   gestureMap?: Record<string, string>;
-  gestureSource?: 'cameraFeed' | 'webcam';
+  /** `frontCamera`: a phone's own front camera (phones keep these settings in their preferences). */
+  gestureSource?: 'cameraFeed' | 'webcam' | 'frontCamera';
   handControl?: boolean;
   stickIsRight?: boolean;
   autoFaceTrack?: boolean;

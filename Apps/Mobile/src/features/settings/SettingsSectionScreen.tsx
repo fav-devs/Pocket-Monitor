@@ -30,7 +30,7 @@ export default function SettingsSectionScreen() {
     : undefined;
   const [legal, setLegal] = useState<LegalPage | null>(null);
   const [reporting, setReporting] = useState(false);
-  if (!info || (info.desktopOnly && !gesturesAvailable())) return <Redirect href="/settings" />;
+  if (!info || (info.gesturesOnly && !gesturesAvailable())) return <Redirect href="/settings" />;
 
   let body: ReactNode;
   switch (info.id) {
