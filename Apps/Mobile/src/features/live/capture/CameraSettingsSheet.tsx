@@ -12,6 +12,7 @@ import { usePreferences } from '@/state/preferences';
 import { COLOR_LABEL, isPhotoMode, wbLabel } from '../format';
 import { LiveGimbalPanel } from '../gimbal/LiveGimbalControls';
 import { haptics } from '../haptics';
+import { LayoutChips, LayoutRows, LayoutsPanel } from '../layout/LayoutsPanel';
 import { useLiveUi, type CameraTab } from '../liveUiStore';
 import { PanelBack, PanelHint, PanelRow, PanelSwitch, PanelTitle, RowValue, ValueButton } from '../panel/kit';
 import { AudioMeters, ManualFocusDrum, WbControls, useWrite } from './CaptureSheetHost';
@@ -114,8 +115,8 @@ function CameraTabBody({ onWb }: { onWb: () => void }) {
   );
 }
 
-/** General tab: how the monitor behaves (the live-view preferences). */
-function GeneralTabBody() {
+/** General tab: the layout (switch, edit) and how the monitor behaves (the live-view preferences). */
+function GeneralTabBody({ onLayouts }: { onLayouts: () => void }) {
   const p = usePreferences();
   const tracking = useCamera((s) => s.capabilities.tracking);
   const row = (title: string, key: 'tapToTrack' | 'tapToFocus' | 'doubleTapLevel' | 'recordCountdown' | 'confirmStopRecording' | 'hideChromeWhileRecording' | 'showRecordingBorder' | 'keepScreenAwake', disabled?: boolean) => (
@@ -125,6 +126,8 @@ function GeneralTabBody() {
   );
   return (
     <>
+      <LayoutChips />
+      <LayoutRows onOpenLayouts={onLayouts} />
       {row('Tap to track', 'tapToTrack', !tracking)}
       {row('Tap to focus', 'tapToFocus')}
       {row('Double-tap stick levels', 'doubleTapLevel')}
@@ -170,7 +173,7 @@ export function CameraSettingsSheet({
   const photo = useCamera((s) => isPhotoMode(s.format.shootingMode));
   const gimbal = useCamera((s) => s.capabilities.gimbal && s.gimbal.available);
   const s = useCamera((st) => st);
-  const [detail, setDetail] = useState<'wb' | null>(null);
+  const [detail, setDetail] = useState<'wb' | 'layouts' | null>(null);
   const tabs = CAMERA_TABS.filter((t) => t.id !== 'gimbal' || gimbal);
   const shown = tabs.some((t) => t.id === tab) ? tab : 'camera';
   const title = shown === 'camera' ? (photo ? 'Photo' : 'Video') : shown === 'gimbal' ? 'Gimbal' : 'General';
@@ -207,6 +210,13 @@ export function CameraSettingsSheet({
               <WbControls s={s} />
             </ScrollView>
           </>
+        ) : detail === 'layouts' ? (
+          <>
+            <PanelTitle leading={<PanelBack label="Back to general" onPress={() => setDetail(null)} />}>Layouts</PanelTitle>
+            <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <LayoutsPanel onEdit={() => setDetail(null)} />
+            </ScrollView>
+          </>
         ) : (
           <>
             <PanelTitle>{title}</PanelTitle>
@@ -216,7 +226,7 @@ export function CameraSettingsSheet({
               ) : shown === 'gimbal' ? (
                 <LiveGimbalPanel notice={notice} />
               ) : (
-                <GeneralTabBody />
+                <GeneralTabBody onLayouts={() => setDetail('layouts')} />
               )}
               {shown === 'camera' && s.recording.recording ? <PanelHint>Color changes after recording stops.</PanelHint> : null}
               <PanelRow

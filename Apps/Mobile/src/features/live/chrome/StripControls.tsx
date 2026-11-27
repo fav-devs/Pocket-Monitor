@@ -23,7 +23,7 @@ import { useAssists } from '@/state/assists';
 import { usePreferences } from '@/state/preferences';
 import { isPhotoMode } from '../format';
 import { haptics } from '../haptics';
-import type { FieldMonitorLayout, Rect } from '../layout/fieldMonitorLayout';
+import { QUICK_GAP, type FieldMonitorLayout, type Rect } from '../layout/fieldMonitorLayout';
 import { useLiveUi, type CaptureSheetId } from '../liveUiStore';
 import { onVideo, rectStyle } from './primitives';
 
@@ -263,11 +263,11 @@ export function LeadingControls({ layout, notice }: { layout: FieldMonitorLayout
 }
 
 /**
- * Quick icons over the picture (Mimo's trailing column): selfie flip, DISP, recenter and the
- * screen lock, plus anything the platform adds (Picture in Picture). Lock stays reachable while
- * locked; the rest dim.
+ * Quick icons over the picture (Mimo's trailing column, above record): selfie flip, DISP and
+ * recenter. They dim while the screen is locked. Fills its rect from the top (a column) or the
+ * leading end (a row in portrait); a movable item sizes it to its icons.
  */
-export function QuickIcons({ layout, extra, onFlip }: { layout: FieldMonitorLayout; extra?: ReactNode; onFlip: () => void }) {
+export function QuickIcons({ vertical, onFlip }: { vertical: boolean; onFlip: () => void }) {
   const styles = useThemedStyles(createStyles);
   const session = useCameraSession();
   const flip = useCamera((s) => s.capabilities.selfieFlip);
@@ -276,28 +276,48 @@ export function QuickIcons({ layout, extra, onFlip }: { layout: FieldMonitorLayo
   const recentering = useCamera((s) => s.gimbal.recentering);
   const live = useCamera((s) => s.connection.phase === 'live');
   const locked = useLiveUi((s) => s.locked);
-  const vertical = layout.axis === 'vertical';
   return (
-    <View pointerEvents="box-none" style={[rectStyle(layout.quick), vertical ? styles.quickColumn : styles.quickRow]}>
-      <View pointerEvents={locked ? 'none' : 'box-none'} style={[vertical ? styles.quickGroupV : styles.quickGroupH, locked && styles.dimmed]}>
-        {flip ? (
-          <StripButton overVideo testID="monitor.quick.flip" label="Selfie flip" icon={CameraRotated02Icon} active={selfie} disabled={!live} onPress={onFlip} />
-        ) : null}
-        <DispButton />
-        {gimbal ? (
-          <StripButton
-            overVideo
-            testID="monitor.quick.recenter"
-            label="Recenter gimbal"
-            icon={ShrinkDotIcon}
-            active={recentering}
-            disabled={!live}
-            onPress={() => session.gimbal.recenter().catch(() => {})}
-          />
-        ) : null}
-        {extra}
-      </View>
-      {vertical ? <View style={styles.flex} /> : null}
+    <View pointerEvents={locked ? 'none' : 'box-none'} style={[vertical ? styles.quickColumn : styles.quickRow, locked && styles.dimmed]}>
+      {flip ? (
+        <StripButton overVideo testID="monitor.quick.flip" label="Selfie flip" icon={CameraRotated02Icon} active={selfie} disabled={!live} onPress={onFlip} />
+      ) : null}
+      <DispButton />
+      {gimbal ? (
+        <StripButton
+          overVideo
+          testID="monitor.quick.recenter"
+          label="Recenter gimbal"
+          icon={ShrinkDotIcon}
+          active={recentering}
+          disabled={!live}
+          onPress={() => session.gimbal.recenter().catch(() => {})}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** How many icons `QuickIcons` shows for the current camera. */
+export function useQuickCount() {
+  const flip = useCamera((s) => s.capabilities.selfieFlip);
+  const gimbal = useCamera((s) => s.capabilities.gimbal && s.gimbal.available);
+  return (flip ? 1 : 0) + 1 + (gimbal ? 1 : 0);
+}
+
+/**
+ * The lock group (under record in landscape, the quick row's end in portrait): anything the
+ * platform adds (Picture in Picture), then the screen lock, which stays reachable while locked.
+ */
+export function LockGroup({ vertical, extra }: { vertical: boolean; extra?: ReactNode }) {
+  const styles = useThemedStyles(createStyles);
+  const locked = useLiveUi((s) => s.locked);
+  return (
+    <View pointerEvents="box-none" style={vertical ? styles.quickColumn : styles.quickRow}>
+      {extra ? (
+        <View pointerEvents={locked ? 'none' : 'box-none'} style={locked && styles.dimmed}>
+          {extra}
+        </View>
+      ) : null}
       <LockButton />
     </View>
   );
@@ -396,11 +416,8 @@ function createStyles(colors: ThemeColors) {
     // A tall tablet strip keeps the group together rather than spreading it down the screen.
     columnMiddleTablet: { justifyContent: 'center' as const, gap: 40 },
     row: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-around' as const },
-    quickColumn: { alignItems: 'center' as const },
-    quickRow: { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-around' as const },
-    quickGroupV: { alignItems: 'center' as const, gap: 10 },
-    quickGroupH: { flex: 1, flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'space-around' as const },
-    flex: { flex: 1 },
+    quickColumn: { alignItems: 'center' as const, gap: QUICK_GAP },
+    quickRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 14 },
     dimmed: { opacity: 0.4 },
     center: { alignItems: 'center' as const, justifyContent: 'center' as const },
     media: {

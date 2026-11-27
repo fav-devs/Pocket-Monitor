@@ -106,7 +106,8 @@ export function CaptureReadout({
   align = 'center',
   exposureOnly = false,
 }: {
-  rect: Rect;
+  /** Absent: sized to its content (a movable item places it). */
+  rect?: Rect;
   align?: 'center' | 'leading';
   /**
    * Optional (additive). Mimo's readout: only `1/60 · ISO 400 · −0.3` (the format chip and the
@@ -138,7 +139,7 @@ export function CaptureReadout({
   return (
     <View
       pointerEvents={locked ? 'none' : 'box-none'}
-      style={[rectStyle(rect), styles.root, align === 'leading' && styles.rootLeading, locked && styles.locked]}
+      style={[rect ? rectStyle(rect) : null, styles.root, !rect && styles.sized, align === 'leading' && styles.rootLeading, locked && styles.locked]}
     >
       {r.format && !exposureOnly ? (
         <Group testID="monitor.capture.format" label="Recording format" value={r.format} active={open === 'format'} onPress={() => toggle('format')}>
@@ -204,6 +205,7 @@ function createStyles(_colors: ThemeColors) {
       rowGap: 0,
     },
     rootLeading: { justifyContent: 'flex-start' as const },
+    sized: { flexWrap: 'nowrap' as const },
     group: { flexDirection: 'row' as const, alignItems: 'center' as const, height: 26 },
     words: { flexDirection: 'row' as const, alignItems: 'center' as const },
     text: {

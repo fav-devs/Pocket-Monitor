@@ -47,7 +47,7 @@ function Readout({ children, color, mono = true }: { children: ReactNode; color?
  * standby, on a red-tinted capsule while recording), REC / STBY and the take's elapsed time, then the camera's timecode when it reports one
  * and Display → Timecode is on. Never invents a clock.
  */
-export function RecordingReadout({ idle = 'stby' }: { idle?: 'stby' | 'timecode' } = {}) {
+export function RecordingReadout({ idle = 'stby', ghost = false }: { idle?: 'stby' | 'timecode'; /** Optional (additive): Edit layout shows STBY even when nothing would. */ ghost?: boolean } = {}) {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
   const rec = useCamera((s) => s.recording);
@@ -56,7 +56,7 @@ export function RecordingReadout({ idle = 'stby' }: { idle?: 'stby' | 'timecode'
   const tc = showTimecode ? rec.timecode : undefined;
   const { base, accent } = timecodeComponents(tc ?? '');
   // At standby the live view shows only the camera's timecode (Mimo shows nothing).
-  if (!recording && idle === 'timecode') {
+  if (!recording && idle === 'timecode' && !(ghost && !tc)) {
     if (!tc) return null;
     return (
       <Cluster>
